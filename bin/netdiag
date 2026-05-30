@@ -48,6 +48,12 @@ QUIET=0
 LOG_OVERRIDE=""
 BASELINE=1
 NO_BASELINE=0
+WATCH=0
+WATCH_INTERVAL_S=300
+SUMMARY=0
+SUMMARY_WINDOW_HOURS=24
+INSTALL_WATCHER=0
+UNINSTALL_WATCHER=0
 TARGET=""
 _take_value=0
 while [ "$#" -gt 0 ]; do
@@ -66,6 +72,12 @@ while [ "$#" -gt 0 ]; do
     --log=*)          LOG_OVERRIDE="${1#--log=}" ;;
     --baseline)       BASELINE=1 ;;
     --no-baseline)    NO_BASELINE=1 ;;
+    --watch)          WATCH=1 ;;
+    --watch=*)        WATCH=1; WATCH_INTERVAL_S="${1#--watch=}" ;;
+    --summary)        SUMMARY=1 ;;
+    --summary=*)      SUMMARY=1; SUMMARY_WINDOW_HOURS="${1#--summary=}" ;;
+    --install-watcher)   INSTALL_WATCHER=1 ;;
+    --uninstall-watcher) UNINSTALL_WATCHER=1 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -96,6 +108,15 @@ Flags:
   --baseline        compare this run against medians of the last 10 runs
                     in ~/net-diag/baseline.jsonl (default on)
   --no-baseline     skip the baseline comparison and don't append to history
+
+Modes (exit after running, don't run the normal check battery):
+  --watch[=SEC]            re-run --quick netdiag every SEC seconds
+                           (default 300). Ctrl-C to stop.
+  --summary[=HOURS]        print an aggregate over the last HOURS of
+                           ~/net-diag/baseline.jsonl (default 24).
+  --install-watcher        install a launchd plist that runs netdiag
+                           every 15 min in the background.
+  --uninstall-watcher      remove the launchd plist.
 HELP
       exit 0 ;;
     -*)
@@ -114,6 +135,68 @@ if [ "$_take_value" -eq 1 ]; then
 fi
 
 LOG_DIR="$HOME/net-diag"
+
+# ── Mode dispatch (exit after handling) ────────────────────────────────────
+if [ "$INSTALL_WATCHER" -eq 1 ]; then
+  mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
+  PLIST="$HOME/Library/LaunchAgents/com.netdiag.watcher.plist"
+  cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.netdiag.watcher</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$SCRIPT_PATH</string>
+    <string>--quick</string>
+    <string>--no-gping</string>
+    <string>--no-bufferbloat</string>
+    <string>--quiet</string>
+  </array>
+  <key>StartInterval</key><integer>900</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>$LOG_DIR/watcher.stdout.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/watcher.stderr.log</string>
+</dict>
+</plist>
+PLIST_EOF
+  launchctl unload "$PLIST" 2>/dev/null || true
+  launchctl load "$PLIST"
+  printf 'installed: %s (runs every 15 min)\n' "$PLIST"
+  printf 'tail log:   tail -f %s/watcher.stdout.log\n' "$LOG_DIR"
+  exit 0
+fi
+
+if [ "$UNINSTALL_WATCHER" -eq 1 ]; then
+  PLIST="$HOME/Library/LaunchAgents/com.netdiag.watcher.plist"
+  if [ -f "$PLIST" ]; then
+    launchctl unload "$PLIST" 2>/dev/null || true
+    rm -f "$PLIST"
+    printf 'removed: %s\n' "$PLIST"
+  else
+    printf 'no watcher installed at %s\n' "$PLIST"
+  fi
+  exit 0
+fi
+
+if [ "$SUMMARY" -eq 1 ]; then
+  python3 "$HELPERS_DIR/summary.py" \
+    --history "$LOG_DIR/baseline.jsonl" \
+    --window "$SUMMARY_WINDOW_HOURS"
+  exit 0
+fi
+
+if [ "$WATCH" -eq 1 ]; then
+  printf 'netdiag --watch: every %ds, Ctrl-C to stop.\n' "$WATCH_INTERVAL_S"
+  printf 'history appended to %s/baseline.jsonl\n\n' "$LOG_DIR"
+  while true; do
+    printf -- '----- %s -----\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    "$SCRIPT_PATH" --quick --no-gping --no-bufferbloat --quiet
+    sleep "$WATCH_INTERVAL_S"
+  done
+fi
+
 STAMP="$(date +%Y-%m-%d-%H%M%S)"
 TIMESTAMP_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ -n "$LOG_OVERRIDE" ]; then
