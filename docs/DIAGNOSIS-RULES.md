@@ -79,7 +79,18 @@ engine is a future step; for now they're listed verbatim for traceability.
 ## Rules to add (one per upcoming feature)
 
 These are placeholders; each will be filled in when its source feature lands.
-- **M1** — PMTU below 1500 → tunnel/PPPoE clamp; some sites hang.
+
+### M1 — Path MTU below 1500
+
+- Trigger: `mtu.effective < 1500`
+- Severity: `warn` (1400–1499) / `critical` (< 1400)
+- Evidence: largest DF-set payload that got through and the inferred MTU.
+- Recommendation: classic symptom of PPPoE / VPN / tunnelled link. Add MSS
+  clamping at the router or shrink the WAN MTU.
+- Rationale: TLS ClientHello + cert chain push frames to the path-MTU
+  ceiling; if DF is set and the router doesn't return ICMP frag-needed, the
+  handshake hangs while smaller-frame sites still work.
+
 - **MT1** — First lossy hop identified via `mtr` → blame the hop *before* it.
 - **V6-1** — v6 broken with v4 healthy → router/ISP v6 misconfig (Happy Eyeballs masks).
 - **VPN-1** — VPN active → "gateway" below is the VPN endpoint, not your LAN router.

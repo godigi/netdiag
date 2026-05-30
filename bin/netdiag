@@ -90,6 +90,8 @@ BUFFERBLOAT_GW_DELTA=""
 BUFFERBLOAT_INET_DELTA=""
 BUFFERBLOAT_GW_GRADE=""
 BUFFERBLOAT_INET_GRADE=""
+MTU_PATH_SIZE=""    # largest payload that passed DF
+MTU_EFFECTIVE=""    # MTU_PATH_SIZE + 28 (8 ICMP + 20 IP headers)
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -302,6 +304,30 @@ if [ "$QUICK" -eq 0 ] && [ "$NO_BUFFERBLOAT" -eq 0 ] \
   fi
 fi
 
+# ── 4c. PMTU black-hole probe ───────────────────────────────────────────────
+# Walks payload sizes downward with the DF bit set, looking for the largest
+# packet that gets a reply. An MTU below 1500 with otherwise healthy
+# connectivity is the classic cause of "some sites work, others hang."
+if [ "$QUICK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
+  hdr "Path MTU (DF-set probe to 1.1.1.1)"
+  for size in 1472 1452 1432 1412 1392 1372 1352 1300 1200; do
+    if ping -D -c 1 -t 2 -s "$size" 1.1.1.1 >/dev/null 2>&1; then
+      MTU_PATH_SIZE="$size"
+      break
+    fi
+  done
+  if [ -n "$MTU_PATH_SIZE" ]; then
+    MTU_EFFECTIVE=$((MTU_PATH_SIZE + 28))
+    if [ "$MTU_EFFECTIVE" -ge 1500 ]; then
+      ok "Effective path MTU: ${MTU_EFFECTIVE} (full ethernet frames pass DF)"
+    else
+      warn "Effective path MTU: ${MTU_EFFECTIVE} (< 1500) — likely PPPoE / VPN / tunnel clamp."
+    fi
+  else
+    bad "PMTU probe: even 1228-byte frames fail with DF. Severe MTU issue or DF stripped."
+  fi
+fi
+
 # ── 5. DNS ─────────────────────────────────────────────────────────────────
 hdr "DNS"
 dns_check() {
@@ -389,6 +415,9 @@ esac
 case "${BUFFERBLOAT_INET_GRADE:-}" in
   C|D|F) DIAG+=("Bufferbloat at ISP hop (grade ${BUFFERBLOAT_INET_GRADE}, +${BUFFERBLOAT_INET_DELTA} ms under load) — your ISP's CPE/uplink is the bottleneck. Call the ISP; if you control the modem, try a firmware update.") ;;
 esac
+if [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1500 ]; then
+  DIAG+=("Path MTU ${MTU_EFFECTIVE} (< 1500) — TLS handshakes to some sites will hang while others work. Suspect a PPPoE link, VPN, or tunnelled connection that needs MSS clamping at the router.")
+fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."
 else
