@@ -24,6 +24,7 @@ QUICK=0
 NO_BUFFERBLOAT=0
 SPEED=0
 NO_SPEED=0
+TARGET=""
 for arg in "$@"; do
   case "$arg" in
     --no-gping)       NO_GPING=1 ;;
@@ -38,7 +39,11 @@ Runs a battery of checks, writes a timestamped report, attempts a root-cause
 diagnosis (wifi vs router vs ISP vs DNS), then launches gping against the
 discovered hops for live monitoring.
 
-Usage: netdiag [--quick] [--no-gping] [--no-bufferbloat] [--speed]
+Usage: netdiag [TARGET] [--quick] [--no-gping] [--no-bufferbloat] [--speed]
+
+Positional:
+  TARGET            hostname/IP to add to ping, DNS, TCP reach, and a second
+                    traceroute — useful for "this specific site is slow"
 
 Flags:
   --quick           skip slow checks (bufferbloat, per-hop loss, speed test,
@@ -50,6 +55,14 @@ Flags:
   --no-speed        forbid the speedtest even if --speed was passed
 HELP
       exit 0 ;;
+    -*)
+      printf 'netdiag: unknown flag: %s (see --help)\n' "$arg" >&2; exit 2 ;;
+    *)
+      if [ -n "$TARGET" ]; then
+        printf 'netdiag: only one TARGET allowed (got: %s and %s)\n' "$TARGET" "$arg" >&2
+        exit 2
+      fi
+      TARGET="$arg" ;;
   esac
 done
 
@@ -126,6 +139,15 @@ SPEEDTEST_SERVER=""
 NTP_DRIFT_S=""
 NTP_USING_NETWORK_TIME=""
 NTP_SERVER=""
+ARP_DUPLICATE_IPS=""
+ARP_GW_INCOMPLETE=0
+DHCP_SERVER=""
+DHCP_LEASE_START=""
+DHCP_LEASE_END=""
+DHCP_TIME_REMAINING_S=""
+DHCP_DNS_SERVERS=""
+TARGET_PING_LOSS=""
+TARGET_PING_RTT=""
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -336,6 +358,58 @@ if [ "$IS_WIFI" -eq 1 ]; then
   fi
 fi
 
+# ── 2d. DHCP lease detail ──────────────────────────────────────────────────
+if [ -n "$INTERFACE" ]; then
+  hdr "DHCP lease"
+  DHCP_SUMMARY="$(ipconfig getsummary "$INTERFACE" 2>/dev/null || true)"
+  DHCP_SERVER="$(printf '%s' "$DHCP_SUMMARY"      | awk -F': ' '/server_identifier/{print $2; exit}')"
+  DHCP_LEASE_START="$(printf '%s' "$DHCP_SUMMARY" | awk -F' : ' '/LeaseStartTime/{print $2; exit}')"
+  DHCP_LEASE_END="$(printf '%s' "$DHCP_SUMMARY"   | awk -F' : ' '/LeaseExpirationTime/{print $2; exit}')"
+  DHCP_DNS_SERVERS="$(printf '%s' "$DHCP_SUMMARY" | awk -F'[{}]' '/domain_name_server/{print $2; exit}')"
+
+  [ -n "$DHCP_SERVER" ]       && info "DHCP server: $DHCP_SERVER"
+  [ -n "$DHCP_LEASE_START" ]  && info "Lease started:  $DHCP_LEASE_START"
+  [ -n "$DHCP_LEASE_END" ]    && info "Lease expires:  $DHCP_LEASE_END"
+  if [ -n "$DHCP_LEASE_END" ]; then
+    LEASE_END_EPOCH="$(date -j -f '%m/%d/%Y %H:%M:%S' "$DHCP_LEASE_END" +%s 2>/dev/null || echo 0)"
+    NOW_EPOCH="$(date +%s)"
+    if [ "$LEASE_END_EPOCH" -gt 0 ]; then
+      DHCP_TIME_REMAINING_S=$((LEASE_END_EPOCH - NOW_EPOCH))
+      if [ "$DHCP_TIME_REMAINING_S" -gt 0 ]; then
+        REMAINING_HRS=$((DHCP_TIME_REMAINING_S / 3600))
+        info "Time remaining: ~${REMAINING_HRS}h"
+        if [ "$DHCP_TIME_REMAINING_S" -lt 3600 ]; then
+          warn "Lease expires in $((DHCP_TIME_REMAINING_S / 60)) min — renewal failures could drop the link."
+        fi
+      fi
+    fi
+  fi
+  [ -n "$DHCP_DNS_SERVERS" ] && info "DHCP-handed DNS: $DHCP_DNS_SERVERS"
+fi
+
+# ── 2e. ARP / duplicate-IP scan ────────────────────────────────────────────
+hdr "ARP / duplicate-IP scan"
+ARP_OUT="$(arp -an 2>/dev/null)"
+# Parse "? (IP) at MAC ..." lines, drop "(incomplete)" entries, find IPs that
+# show up with > 1 distinct MAC.
+ARP_PAIRS="$(printf '%s\n' "$ARP_OUT" \
+  | awk '/ at / && $4 != "(incomplete)" {
+      ip = $2; gsub(/[()]/, "", ip); print ip, $4
+    }' | sort -u)"
+ARP_DUPLICATE_IPS="$(printf '%s\n' "$ARP_PAIRS" | awk '{print $1}' | uniq -d | tr '\n' ' ')"
+if [ -n "$GATEWAY" ] && printf '%s\n' "$ARP_OUT" | grep -qF "($GATEWAY) at (incomplete)"; then
+  ARP_GW_INCOMPLETE=1
+  bad "Gateway $GATEWAY is (incomplete) in the ARP table — L2 broken."
+fi
+if [ -n "${ARP_DUPLICATE_IPS//[[:space:]]/}" ]; then
+  bad "Duplicate IP(s) seen:"
+  for dup in $ARP_DUPLICATE_IPS; do
+    printf '%s\n' "$ARP_PAIRS" | awk -v ip="$dup" '$1==ip{print "      "$0}' | tee -a "$LOG"
+  done
+else
+  ok "No duplicate IPs in ARP table."
+fi
+
 # ── 3. Gateway reachability ────────────────────────────────────────────────
 hdr "Gateway reachability"
 if [ -n "$GATEWAY" ]; then
@@ -375,6 +449,20 @@ if printf '%s' "$CAPTIVE" | grep -q '^200'; then
   ok "No captive portal."
 elif printf '%s' "$CAPTIVE" | grep -qE '^3[0-9][0-9]'; then
   warn "Captive portal detected (HTTP $CAPTIVE) — log in via browser."
+fi
+
+# TARGET-specific ping for "this site is slow" investigations.
+if [ -n "$TARGET" ]; then
+  TARGET_PING_OUT="$(ping -c 5 -t 3 -i 0.2 "$TARGET" 2>/dev/null || true)"
+  TARGET_PING_LOSS="$(printf '%s\n' "$TARGET_PING_OUT" \
+    | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
+  TARGET_PING_RTT="$(printf '%s\n' "$TARGET_PING_OUT" \
+    | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  if [ -n "$TARGET_PING_RTT" ]; then
+    ok "ping $TARGET: ${TARGET_PING_LOSS:-?}% loss, ${TARGET_PING_RTT} ms avg"
+  else
+    bad "ping $TARGET: no reply"
+  fi
 fi
 
 # ── 4b. Bufferbloat (loaded vs idle latency) ────────────────────────────────
@@ -473,7 +561,13 @@ dns_check() {
 DNS_FAIL=0
 SYS_RES="$(scutil --dns 2>/dev/null | awk '/nameserver\[0\]/{print $3; exit}')"
 [ -n "$SYS_RES" ] && info "System resolver: $SYS_RES"
-for name in apple.com cloudflare.com; do
+if [ -n "$DHCP_DNS_SERVERS" ] && [ -n "$SYS_RES" ] \
+   && ! printf '%s' "$DHCP_DNS_SERVERS" | grep -qF "$SYS_RES"; then
+  warn "DHCP handed out '$DHCP_DNS_SERVERS' but the system resolver is $SYS_RES — manual DNS override?"
+fi
+DNS_NAMES=( apple.com cloudflare.com )
+[ -n "$TARGET" ] && DNS_NAMES+=( "$TARGET" )
+for name in "${DNS_NAMES[@]}"; do
   if [ -n "$SYS_RES" ]; then
     dns_check "$SYS_RES" "$name" || DNS_FAIL=$((DNS_FAIL+1))
   fi
@@ -538,6 +632,11 @@ fi
 # means "the network is up, ICMP is just filtered."
 hdr "TCP reach"
 TCP_TARGETS=( "1.1.1.1:443" "1.1.1.1:53" "8.8.8.8:443" "github.com:443" "apple.com:443" )
+if [ -n "$TARGET" ]; then
+  _dup=0
+  for _t in "${TCP_TARGETS[@]}"; do [ "$_t" = "$TARGET:443" ] && _dup=1; done
+  [ "$_dup" -eq 0 ] && TCP_TARGETS+=( "$TARGET:443" )
+fi
 TCP_TMP="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-tcp.XXXXXX")"
 for entry in "${TCP_TARGETS[@]}"; do
   host="${entry%:*}"; port="${entry##*:}"
@@ -650,6 +749,14 @@ while read -r line; do
 done <<EOF
 $(printf '%s\n' "$TRACE_OUT" | tail -n +2)
 EOF
+
+# Second traceroute to TARGET when supplied (so we can see if the divergence
+# from the 1.1.1.1 path is what's hurting that specific host).
+if [ -n "$TARGET" ]; then
+  hdr "Traceroute to $TARGET"
+  TRACE_TARGET_OUT="$(traceroute -n -q 1 -w 2 -m 18 "$TARGET" 2>/dev/null)"
+  printf '%s\n' "$TRACE_TARGET_OUT" | tee -a "$LOG" | sed 's/^/  /'
+fi
 
 # ── 7. Per-hop loss (mtr if available + sudo, else 5-packet fallback) ──────
 run_per_hop_fallback() {
@@ -774,6 +881,18 @@ if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
 fi
 if [ -n "$NTP_DRIFT_S" ] && awk -v d="$NTP_DRIFT_S" 'BEGIN{exit !((d<0?-d:d) > 30)}'; then
   DIAG+=("System clock drifted ${NTP_DRIFT_S}s — TLS handshakes are likely failing across the board. Re-enable network time (System Settings → General → Date & Time).")
+fi
+if [ "$ARP_GW_INCOMPLETE" -eq 1 ]; then
+  DIAG+=("Gateway ARP entry is (incomplete) — L2 to the router is broken. Cable/AP problem; ICMP and everything else above is meaningless until ARP resolves.")
+fi
+if [ -n "${ARP_DUPLICATE_IPS//[[:space:]]/}" ]; then
+  DIAG+=("Duplicate IP(s) detected in ARP: ${ARP_DUPLICATE_IPS}— another device on the LAN is using the same address. Static-IP collision or rogue DHCP.")
+fi
+if [ -n "$DHCP_TIME_REMAINING_S" ] && [ "$DHCP_TIME_REMAINING_S" -gt 0 ] && [ "$DHCP_TIME_REMAINING_S" -lt 3600 ]; then
+  DIAG+=("DHCP lease expires in $((DHCP_TIME_REMAINING_S / 60)) min — if the renewal fails (router rebooting / DHCP scope full), the link will drop without warning.")
+fi
+if [ -n "$DHCP_DNS_SERVERS" ] && [ -n "$SYS_RES" ] && ! printf '%s' "$DHCP_DNS_SERVERS" | grep -qF "$SYS_RES"; then
+  DIAG+=("DHCP gave DNS as '$DHCP_DNS_SERVERS' but the system uses $SYS_RES — someone manually overrode it. Fine if intentional; surprising otherwise.")
 fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."

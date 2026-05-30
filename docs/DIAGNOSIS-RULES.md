@@ -171,6 +171,31 @@ These are placeholders; each will be filled in when its source feature lands.
   rotation window; days of drift breaks everything. Users see this as
   "nothing loads" without any network-level fault to blame.
 - **BL-1** — Metric regression vs 30-day median (gateway RTT, RSSI, PMTU, etc.).
-- **DI-1** — Duplicate IPs in ARP table or `(incomplete)` gateway entry.
-- **DH-1** — DHCP lease expires within 1 hour.
-- **DH-2** — DHCP-handed DNS differs from system resolver — user override.
+### DI-1 — Duplicate IPs or incomplete gateway ARP
+
+- Trigger: any IP in `arp -an` with > 1 distinct MAC, or the gateway IP
+  marked `(incomplete)`.
+- Severity: `critical`.
+- Evidence: duplicate IP list, or `(IP) at (incomplete)` line for the
+  gateway.
+- Recommendation: a duplicate IP means another LAN device is squatting
+  the address (static-IP collision or rogue DHCP server). Incomplete
+  gateway = L2 to the router is broken (cable, AP, switch port).
+- Rationale: nothing above this in the stack matters if ARP can't
+  resolve. Surface it early.
+
+### DH-1 — DHCP lease expires within 1 hour
+
+- Trigger: `dhcp.time_remaining_s < 3600`.
+- Severity: `warn`.
+- Evidence: lease expiration time + computed minutes remaining.
+- Recommendation: if a renewal fails (router rebooting or DHCP scope
+  exhausted), the link will drop without warning. Watch for it.
+
+### DH-2 — DHCP-handed DNS differs from system resolver
+
+- Trigger: `dhcp.dns_servers` does not contain `system.resolver`.
+- Severity: `info`.
+- Evidence: both addresses side-by-side.
+- Recommendation: fine if intentional; surprising otherwise. Common
+  cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
