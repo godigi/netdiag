@@ -10,7 +10,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install bats-core and jq
-        run: brew install bats-core jq
+      - name: Install bats-core, jq, and bash 5
+        # netdiag's startup check exits 3 if bash 5 isn't at
+        # /opt/homebrew/bin/bash or /usr/local/bin/bash, which makes the
+        # --help smoke test fail on a stock runner.
+        run: brew install bats-core jq bash
       - name: Run bats tests
         run: bats tests/
