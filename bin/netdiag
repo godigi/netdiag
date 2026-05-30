@@ -93,6 +93,9 @@ BUFFERBLOAT_INET_GRADE=""
 MTU_PATH_SIZE=""    # largest payload that passed DF
 MTU_EFFECTIVE=""    # MTU_PATH_SIZE + 28 (8 ICMP + 20 IP headers)
 MTR_FIRST_LOSSY_HOP=""
+VPN_ACTIVE=0
+VPN_TYPE=""
+VPN_NAME=""
 IPV6_AVAILABLE=0
 IPV6_GLOBAL_ADDR=""
 IPV6_GATEWAY=""
@@ -100,6 +103,8 @@ IPV6_PING_LOSS=""
 IPV6_AAAA_OK=0
 IPV6_TRACE_HOPS=""
 IPV6_TCP_OK=0
+TCP_REACH_ANY_OK=0
+TCP_REACH_RESULTS=()  # each entry: "host:port|OK|ms" or "host:port|FAIL"
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -135,6 +140,41 @@ GW_COUNT="$(netstat -rn -f inet 2>/dev/null | awk '$1=="default"{print $2}' | so
 if [ "${GW_COUNT:-0}" -gt 1 ]; then
   warn "Multiple default gateways detected:"
   netstat -rn -f inet | awk '$1=="default"{print "      "$2"  ("$NF")"}' | tee -a "$LOG"
+fi
+
+# ── 1b. VPN active? ─────────────────────────────────────────────────────────
+hdr "VPN"
+# (a) Managed VPNs surface as Connected entries in scutil --nc list.
+SCUTIL_NC="$(scutil --nc list 2>/dev/null || true)"
+if printf '%s' "$SCUTIL_NC" | grep -q '(Connected)'; then
+  VPN_ACTIVE=1
+  VPN_TYPE="managed"
+  VPN_NAME="$(printf '%s' "$SCUTIL_NC" | awk -F'"' '/\(Connected\)/{print $2; exit}')"
+fi
+# (b) Tailscale exposes a JSON status; BackendState=="Running" means connected.
+if [ "$VPN_ACTIVE" -eq 0 ] && command -v tailscale >/dev/null 2>&1 \
+   && command -v jq >/dev/null 2>&1; then
+  TS_JSON="$(tailscale status --json 2>/dev/null || true)"
+  if printf '%s' "$TS_JSON" | jq -e '.BackendState=="Running"' >/dev/null 2>&1; then
+    VPN_ACTIVE=1
+    VPN_TYPE="tailscale"
+    VPN_NAME="tailscale ($(printf '%s' "$TS_JSON" | jq -r .Self.HostName 2>/dev/null))"
+  fi
+fi
+# (c) Default route via utun* / wg* is the most reliable WireGuard-style
+# signal. macOS always has spare utun interfaces, so existence alone is
+# meaningless — we want one that's actually carrying the default route.
+if [ "$VPN_ACTIVE" -eq 0 ] && printf '%s' "$INTERFACE" | grep -qE '^(utun|wg)'; then
+  VPN_ACTIVE=1
+  VPN_TYPE="utun-route"
+  VPN_NAME="$INTERFACE"
+fi
+
+if [ "$VPN_ACTIVE" -eq 1 ]; then
+  bad "VPN active: $VPN_NAME ($VPN_TYPE)"
+  info "Heads-up: the 'gateway' below is the VPN endpoint, not your LAN router."
+else
+  ok "No VPN active."
 fi
 
 # ── 2. WiFi info ───────────────────────────────────────────────────────────
@@ -406,6 +446,45 @@ else
   fi
 fi
 
+# ── 5c. TCP reach panel ─────────────────────────────────────────────────────
+# nc -G N is the per-connect timeout in seconds. -z just scans. Some networks
+# block ICMP outright but allow TCP — a green TCP panel with a red ping panel
+# means "the network is up, ICMP is just filtered."
+hdr "TCP reach"
+TCP_TARGETS=( "1.1.1.1:443" "1.1.1.1:53" "8.8.8.8:443" "github.com:443" "apple.com:443" )
+TCP_TMP="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-tcp.XXXXXX")"
+for entry in "${TCP_TARGETS[@]}"; do
+  host="${entry%:*}"; port="${entry##*:}"
+  out_file="$TCP_TMP/${host//[.:\/]/_}-${port}.out"
+  {
+    t0="$EPOCHREALTIME"
+    if nc -G 3 -z "$host" "$port" 2>/dev/null; then
+      t1="$EPOCHREALTIME"
+      elapsed_ms="$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.0f", (b-a)*1000}')"
+      printf 'OK\t%s\n' "$elapsed_ms"
+    else
+      printf 'FAIL\n'
+    fi
+  } > "$out_file" &
+done
+wait
+for entry in "${TCP_TARGETS[@]}"; do
+  host="${entry%:*}"; port="${entry##*:}"
+  out_file="$TCP_TMP/${host//[.:\/]/_}-${port}.out"
+  [ -f "$out_file" ] || { warn "$host:$port  (no result captured)"; continue; }
+  status="$(awk '{print $1; exit}' "$out_file")"
+  elapsed="$(awk '{print $2; exit}' "$out_file")"
+  if [ "$status" = "OK" ]; then
+    TCP_REACH_ANY_OK=1
+    TCP_REACH_RESULTS+=("${entry}|OK|${elapsed}")
+    ok "$host:$port  (${elapsed} ms)"
+  else
+    TCP_REACH_RESULTS+=("${entry}|FAIL")
+    bad "$host:$port  failed"
+  fi
+done
+rm -rf "$TCP_TMP"
+
 # ── 6. Traceroute ──────────────────────────────────────────────────────────
 hdr "Traceroute to 1.1.1.1"
 TRACE_OUT="$(traceroute -n -q 1 -w 2 -m 18 1.1.1.1 2>/dev/null)"
@@ -529,6 +608,9 @@ if [ "$IPV6_AVAILABLE" -eq 1 ]; then
   if [ "$v6_broken" -eq 1 ] && [ "$PUBLIC_OK" -eq 1 ]; then
     DIAG+=("IPv6 is broken (loss ${IPV6_PING_LOSS}%, AAAA $( [ $IPV6_AAAA_OK -eq 1 ] && echo OK || echo FAIL ), TCP6 $( [ $IPV6_TCP_OK -eq 1 ] && echo OK || echo FAIL )) while IPv4 works — router/ISP v6 misconfig. Happy Eyeballs hides this and just makes some sites mysteriously slow.")
   fi
+fi
+if [ "$TCP_REACH_ANY_OK" -eq 1 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge 50 ]; then
+  DIAG+=("TCP reach panel succeeded but gateway ping shows ${GW_LOSS}% loss — ICMP is being filtered somewhere on the path. Ignore the ping-based failures; the network itself is up.")
 fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."

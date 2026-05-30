@@ -116,8 +116,28 @@ These are placeholders; each will be filled in when its source feature lands.
   (large-CDN, Google, Cloudflare) by exactly the timeout window before
   v4 wins, ~250 ms — enough to feel like "the internet is laggy" without
   any v4-side culprit.
-- **VPN-1** — VPN active → "gateway" below is the VPN endpoint, not your LAN router.
-- **TCP-1** — TCP/443 works but ICMP fails → ICMP filtered; ignore ping-based negatives.
+### VPN-1 — VPN is carrying the default route
+
+- Trigger: `vpn.active == true` (any of: scutil --nc shows Connected,
+  tailscale status BackendState==Running, default route via utun*/wg*).
+- Severity: `info` (it's a heads-up, not a fault).
+- Evidence: VPN type and name.
+- Recommendation: the "gateway" line below is the VPN endpoint, not your
+  LAN router. RTT, loss, and traceroute reflect the tunnel — for a true
+  picture of the local link, drop the VPN or run with --no-vpn-bypass
+  (future flag).
+- Rationale: users blame the router when the VPN is the actual
+  bottleneck. Surfacing this up-front saves the support volley.
+### TCP-1 — TCP works, ICMP is filtered
+
+- Trigger: `tcp_reach.any_ok == true AND gateway.loss_pct >= 50`.
+- Severity: `info` (the network is fine; ICMP is misleading).
+- Evidence: which TCP probes succeeded, gateway loss%.
+- Recommendation: ignore the ping-based failures — connectivity is up.
+  ISPs / corporate gateways / hotel WiFi often block ICMP echo while
+  letting TCP through.
+- Rationale: ping-based diagnostics conflate "ICMP works" with "network
+  works." A green TCP panel + red ICMP panel is the textbook tell.
 - **WS-1** — Channel congestion → too many neighbouring APs on the same channel.
 - **WD-1** — WiFi link flapping → > 3 disconnects/hour.
 - **ST-1** — Speed regression vs baseline.
