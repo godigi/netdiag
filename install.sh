@@ -1,22 +1,51 @@
 #!/usr/bin/env bash
-# install.sh — symlink netdiag into a directory on $PATH.
+# install.sh — install netdiag and its bash 5 runtime dependency.
 #
-# Usage: ./install.sh [--prefix DIR]
+# Usage: ./install.sh [--prefix DIR] [--no-brew]
 #
 # Defaults to /usr/local/bin when writable, otherwise ~/bin (created if
-# missing). Pass --prefix to override.
+# missing). Pass --prefix to override the install location, --no-brew to
+# skip the Homebrew bash 5 bootstrap.
 
 set -euo pipefail
 
 PREFIX=""
+NO_BREW=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --prefix) PREFIX="$2"; shift 2 ;;
+    --prefix)  PREFIX="$2"; shift 2 ;;
+    --no-brew) NO_BREW=1; shift ;;
     -h|--help)
-      sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      cat <<'HELP'
+install.sh — install netdiag and its bash 5 runtime dependency.
+
+Usage: ./install.sh [--prefix DIR] [--no-brew]
+
+Defaults to /usr/local/bin when writable, otherwise ~/bin (created if
+missing). Pass --prefix to override the install location, --no-brew to
+skip the Homebrew bash 5 bootstrap.
+HELP
+      exit 0 ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
+
+# bash 5 is the runtime requirement (see bin/netdiag startup check). Try to
+# satisfy it via Homebrew if it isn't already present.
+have_bash5() {
+  [ -x /opt/homebrew/bin/bash ] || [ -x /usr/local/bin/bash ]
+}
+
+if [ "$NO_BREW" -eq 0 ] && ! have_bash5; then
+  if command -v brew >/dev/null 2>&1; then
+    printf 'installing Homebrew bash 5 (netdiag runtime dependency)...\n'
+    brew install bash
+  else
+    printf 'warning: bash 5+ not found and Homebrew not installed.\n' >&2
+    printf '         netdiag requires bash 5+. Install Homebrew, then:\n' >&2
+    printf '         brew install bash\n' >&2
+  fi
+fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 SRC="$REPO_ROOT/bin/netdiag"
@@ -41,5 +70,5 @@ printf 'installed: %s -> %s\n' "$DEST" "$SRC"
 
 case ":$PATH:" in
   *":$PREFIX:"*) ;;
-  *) printf 'note: %s is not on $PATH — add it to your shell rc\n' "$PREFIX" ;;
+  *) printf 'note: %s is not in your PATH — add it to your shell rc\n' "$PREFIX" ;;
 esac

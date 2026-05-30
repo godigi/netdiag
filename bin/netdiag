@@ -6,6 +6,17 @@
 #
 # Usage: netdiag [--no-gping] [--quick]
 
+# Require bash 5+. Re-exec under Homebrew bash if found, otherwise fail clean.
+if [ -z "${BASH_VERSION:-}" ] || [ "${BASH_VERSINFO[0]:-0}" -lt 5 ]; then
+  for _cand in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+    if [ -x "$_cand" ]; then
+      exec "$_cand" "$0" "$@"
+    fi
+  done
+  printf 'netdiag: requires bash 5+. Install with: brew install bash\n' >&2
+  exit 3
+fi
+
 set -u
 
 NO_GPING=0
@@ -15,7 +26,15 @@ for arg in "$@"; do
     --no-gping) NO_GPING=1 ;;
     --quick)    QUICK=1 ;;
     -h|--help)
-      sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      cat <<'HELP'
+netdiag — full network investigation for macOS.
+Runs a battery of checks, writes a timestamped report, attempts a root-cause
+diagnosis (wifi vs router vs ISP vs DNS), then launches gping against the
+discovered hops for live monitoring.
+
+Usage: netdiag [--no-gping] [--quick]
+HELP
+      exit 0 ;;
   esac
 done
 
@@ -117,6 +136,7 @@ if [ "$IS_WIFI" -eq 1 ]; then
     TXRATE="$(printf '%s\n' "$WDUTIL_OUT" | awk -F': ' '/Tx Rate/{print $2; exit}')"
     PHYMODE="$(printf '%s\n' "$WDUTIL_OUT"| awk -F': ' '/PHY Mode/{print $2; exit}')"
     WIFI_RSSI="${RSSI:-}"
+    # shellcheck disable=SC2034 # reserved for upcoming JSON/baseline support
     WIFI_NOISE="${NOISE:-}"
     [ -n "$RSSI" ]  && info "RSSI: ${RSSI} dBm"
     [ -n "$NOISE" ] && info "Noise: ${NOISE} dBm"
@@ -241,6 +261,7 @@ if [ "$QUICK" -eq 0 ] && [ "${#HOPS[@]}" -gt 0 ]; then
     else
       warn "hop $i  $h  ${loss}% loss  ${lat:-?} ms"
       [ -z "$FIRST_LOSSY" ] && FIRST_LOSSY="hop $i ($h)"
+      # shellcheck disable=SC2034 # reserved for upcoming JSON/baseline support
       [ "$i" -eq 2 ] && NEXTHOP_LOSS="$loss"
     fi
   done
