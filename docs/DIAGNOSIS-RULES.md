@@ -58,12 +58,27 @@ engine is a future step; for now they're listed verbatim for traceability.
 - Severity: `warn`
 - Recommendation: change resolver (1.1.1.1 or 8.8.8.8).
 
+### B1 — Bufferbloat at gateway hop
+
+- Trigger: `bufferbloat.gw_grade ∈ {C, D, F}`
+- Severity: `warn` (C) / `critical` (D, F)
+- Evidence: idle gw RTT, loaded gw RTT, delta in ms, grade.
+- Recommendation: router lacks SQM/fq_codel. Enable Smart Queue Management
+  in the router UI, or replace with a router that supports cake/fq_codel.
+- Rationale: the latency spike happens before traffic ever leaves the LAN,
+  so the queue depth lives in your router's WAN egress buffer.
+
+### B2 — Bufferbloat at ISP hop only
+
+- Trigger: `bufferbloat.inet_grade ∈ {C, D, F}`
+- Severity: `warn` (C) / `critical` (D, F)
+- Evidence: idle internet RTT, loaded internet RTT, delta, grade.
+- Recommendation: your ISP's CPE/uplink is the bottleneck. Call the ISP;
+  if you control the modem, try a firmware update.
+
 ## Rules to add (one per upcoming feature)
 
 These are placeholders; each will be filled in when its source feature lands.
-
-- **B1** — Bufferbloat at gateway → router lacks SQM/fq_codel.
-- **B2** — Bufferbloat at ISP hop only → ISP CPE is the bottleneck.
 - **M1** — PMTU below 1500 → tunnel/PPPoE clamp; some sites hang.
 - **MT1** — First lossy hop identified via `mtr` → blame the hop *before* it.
 - **V6-1** — v6 broken with v4 healthy → router/ISP v6 misconfig (Happy Eyeballs masks).

@@ -21,10 +21,12 @@ set -u
 
 NO_GPING=0
 QUICK=0
+NO_BUFFERBLOAT=0
 for arg in "$@"; do
   case "$arg" in
-    --no-gping) NO_GPING=1 ;;
-    --quick)    QUICK=1 ;;
+    --no-gping)       NO_GPING=1 ;;
+    --quick)          QUICK=1 ;;
+    --no-bufferbloat) NO_BUFFERBLOAT=1 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -32,7 +34,13 @@ Runs a battery of checks, writes a timestamped report, attempts a root-cause
 diagnosis (wifi vs router vs ISP vs DNS), then launches gping against the
 discovered hops for live monitoring.
 
-Usage: netdiag [--no-gping] [--quick]
+Usage: netdiag [--quick] [--no-gping] [--no-bufferbloat]
+
+Flags:
+  --quick           skip slow checks (bufferbloat, per-hop loss)
+  --no-gping        don't launch gping after the report
+  --no-bufferbloat  skip the 100 MB / 10 s bufferbloat probe (saves data on
+                    metered links)
 HELP
       exit 0 ;;
   esac
@@ -74,6 +82,26 @@ PUBLIC_OK=0         # 1 = internet reachable
 INTERFACE=""
 GATEWAY=""
 HOPS=()
+BUFFERBLOAT_IDLE_GW_RTT=""
+BUFFERBLOAT_LOADED_GW_RTT=""
+BUFFERBLOAT_IDLE_INET_RTT=""
+BUFFERBLOAT_LOADED_INET_RTT=""
+BUFFERBLOAT_GW_DELTA=""
+BUFFERBLOAT_INET_DELTA=""
+BUFFERBLOAT_GW_GRADE=""
+BUFFERBLOAT_INET_GRADE=""
+
+# Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
+# A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
+grade_bufferbloat() {
+  awk -v d="$1" 'BEGIN{
+    if (d+0 < 5)   { print "A"; exit }
+    if (d+0 < 30)  { print "B"; exit }
+    if (d+0 < 60)  { print "C"; exit }
+    if (d+0 < 200) { print "D"; exit }
+    print "F";
+  }'
+}
 
 say "${C_BOLD}netdiag${C_RESET}  ${C_DIM}$STAMP${C_RESET}"
 say "${C_DIM}log: $LOG${C_RESET}"
@@ -213,6 +241,67 @@ elif printf '%s' "$CAPTIVE" | grep -qE '^3[0-9][0-9]'; then
   warn "Captive portal detected (HTTP $CAPTIVE) — log in via browser."
 fi
 
+# ── 4b. Bufferbloat (loaded vs idle latency) ────────────────────────────────
+if [ "$QUICK" -eq 0 ] && [ "$NO_BUFFERBLOAT" -eq 0 ] \
+   && [ -n "$GATEWAY" ] && [ "$PUBLIC_OK" -eq 1 ]; then
+  hdr "Bufferbloat (loaded vs idle latency)"
+
+  # Idle baseline: reuse gateway RTT from section 3; do a quick internet ping.
+  BB_IDLE_INET_OUT="$(ping -c 8 -t 2 -i 0.2 1.1.1.1 2>/dev/null || true)"
+  BUFFERBLOAT_IDLE_INET_RTT="$(printf '%s\n' "$BB_IDLE_INET_OUT" \
+    | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  BUFFERBLOAT_IDLE_GW_RTT="${GW_LATENCY:-}"
+
+  if [ -z "$BUFFERBLOAT_IDLE_INET_RTT" ] || [ -z "$BUFFERBLOAT_IDLE_GW_RTT" ]; then
+    warn "Skipping bufferbloat — idle baseline failed."
+  else
+    info "Idle:  gateway ${BUFFERBLOAT_IDLE_GW_RTT} ms · internet ${BUFFERBLOAT_IDLE_INET_RTT} ms"
+    info "Loading link with 100 MB download for 10 s..."
+
+    BB_TMP="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-bb.XXXXXX")"
+    # Background: 100 MB download capped at 10 s wall-clock.
+    curl -s -o /dev/null --max-time 10 \
+      'https://speed.cloudflare.com/__down?bytes=104857600' \
+      >/dev/null 2>&1 &
+    BB_DL_PID=$!
+
+    # Brief settle so the TCP slow-start ramps before we start sampling.
+    sleep 0.5
+    ping -c 45 -t 2 -i 0.2 "$GATEWAY" > "$BB_TMP/gw.ping" 2>/dev/null &
+    BB_PG_PID=$!
+    ping -c 45 -t 2 -i 0.2 1.1.1.1   > "$BB_TMP/inet.ping" 2>/dev/null &
+    BB_PI_PID=$!
+    wait "$BB_PG_PID" "$BB_PI_PID"
+    # Reap the download (--max-time should have already ended it).
+    wait "$BB_DL_PID" 2>/dev/null || true
+
+    BUFFERBLOAT_LOADED_GW_RTT="$(awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}' "$BB_TMP/gw.ping")"
+    BUFFERBLOAT_LOADED_INET_RTT="$(awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}' "$BB_TMP/inet.ping")"
+    rm -rf "$BB_TMP"
+
+    if [ -z "$BUFFERBLOAT_LOADED_GW_RTT" ] || [ -z "$BUFFERBLOAT_LOADED_INET_RTT" ]; then
+      warn "Loaded ping returned no rtt summary — link likely saturated to the point of total loss."
+    else
+      BUFFERBLOAT_GW_DELTA="$(awk -v a="$BUFFERBLOAT_IDLE_GW_RTT" -v b="$BUFFERBLOAT_LOADED_GW_RTT" \
+        'BEGIN{printf "%.1f", b-a}')"
+      BUFFERBLOAT_INET_DELTA="$(awk -v a="$BUFFERBLOAT_IDLE_INET_RTT" -v b="$BUFFERBLOAT_LOADED_INET_RTT" \
+        'BEGIN{printf "%.1f", b-a}')"
+      BUFFERBLOAT_GW_GRADE="$(grade_bufferbloat "$BUFFERBLOAT_GW_DELTA")"
+      BUFFERBLOAT_INET_GRADE="$(grade_bufferbloat "$BUFFERBLOAT_INET_DELTA")"
+
+      info "Loaded: gateway ${BUFFERBLOAT_LOADED_GW_RTT} ms (+${BUFFERBLOAT_GW_DELTA} ms) · internet ${BUFFERBLOAT_LOADED_INET_RTT} ms (+${BUFFERBLOAT_INET_DELTA} ms)"
+      for pair in "gateway:${BUFFERBLOAT_GW_GRADE}" "internet:${BUFFERBLOAT_INET_GRADE}"; do
+        label="${pair%%:*}"; grade="${pair##*:}"
+        case "$grade" in
+          A|B) ok   "Bufferbloat (${label}): grade ${grade}" ;;
+          C)   warn "Bufferbloat (${label}): grade ${grade} — noticeable under load" ;;
+          D|F) bad  "Bufferbloat (${label}): grade ${grade} — VOIP/Zoom will glitch" ;;
+        esac
+      done
+    fi
+  fi
+fi
+
 # ── 5. DNS ─────────────────────────────────────────────────────────────────
 hdr "DNS"
 dns_check() {
@@ -294,6 +383,12 @@ fi
 if [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
   DIAG+=("Internet reachable but DNS partially broken → try changing resolver (1.1.1.1 / 8.8.8.8).")
 fi
+case "${BUFFERBLOAT_GW_GRADE:-}" in
+  C|D|F) DIAG+=("Bufferbloat at gateway (grade ${BUFFERBLOAT_GW_GRADE}, +${BUFFERBLOAT_GW_DELTA} ms under load) — router lacks SQM/fq_codel. Enable Smart Queue Management in the router UI or replace it with one that supports cake/fq_codel.") ;;
+esac
+case "${BUFFERBLOAT_INET_GRADE:-}" in
+  C|D|F) DIAG+=("Bufferbloat at ISP hop (grade ${BUFFERBLOAT_INET_GRADE}, +${BUFFERBLOAT_INET_DELTA} ms under load) — your ISP's CPE/uplink is the bottleneck. Call the ISP; if you control the modem, try a firmware update.") ;;
+esac
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."
 else
