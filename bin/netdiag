@@ -54,6 +54,7 @@ SUMMARY=0
 SUMMARY_WINDOW_HOURS=24
 INSTALL_WATCHER=0
 UNINSTALL_WATCHER=0
+WATCH_CHILD=0
 TARGET=""
 _take_value=0
 while [ "$#" -gt 0 ]; do
@@ -78,6 +79,7 @@ while [ "$#" -gt 0 ]; do
     --summary=*)      SUMMARY=1; SUMMARY_WINDOW_HOURS="${1#--summary=}" ;;
     --install-watcher)   INSTALL_WATCHER=1 ;;
     --uninstall-watcher) UNINSTALL_WATCHER=1 ;;
+    --watch-child)       WATCH_CHILD=1 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -190,9 +192,20 @@ fi
 if [ "$WATCH" -eq 1 ]; then
   printf 'netdiag --watch: every %ds, Ctrl-C to stop.\n' "$WATCH_INTERVAL_S"
   printf 'history appended to %s/baseline.jsonl\n\n' "$LOG_DIR"
+  WATCH_ITER=0
+  # shellcheck disable=SC2329 # invoked via the trap below
+  watch_stop() {
+    printf '\nnetdiag --watch stopped after %d iteration(s).\n' "$WATCH_ITER"
+    printf 'See %s/baseline.jsonl or run: netdiag --summary\n' "$LOG_DIR"
+    exit 0
+  }
+  trap watch_stop INT TERM
   while true; do
-    printf -- '----- %s -----\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-    "$SCRIPT_PATH" --quick --no-gping --no-bufferbloat --quiet
+    WATCH_ITER=$((WATCH_ITER + 1))
+    printf -- '----- iter %d  %s -----\n' "$WATCH_ITER" "$(date '+%Y-%m-%d %H:%M:%S')"
+    # --watch-child suppresses the trailing "Report saved to" line so each
+    # iteration is just header + Diagnosis.
+    "$SCRIPT_PATH" --quick --no-gping --no-bufferbloat --quiet --watch-child
     sleep "$WATCH_INTERVAL_S"
   done
 fi
@@ -221,6 +234,9 @@ fi
 # Stdout gating: print iff not JSON_MODE and (not QUIET OR past the Diagnosis
 # header). The log gets ANSI-stripped raw text either way.
 DIAGNOSIS_REACHED=0
+DIAG=()
+DIAG_SEV=()
+MAX_SEVERITY=0  # exit code on a clean run: 0=healthy, 1=warn, 2=critical
 say() {
   if [ "$JSON_MODE" -eq 0 ] && \
      { [ "$QUIET" -eq 0 ] || [ "$DIAGNOSIS_REACHED" -eq 1 ]; }; then
@@ -249,6 +265,21 @@ log_pipe() {
   else
     cat >> "$LOG"
   fi
+}
+
+# Diagnosis severity tracker. Each call adds to DIAG/DIAG_SEV parallel arrays
+# and updates MAX_SEVERITY (the exit code on a clean run). Severity tiers:
+#   info     — heads-up only, doesn't bump exit code
+#   warn     — exit 1 if nothing more severe was seen
+#   critical — exit 2
+add_diag() {
+  local sev="$1"; shift
+  DIAG+=("$*")
+  DIAG_SEV+=("$sev")
+  case "$sev" in
+    critical) [ "$MAX_SEVERITY" -lt 2 ] && MAX_SEVERITY=2 ;;
+    warn)     [ "$MAX_SEVERITY" -lt 1 ] && MAX_SEVERITY=1 ;;
+  esac
 }
 
 # Findings — used by the diagnosis stage
@@ -310,9 +341,13 @@ DHCP_DNS_SERVERS=""
 TARGET_PING_LOSS=""
 TARGET_PING_RTT=""
 # Arrays-as-newline-strings for the JSON helper (env can't carry arrays).
-DNS_LINES=""           # one "resolver|name|answer|OK|FAIL" per line
-TCP_REACH_LINES=""     # one "host:port|OK|ms" or "host:port|FAIL" per line
-DIAGNOSIS_LINES=""     # one diagnosis summary per line
+DNS_LINES=""             # one "resolver|name|answer|OK|FAIL" per line
+TCP_REACH_LINES=""       # one "host:port|OK|ms" or "host:port|FAIL" per line
+DIAGNOSIS_LINES=""       # one "SEV|MSG" per line (SEV ∈ critical/warn/info)
+TRACE_LINES=""           # one "n|ip|rtt_ms" per line (1.1.1.1 traceroute)
+TARGET_TRACE_LINES=""    # same shape, for the optional TARGET traceroute
+PER_HOP_LINES=""         # one "n|ip|loss_pct|avg_ms" per line
+BASELINE_JSON=""         # raw JSON from helpers/baseline.py
 CAPTIVE_PORTAL=0
 WIFI_SSID=""
 WIFI_BSSID=""
@@ -514,15 +549,18 @@ fi
 
 # ── 2c. WiFi disconnect / roam history ─────────────────────────────────────
 # Queries the user's own log database — no sudo needed for these subsystems.
-# Times out the log call at 6s so a slow log database can't dominate the run.
-if [ "$IS_WIFI" -eq 1 ]; then
+# Skipped under --quick because `log show --last 1h` takes ~3 s.
+if [ "$IS_WIFI" -eq 1 ] && [ "$QUICK" -eq 0 ]; then
   hdr "WiFi disconnects (past ${WIFI_DISCONNECT_WINDOW_HOURS}h)"
   WIFI_LOG_OUT="$(log show \
       --predicate 'subsystem CONTAINS[c] "wifi" OR subsystem CONTAINS[c] "airport"' \
       --info --last "${WIFI_DISCONNECT_WINDOW_HOURS}h" 2>/dev/null \
     | grep -Ei 'association|disassoc|deauth|roam|link down|link up' || true)"
+  # Count only event lines, not `disassoc=...` substrings inside dictionary
+  # dumps. Anchor on a leading non-`=` character + canonical verb forms.
   WIFI_DISCONNECT_COUNT="$(printf '%s' "$WIFI_LOG_OUT" \
-    | grep -Eic 'disassoc|deauth|link down' || true)"
+    | grep -Eic '(disassociated|deauthenticated|link[[:space:]]+down|disconnect[[:space:]]+reason|reassociating)' \
+    || true)"
   WIFI_DISCONNECT_COUNT="${WIFI_DISCONNECT_COUNT:-0}"
   info "Disconnect/reassoc events in last hour: $WIFI_DISCONNECT_COUNT"
   if [ -n "$WIFI_LOG_OUT" ]; then
@@ -928,19 +966,36 @@ hdr "Traceroute to 1.1.1.1"
 TRACE_OUT="$(traceroute -n -q 1 -w 2 -m 18 1.1.1.1 2>/dev/null)"
 printf '%s\n' "$TRACE_OUT" | log_pipe | sed 's/^/  /'
 # Extract hop IPs (skip *'s)
+_hop_n=0
 while read -r line; do
   ip="$(printf '%s' "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/){print $i; exit}}')"
-  [ -n "$ip" ] && HOPS+=("$ip")
+  rtt="$(printf '%s' "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/){print $i; exit}}')"
+  if [ -n "$ip" ]; then
+    _hop_n=$((_hop_n + 1))
+    HOPS+=("$ip")
+    TRACE_LINES+="${_hop_n}|${ip}|${rtt:-}"$'\n'
+  fi
 done <<EOF
 $(printf '%s\n' "$TRACE_OUT" | tail -n +2)
 EOF
 
-# Second traceroute to TARGET when supplied (so we can see if the divergence
-# from the 1.1.1.1 path is what's hurting that specific host).
-if [ -n "$TARGET" ]; then
+# Second traceroute to TARGET when supplied. Skipped under --quick because an
+# 18-hop traceroute with -w 2 can take ~15 s in the worst case.
+if [ -n "$TARGET" ] && [ "$QUICK" -eq 0 ]; then
   hdr "Traceroute to $TARGET"
   TRACE_TARGET_OUT="$(traceroute -n -q 1 -w 2 -m 18 "$TARGET" 2>/dev/null)"
   printf '%s\n' "$TRACE_TARGET_OUT" | log_pipe | sed 's/^/  /'
+  _tt_n=0
+  while read -r line; do
+    ip="$(printf '%s' "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/){print $i; exit}}')"
+    rtt="$(printf '%s' "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/){print $i; exit}}')"
+    if [ -n "$ip" ]; then
+      _tt_n=$((_tt_n + 1))
+      TARGET_TRACE_LINES+="${_tt_n}|${ip}|${rtt:-}"$'\n'
+    fi
+  done <<EOF
+$(printf '%s\n' "$TRACE_TARGET_OUT" | tail -n +2)
+EOF
 fi
 
 # ── 7. Per-hop loss (mtr if available + sudo, else 5-packet fallback) ──────
@@ -949,13 +1004,25 @@ run_per_hop_fallback() {
     info "No hops to test (traceroute returned no IPs)."
     return
   fi
-  local i=0 h out loss lat first_lossy=""
+  # Fire all hop pings concurrently to one temp file per hop, then iterate
+  # in original hop order to preserve output. Bounded by the slowest hop
+  # (~1-2 s) rather than the sum of all hops (~12 s for 8 hops).
+  local hop_tmp i h out loss lat first_lossy=""
+  hop_tmp="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-hops.XXXXXX")"
+  i=0
   for h in "${HOPS[@]}"; do
     i=$((i+1))
-    out="$(ping -c 5 -t 2 -i 0.2 "$h" 2>&1)"
+    ping -c 5 -t 2 -i 0.2 "$h" > "$hop_tmp/hop-$i" 2>&1 &
+  done
+  wait
+  i=0
+  for h in "${HOPS[@]}"; do
+    i=$((i+1))
+    out="$(cat "$hop_tmp/hop-$i" 2>/dev/null)"
     loss="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
     lat="$(printf '%s\n' "$out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3)}' | head -1)"
     loss="${loss:-100}"
+    PER_HOP_LINES+="${i}|${h}|${loss}|${lat:-}"$'\n'
     if [ "${loss%.*}" -eq 0 ]; then
       info "hop $i  $h  0% loss  ${lat} ms"
     else
@@ -965,6 +1032,7 @@ run_per_hop_fallback() {
       [ "$i" -eq 2 ] && NEXTHOP_LOSS="$loss"
     fi
   done
+  rm -rf "$hop_tmp"
   [ -n "$first_lossy" ] && { MTR_FIRST_LOSSY_HOP="$first_lossy"; warn "First lossy hop: $first_lossy"; }
 }
 
@@ -983,6 +1051,7 @@ if [ "$QUICK" -eq 0 ]; then
       prev_loss=0
       while IFS=$'\t' read -r hopnum host loss avg; do
         [ -z "$hopnum" ] && continue
+        PER_HOP_LINES+="${hopnum}|${host}|${loss}|${avg}"$'\n'
         if awk -v l="$loss" 'BEGIN{exit !(l+0 > 2)}'; then
           warn "hop $hopnum  $host  ${loss}% loss  ${avg} ms avg"
           if [ -z "$MTR_FIRST_LOSSY_HOP" ] && awk -v p="$prev_loss" 'BEGIN{exit !(p+0 <= 2)}'; then
@@ -1010,41 +1079,44 @@ fi
 
 # ── 8. Diagnosis ───────────────────────────────────────────────────────────
 hdr "Diagnosis"
-DIAG=()
 if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt -75 ]; then
-  DIAG+=("WiFi signal is weak (RSSI ${WIFI_RSSI}). Move closer to the AP, or switch bands/AP.")
+  add_diag warn "WiFi signal is weak (RSSI ${WIFI_RSSI}). Move closer to the AP, or switch bands/AP."
 fi
 if [ -n "$WIFI_SNR" ] && [ "$WIFI_SNR" -lt 20 ]; then
-  DIAG+=("Low WiFi SNR (${WIFI_SNR} dB) suggests interference on this channel.")
+  add_diag warn "Low WiFi SNR (${WIFI_SNR} dB) suggests interference on this channel."
 fi
 if [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge 20 ]; then
   if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt -70 ]; then
-    DIAG+=("Gateway loss + weak WiFi → the WiFi link is your problem, not the router/ISP.")
+    add_diag critical "Gateway loss + weak WiFi → the WiFi link is your problem, not the router/ISP."
   else
-    DIAG+=("Gateway loss with healthy WiFi → router itself is misbehaving (reboot it).")
+    add_diag critical "Gateway loss with healthy WiFi → router itself is misbehaving (reboot it)."
   fi
 fi
 if [ "$PUBLIC_OK" -eq 0 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -eq 0 ]; then
   if [ "$DNS_OK" -eq 0 ]; then
-    DIAG+=("LAN healthy but no public reach AND DNS failing → DNS or upstream ISP outage.")
+    add_diag critical "LAN healthy but no public reach AND DNS failing → DNS or upstream ISP outage."
   else
-    DIAG+=("LAN healthy, DNS working, but no public reach → ISP-side outage.")
+    add_diag critical "LAN healthy, DNS working, but no public reach → ISP-side outage."
   fi
 fi
 if [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
-  DIAG+=("Internet reachable but DNS partially broken → try changing resolver (1.1.1.1 / 8.8.8.8).")
+  add_diag warn "Internet reachable but DNS partially broken → try changing resolver (1.1.1.1 / 8.8.8.8)."
 fi
 case "${BUFFERBLOAT_GW_GRADE:-}" in
-  C|D|F) DIAG+=("Bufferbloat at gateway (grade ${BUFFERBLOAT_GW_GRADE}, +${BUFFERBLOAT_GW_DELTA} ms under load) — router lacks SQM/fq_codel. Enable Smart Queue Management in the router UI or replace it with one that supports cake/fq_codel.") ;;
+  C)   add_diag warn     "Bufferbloat at gateway (grade C, +${BUFFERBLOAT_GW_DELTA} ms under load) — router lacks SQM/fq_codel. Enable Smart Queue Management in the router UI." ;;
+  D|F) add_diag critical "Bufferbloat at gateway (grade ${BUFFERBLOAT_GW_GRADE}, +${BUFFERBLOAT_GW_DELTA} ms under load) — router lacks SQM/fq_codel. VOIP/Zoom will glitch under load." ;;
 esac
 case "${BUFFERBLOAT_INET_GRADE:-}" in
-  C|D|F) DIAG+=("Bufferbloat at ISP hop (grade ${BUFFERBLOAT_INET_GRADE}, +${BUFFERBLOAT_INET_DELTA} ms under load) — your ISP's CPE/uplink is the bottleneck. Call the ISP; if you control the modem, try a firmware update.") ;;
+  C)   add_diag warn     "Bufferbloat at ISP hop (grade C, +${BUFFERBLOAT_INET_DELTA} ms under load) — ISP's CPE/uplink is the bottleneck." ;;
+  D|F) add_diag critical "Bufferbloat at ISP hop (grade ${BUFFERBLOAT_INET_GRADE}, +${BUFFERBLOAT_INET_DELTA} ms under load) — ISP CPE/uplink bottleneck. Call the ISP." ;;
 esac
-if [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1500 ]; then
-  DIAG+=("Path MTU ${MTU_EFFECTIVE} (< 1500) — TLS handshakes to some sites will hang while others work. Suspect a PPPoE link, VPN, or tunnelled connection that needs MSS clamping at the router.")
+if [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1400 ]; then
+  add_diag critical "Path MTU ${MTU_EFFECTIVE} (< 1400) — severe clamp. Most TLS sites will fail. Check for a misconfigured tunnel/VPN or PPPoE link."
+elif [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1500 ]; then
+  add_diag warn "Path MTU ${MTU_EFFECTIVE} (< 1500) — TLS handshakes to some sites will hang while others work. Suspect PPPoE / VPN / tunnel that needs MSS clamping at the router."
 fi
 if [ -n "$MTR_FIRST_LOSSY_HOP" ]; then
-  DIAG+=("First lossy hop: $MTR_FIRST_LOSSY_HOP — blame this hop (and the router/ISP that owns it). Loss on subsequent hops is usually inherited from this one, not new.")
+  add_diag warn "First lossy hop: $MTR_FIRST_LOSSY_HOP — blame this hop (and the router/ISP that owns it). Loss on subsequent hops is usually inherited from this one, not new."
 fi
 if [ "$IPV6_AVAILABLE" -eq 1 ]; then
   v6_broken=0
@@ -1052,39 +1124,51 @@ if [ "$IPV6_AVAILABLE" -eq 1 ]; then
   [ "$IPV6_AAAA_OK" -eq 0 ] && v6_broken=1
   [ "$IPV6_TCP_OK" -eq 0 ] && v6_broken=1
   if [ "$v6_broken" -eq 1 ] && [ "$PUBLIC_OK" -eq 1 ]; then
-    DIAG+=("IPv6 is broken (loss ${IPV6_PING_LOSS}%, AAAA $( [ $IPV6_AAAA_OK -eq 1 ] && echo OK || echo FAIL ), TCP6 $( [ $IPV6_TCP_OK -eq 1 ] && echo OK || echo FAIL )) while IPv4 works — router/ISP v6 misconfig. Happy Eyeballs hides this and just makes some sites mysteriously slow.")
+    add_diag warn "IPv6 is broken (loss ${IPV6_PING_LOSS}%, AAAA $( [ $IPV6_AAAA_OK -eq 1 ] && echo OK || echo FAIL ), TCP6 $( [ $IPV6_TCP_OK -eq 1 ] && echo OK || echo FAIL )) while IPv4 works — router/ISP v6 misconfig. Happy Eyeballs hides this and just makes some sites mysteriously slow."
   fi
 fi
 if [ "$TCP_REACH_ANY_OK" -eq 1 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge 50 ]; then
-  DIAG+=("TCP reach panel succeeded but gateway ping shows ${GW_LOSS}% loss — ICMP is being filtered somewhere on the path. Ignore the ping-based failures; the network itself is up.")
+  add_diag info "TCP reach panel succeeded but gateway ping shows ${GW_LOSS}% loss — ICMP is being filtered somewhere on the path. Ignore the ping-based failures; the network itself is up."
 fi
 if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
-  DIAG+=("WiFi channel ${WIFI_SCAN_CURRENT_CHANNEL} has ${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} other APs visible — switch to a less crowded channel (5GHz 149/153/157/161 if your router supports it).")
+  add_diag warn "WiFi channel ${WIFI_SCAN_CURRENT_CHANNEL} has ${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} other APs visible — switch to a less crowded channel (5GHz 149/153/157/161 if your router supports it)."
 fi
 if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
-  DIAG+=("WiFi link is flapping — $WIFI_DISCONNECT_COUNT disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug.")
+  add_diag warn "WiFi link is flapping — $WIFI_DISCONNECT_COUNT disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug."
 fi
 if [ -n "$NTP_DRIFT_S" ] && awk -v d="$NTP_DRIFT_S" 'BEGIN{exit !((d<0?-d:d) > 30)}'; then
-  DIAG+=("System clock drifted ${NTP_DRIFT_S}s — TLS handshakes are likely failing across the board. Re-enable network time (System Settings → General → Date & Time).")
+  add_diag critical "System clock drifted ${NTP_DRIFT_S}s — TLS handshakes are likely failing across the board. Re-enable network time (System Settings → General → Date & Time)."
 fi
 if [ "$ARP_GW_INCOMPLETE" -eq 1 ]; then
-  DIAG+=("Gateway ARP entry is (incomplete) — L2 to the router is broken. Cable/AP problem; ICMP and everything else above is meaningless until ARP resolves.")
+  add_diag critical "Gateway ARP entry is (incomplete) — L2 to the router is broken. Cable/AP problem; ICMP and everything else above is meaningless until ARP resolves."
 fi
 if [ -n "${ARP_DUPLICATE_IPS//[[:space:]]/}" ]; then
-  DIAG+=("Duplicate IP(s) detected in ARP: ${ARP_DUPLICATE_IPS}— another device on the LAN is using the same address. Static-IP collision or rogue DHCP.")
+  add_diag critical "Duplicate IP(s) detected in ARP: ${ARP_DUPLICATE_IPS}— another device on the LAN is using the same address. Static-IP collision or rogue DHCP."
 fi
 if [ -n "$DHCP_TIME_REMAINING_S" ] && [ "$DHCP_TIME_REMAINING_S" -gt 0 ] && [ "$DHCP_TIME_REMAINING_S" -lt 3600 ]; then
-  DIAG+=("DHCP lease expires in $((DHCP_TIME_REMAINING_S / 60)) min — if the renewal fails (router rebooting / DHCP scope full), the link will drop without warning.")
+  add_diag warn "DHCP lease expires in $((DHCP_TIME_REMAINING_S / 60)) min — if the renewal fails (router rebooting / DHCP scope full), the link will drop without warning."
 fi
 if [ -n "$DHCP_DNS_SERVERS" ] && [ -n "$SYS_RES" ] && ! printf '%s' "$DHCP_DNS_SERVERS" | grep -qF "$SYS_RES"; then
-  DIAG+=("DHCP gave DNS as '$DHCP_DNS_SERVERS' but the system uses $SYS_RES — someone manually overrode it. Fine if intentional; surprising otherwise.")
+  add_diag info "DHCP gave DNS as '$DHCP_DNS_SERVERS' but the system uses $SYS_RES — someone manually overrode it. Fine if intentional; surprising otherwise."
 fi
+MOST_LIKELY_ROOT_CAUSE=""
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."
 else
-  for d in "${DIAG[@]}"; do
-    bad "$d"
-    DIAGNOSIS_LINES+="${d}"$'\n'
+  # Sort by severity descending (critical → warn → info), preserving insertion
+  # order within each severity. First line emitted becomes most_likely_root_cause.
+  for s in critical warn info; do
+    for i in "${!DIAG[@]}"; do
+      if [ "${DIAG_SEV[$i]}" = "$s" ]; then
+        [ -z "$MOST_LIKELY_ROOT_CAUSE" ] && MOST_LIKELY_ROOT_CAUSE="${DIAG[$i]}"
+        case "$s" in
+          critical) bad  "${DIAG[$i]}" ;;
+          warn)     warn "${DIAG[$i]}" ;;
+          info)     info "${DIAG[$i]}" ;;
+        esac
+        DIAGNOSIS_LINES+="${s}|${DIAG[$i]}"$'\n'
+      fi
+    done
   done
 fi
 
@@ -1099,6 +1183,16 @@ done
 # diagnosis field too.
 JSON_TMP="$(mktemp "${TMPDIR:-/tmp}/netdiag-out.XXXXXX.json")"
 build_json() {
+  # Most-likely root cause = first critical diagnosis, else first warn,
+  # else empty. DIAG_SEV/DIAG are parallel arrays.
+  MOST_LIKELY_ROOT_CAUSE=""
+  for s in critical warn; do
+    for i in "${!DIAG[@]}"; do
+      if [ "${DIAG_SEV[$i]}" = "$s" ] && [ -z "$MOST_LIKELY_ROOT_CAUSE" ]; then
+        MOST_LIKELY_ROOT_CAUSE="${DIAG[$i]}"
+      fi
+    done
+  done
 
 NETDIAG_VERSION="$NETDIAG_VERSION" \
   NETDIAG_TIMESTAMP="$TIMESTAMP_ISO" \
@@ -1170,7 +1264,12 @@ NETDIAG_VERSION="$NETDIAG_VERSION" \
   NETDIAG_TARGET="$TARGET" \
   NETDIAG_TARGET_PING_LOSS="$TARGET_PING_LOSS" \
   NETDIAG_TARGET_PING_RTT="$TARGET_PING_RTT" \
+  NETDIAG_TRACE_LINES="$TRACE_LINES" \
+  NETDIAG_TARGET_TRACE_LINES="$TARGET_TRACE_LINES" \
+  NETDIAG_PER_HOP_LINES="$PER_HOP_LINES" \
+  NETDIAG_BASELINE_JSON="$BASELINE_JSON" \
   NETDIAG_DIAGNOSIS_LINES="$DIAGNOSIS_LINES" \
+  NETDIAG_MOST_LIKELY_ROOT_CAUSE="${MOST_LIKELY_ROOT_CAUSE:-}" \
   python3 "$HELPERS_DIR/emit_json.py"
 }
 
@@ -1182,6 +1281,7 @@ if [ "$NO_BASELINE" -eq 0 ] && [ "$BASELINE" -eq 1 ]; then
   mkdir -p "$LOG_DIR"
   BASELINE_OUT="$(python3 "$HELPERS_DIR/baseline.py" \
     --history "$LOG_DIR/baseline.jsonl" --current "$JSON_TMP" --n 10 2>/dev/null || true)"
+  BASELINE_JSON="$BASELINE_OUT"
   if [ -n "$BASELINE_OUT" ]; then
     BASELINE_LINES="$(printf '%s' "$BASELINE_OUT" | python3 -c "
 import json, sys
@@ -1202,9 +1302,9 @@ for r in d.get('regressions', []):
     if [ -n "$BASELINE_LINES" ]; then
       while IFS= read -r reg; do
         [ -z "$reg" ] && continue
-        DIAG+=("Baseline regression: $reg")
-        DIAGNOSIS_LINES+="Baseline regression: $reg"$'\n'
-        bad "Baseline regression: $reg"
+        add_diag warn "Baseline regression: $reg"
+        DIAGNOSIS_LINES+="warn|Baseline regression: $reg"$'\n'
+        warn "Baseline regression: $reg"
       done <<<"$BASELINE_LINES"
       # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
       build_json > "$JSON_TMP"
@@ -1217,7 +1317,7 @@ fi
 
 if [ "$JSON_MODE" -eq 1 ]; then
   cat "$JSON_TMP"
-else
+elif [ "$WATCH_CHILD" -eq 0 ]; then
   say ""
   say "${C_DIM}Report saved to: $LOG${C_RESET}"
 fi
@@ -1236,3 +1336,7 @@ if [ "$NO_GPING" -eq 0 ] && command -v gping >/dev/null 2>&1; then
     exec gping "${TARGETS[@]}"
   fi
 fi
+
+# Spec exit codes: 0 healthy · 1 warn · 2 critical · 3 script error.
+# shellcheck disable=SC2317  # reachable when gping `exec` above didn't fire
+exit "$MAX_SEVERITY"

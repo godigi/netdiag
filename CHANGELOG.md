@@ -6,6 +6,45 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-30
+
+Bugfix release driven by a 13-test pass of v0.2.0 on a real Starlink link.
+Surfaced spec violations (exit codes, JSON schema), broken budgets (full
+run > 30 s, `--quick` > 8 s under `--quiet`, `--quick TARGET` > 24 s), and
+a noisy WiFi-disconnect counter. All fixed; no new features.
+
+### Fixed
+
+- **Exit codes per spec (`0`/`1`/`2`/`3`).** Each diagnosis is now tagged
+  `info` / `warn` / `critical` via a new `add_diag` helper that updates
+  a `MAX_SEVERITY` global. The script `exit "$MAX_SEVERITY"` at the end.
+  Previously every run exited 0 regardless.
+- **JSON output now matches `netdiag-prompt.md`'s schema** — top-level
+  keys in the spec's order, full `traceroute.{target,hops[]}`,
+  `per_hop[]`, `mtr.{target,duration_s,hops[],first_lossy_hop}`,
+  `baseline.{compared_runs,regressions[]}`, and
+  `most_likely_root_cause` fields. Non-spec extras (`arp_gw_incomplete`,
+  `target`, `target_ping`, target traceroute) moved under `netdiag_extras`.
+- **WiFi disconnect count over-counted ~3×** because the regex caught
+  `disassoc=` substrings inside airportd dictionary dumps. Tightened to
+  `disassociated|deauthenticated|link[[:space:]]+down|disconnect[[:space:]]+reason|reassociating`.
+- **30 s budget**: full run (parallelised per-hop fallback loop) dropped
+  from 32.6 s to ~27.6 s on this Starlink link.
+- **8 s `--quick` budget**: `--quick` now also gates WiFi disconnect
+  history and the optional `TARGET` traceroute. `--quick` → 7.3 s;
+  `--quick TARGET` → 5.5 s (was 24.4 s).
+- **Diagnosis ordering** is now severity-descending (critical → warn →
+  info), preserving insertion order within each tier. The first emitted
+  line is surfaced as `most_likely_root_cause` in the JSON.
+- **`--watch` UX**: SIGINT/SIGTERM trap prints "stopped after N
+  iteration(s)" and points at the baseline file. Child invocations get
+  a new internal `--watch-child` flag that suppresses the per-iteration
+  "Report saved to" line.
+- **Diagnosis text rendering** now matches the severity: critical fires
+  red `✗`, warn fires yellow `⚠`, info fires gray `·` (was always red).
+- **PMTU rule split** into critical (< 1400) vs warn (< 1500), reflecting
+  the real severity gradient.
+
 ## [0.2.0] - 2026-05-30
 
 The full 14-enhancement build out from `netdiag-prompt.md`, plus JSON

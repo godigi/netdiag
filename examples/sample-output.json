@@ -1,6 +1,6 @@
 {
   "version": "0.2.0",
-  "timestamp": "2026-05-30T07:59:40Z",
+  "timestamp": "2026-05-30T16:11:26Z",
   "interface": {
     "name": "en0",
     "ip": "192.168.50.56",
@@ -18,15 +18,10 @@
     "phy": null,
     "tx_rate": null
   },
-  "vpn": {
-    "active": false,
-    "type": null,
-    "name": null
-  },
   "gateway": {
     "ip": "192.168.50.1",
     "loss_pct": 0.0,
-    "rtt_avg_ms": 4.818
+    "rtt_avg_ms": 4.033
   },
   "public": {
     "ip": "203.0.113.42",
@@ -35,20 +30,6 @@
     "city": "<city>",
     "country": "<country>",
     "captive_portal": false
-  },
-  "bufferbloat": {
-    "idle_gw_rtt_ms": null,
-    "loaded_gw_rtt_ms": null,
-    "idle_inet_rtt_ms": null,
-    "loaded_inet_rtt_ms": null,
-    "gw_delta_ms": null,
-    "inet_delta_ms": null,
-    "gw_grade": null,
-    "inet_grade": null
-  },
-  "mtu": {
-    "effective": null,
-    "path_size": null
   },
   "dns": [
     {
@@ -78,16 +59,71 @@
     {
       "resolver": "1.1.1.1",
       "name": "cloudflare.com",
-      "answer": "104.16.132.229",
+      "answer": "104.16.133.229",
       "ok": true
     },
     {
       "resolver": "8.8.8.8",
       "name": "cloudflare.com",
-      "answer": "104.16.132.229",
+      "answer": "104.16.133.229",
       "ok": true
     }
   ],
+  "traceroute": {
+    "target": "1.1.1.1",
+    "hops": [
+      {
+        "n": 1,
+        "ip": "100.64.0.1",
+        "rtt_ms": 33.955
+      },
+      {
+        "n": 2,
+        "ip": "172.16.252.156",
+        "rtt_ms": 31.048
+      },
+      {
+        "n": 3,
+        "ip": "206.224.76.148",
+        "rtt_ms": 29.011
+      },
+      {
+        "n": 4,
+        "ip": "206.224.73.110",
+        "rtt_ms": 38.862
+      },
+      {
+        "n": 5,
+        "ip": "64.76.185.5",
+        "rtt_ms": 34.149
+      },
+      {
+        "n": 6,
+        "ip": "213.140.51.5",
+        "rtt_ms": 30.186
+      },
+      {
+        "n": 7,
+        "ip": "1.1.1.1",
+        "rtt_ms": 35.835
+      }
+    ]
+  },
+  "per_hop": [],
+  "bufferbloat": {
+    "idle_gw_rtt_ms": null,
+    "loaded_gw_rtt_ms": null,
+    "idle_inet_rtt_ms": null,
+    "loaded_inet_rtt_ms": null,
+    "gw_delta_ms": null,
+    "inet_delta_ms": null,
+    "gw_grade": null,
+    "inet_grade": null
+  },
+  "mtu": {
+    "effective": null,
+    "path_size": null
+  },
   "ipv6": {
     "available": false,
     "global_addr": null,
@@ -97,36 +133,41 @@
     "trace_hops": null,
     "tcp_v6_ok": false
   },
+  "vpn": {
+    "active": false,
+    "type": null,
+    "name": null
+  },
   "tcp_reach": [
     {
       "host": "1.1.1.1",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 30.0
+      "elapsed_ms": 32.0
     },
     {
       "host": "1.1.1.1",
       "port": 53,
       "ok": true,
-      "elapsed_ms": 33.0
+      "elapsed_ms": 31.0
     },
     {
       "host": "8.8.8.8",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 25.0
+      "elapsed_ms": 31.0
     },
     {
       "host": "github.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 126.0
+      "elapsed_ms": 107.0
     },
     {
       "host": "apple.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 153.0
+      "elapsed_ms": 78.0
     }
   ],
   "wifi_scan": {
@@ -137,14 +178,15 @@
   },
   "wifi_disconnects": {
     "window_hours": 1,
-    "count": 14
+    "count": 0
   },
   "speedtest": null,
   "ntp": {
-    "drift_seconds": 0.102034,
+    "drift_seconds": 0.030621,
     "using_network_time": null,
     "server": null
   },
+  "duplicate_ips": [],
   "dhcp": {
     "server": "192.168.50.1",
     "lease_start": "<redacted>",
@@ -152,17 +194,19 @@
     "time_remaining_s": null,
     "dns_servers": "192.168.50.1"
   },
-  "duplicate_ips": [],
-  "arp_gw_incomplete": false,
   "mtr": {
+    "target": "1.1.1.1",
+    "duration_s": null,
+    "hops": [],
     "first_lossy_hop": null
   },
-  "target": null,
-  "target_ping": null,
-  "diagnosis": [
-    {
-      "severity": "warn",
-      "summary": "WiFi link is flapping — 14 disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug."
-    }
-  ]
+  "baseline": null,
+  "diagnosis": [],
+  "most_likely_root_cause": null,
+  "netdiag_extras": {
+    "arp_gw_incomplete": false,
+    "target": null,
+    "target_ping": null,
+    "target_traceroute": null
+  }
 }

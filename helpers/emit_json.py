@@ -5,7 +5,11 @@ Called from bin/netdiag with the run's collected globals exported as
 environment variables (NETDIAG_* prefix). Fields that weren't set
 become JSON null.
 
-Schema matches netdiag-prompt.md section "JSON-output schema details".
+Top-level keys follow the order specified in netdiag-prompt.md:
+  version, timestamp, interface, wifi, gateway, public, dns, traceroute,
+  per_hop, bufferbloat, mtu, ipv6, vpn, tcp_reach, wifi_scan,
+  wifi_disconnects, speedtest, ntp, duplicate_ips, dhcp, mtr, baseline,
+  diagnosis, most_likely_root_cause, netdiag_extras
 """
 
 from __future__ import annotations
@@ -50,14 +54,12 @@ def _list_lines(name: str) -> list[str]:
 
 
 def build_tcp_reach() -> list[dict]:
-    """NETDIAG_TCP_REACH_LINES contains one 'host:port|OK|ms' or 'host:port|FAIL' per line."""
     out = []
     for line in _list_lines("TCP_REACH_LINES"):
         parts = line.split("|")
         if len(parts) < 2:
             continue
-        host_port = parts[0]
-        status = parts[1]
+        host_port, status = parts[0], parts[1]
         host, _, port = host_port.partition(":")
         entry = {"host": host, "port": int(port) if port.isdigit() else port, "ok": status == "OK"}
         if status == "OK" and len(parts) > 2:
@@ -69,22 +71,100 @@ def build_tcp_reach() -> list[dict]:
     return out
 
 
+def build_dns() -> list[dict]:
+    out: list[dict] = []
+    for line in _list_lines("DNS_LINES"):
+        parts = line.split("|")
+        if len(parts) < 4:
+            continue
+        out.append({
+            "resolver": parts[0],
+            "name": parts[1],
+            "answer": parts[2] or None,
+            "ok": parts[3] == "OK",
+        })
+    return out
+
+
+def build_hops(env_name: str) -> list[dict]:
+    """Parse 'n|ip|rtt_ms' (traceroute) or 'n|ip|loss|avg' (per_hop) lines."""
+    out: list[dict] = []
+    for line in _list_lines(env_name):
+        parts = line.split("|")
+        if len(parts) < 2:
+            continue
+        n = int(parts[0]) if parts[0].isdigit() else parts[0]
+        entry: dict = {"n": n, "ip": parts[1]}
+        if env_name == "PER_HOP_LINES" and len(parts) >= 4:
+            try:
+                entry["loss_pct"] = float(parts[2]) if parts[2] else None
+            except ValueError:
+                entry["loss_pct"] = None
+            try:
+                entry["avg_ms"] = float(parts[3]) if parts[3] else None
+            except ValueError:
+                entry["avg_ms"] = None
+        elif len(parts) >= 3:
+            try:
+                entry["rtt_ms"] = float(parts[2]) if parts[2] else None
+            except ValueError:
+                entry["rtt_ms"] = None
+        out.append(entry)
+    return out
+
+
 def build_diagnosis() -> list[dict]:
-    """NETDIAG_DIAGNOSIS_LINES has one diagnosis string per line."""
-    return [{"severity": "warn", "summary": line} for line in _list_lines("DIAGNOSIS_LINES")]
+    """NETDIAG_DIAGNOSIS_LINES is one 'severity|summary' per line."""
+    out: list[dict] = []
+    for line in _list_lines("DIAGNOSIS_LINES"):
+        sev, _, summary = line.partition("|")
+        if not summary:
+            summary, sev = sev, "warn"
+        out.append({"severity": sev, "summary": summary})
+    return out
+
+
+def build_baseline() -> dict | None:
+    raw = os.environ.get("NETDIAG_BASELINE_JSON", "")
+    if not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return {
+        "compared_runs": parsed.get("compared_runs", 0),
+        "regressions": parsed.get("regressions", []),
+    }
+
+
+def build_mtr() -> dict:
+    """MTR ran iff PER_HOP_LINES has entries. duration_s is the nominal value
+    for `mtr -r -c 60 -i 0.2` (12 s); the fallback per-hop loop is roughly
+    1-2 s after parallelisation."""
+    per_hop = build_hops("PER_HOP_LINES")
+    return {
+        "target": "1.1.1.1",
+        "duration_s": 12 if per_hop else None,
+        "hops": per_hop,
+        "first_lossy_hop": _env("MTR_FIRST_LOSSY_HOP"),
+    }
 
 
 def main() -> None:
-    data = {
+    is_wifi = _bool("IS_WIFI")
+    target = _env("TARGET")
+
+    data: dict = {
         "version": _env("VERSION") or "0.2.0",
         "timestamp": _env("TIMESTAMP"),
         "interface": {
             "name": _env("INTERFACE"),
             "ip": _env("LOCAL_IP"),
             "gateway": _env("GATEWAY"),
-            "type": "wifi" if _bool("IS_WIFI") else "wired",
+            "type": "wifi" if is_wifi else "wired",
         },
-        "wifi": {
+        "wifi": ({
             "ssid": _env("WIFI_SSID"),
             "bssid": _env("WIFI_BSSID"),
             "security": _env("WIFI_SEC"),
@@ -94,12 +174,7 @@ def main() -> None:
             "channel": _env("WIFI_CHAN"),
             "phy": _env("WIFI_PHY"),
             "tx_rate": _env("WIFI_TX"),
-        } if _bool("IS_WIFI") else None,
-        "vpn": {
-            "active": _bool("VPN_ACTIVE"),
-            "type": _env("VPN_TYPE"),
-            "name": _env("VPN_NAME"),
-        },
+        } if is_wifi else None),
         "gateway": {
             "ip": _env("GATEWAY"),
             "loss_pct": _maybe_float("GW_LOSS"),
@@ -113,6 +188,12 @@ def main() -> None:
             "country": _env("PUB_CC"),
             "captive_portal": _bool("CAPTIVE_PORTAL"),
         },
+        "dns": build_dns(),
+        "traceroute": {
+            "target": "1.1.1.1",
+            "hops": build_hops("TRACE_LINES"),
+        },
+        "per_hop": build_hops("PER_HOP_LINES"),
         "bufferbloat": {
             "idle_gw_rtt_ms": _maybe_float("BUFFERBLOAT_IDLE_GW_RTT"),
             "loaded_gw_rtt_ms": _maybe_float("BUFFERBLOAT_LOADED_GW_RTT"),
@@ -127,12 +208,6 @@ def main() -> None:
             "effective": _maybe_int("MTU_EFFECTIVE"),
             "path_size": _maybe_int("MTU_PATH_SIZE"),
         },
-        "dns": [
-            {"resolver": parts[0], "name": parts[1], "answer": parts[2] if len(parts) > 2 else None,
-             "ok": (parts[3] == "OK") if len(parts) > 3 else None}
-            for parts in (line.split("|") for line in _list_lines("DNS_LINES"))
-            if len(parts) >= 2
-        ],
         "ipv6": {
             "available": _bool("IPV6_AVAILABLE"),
             "global_addr": _env("IPV6_GLOBAL_ADDR"),
@@ -142,29 +217,36 @@ def main() -> None:
             "trace_hops": _maybe_int("IPV6_TRACE_HOPS"),
             "tcp_v6_ok": _bool("IPV6_TCP_OK"),
         },
+        "vpn": {
+            "active": _bool("VPN_ACTIVE"),
+            "type": _env("VPN_TYPE"),
+            "name": _env("VPN_NAME"),
+        },
         "tcp_reach": build_tcp_reach(),
-        "wifi_scan": {
+        "wifi_scan": ({
             "current_channel": _env("WIFI_SCAN_CURRENT_CHANNEL"),
             "current_band": _env("WIFI_SCAN_CURRENT_BAND"),
             "neighbour_count": _maybe_int("WIFI_SCAN_NEIGHBOR_COUNT"),
             "current_channel_neighbours": _maybe_int("WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS"),
-        } if _bool("IS_WIFI") else None,
-        "wifi_disconnects": {
+        } if is_wifi else None),
+        "wifi_disconnects": ({
             "window_hours": _maybe_int("WIFI_DISCONNECT_WINDOW_HOURS"),
             "count": _maybe_int("WIFI_DISCONNECT_COUNT"),
-        } if _bool("IS_WIFI") else None,
-        "speedtest": {
+        } if is_wifi else None),
+        "speedtest": ({
             "down_mbps": _maybe_float("SPEEDTEST_DOWN_MBPS"),
             "up_mbps": _maybe_float("SPEEDTEST_UP_MBPS"),
             "latency_ms": _maybe_float("SPEEDTEST_LATENCY_MS"),
             "jitter_ms": _maybe_float("SPEEDTEST_JITTER_MS"),
             "server": _env("SPEEDTEST_SERVER"),
-        } if _env("SPEEDTEST_DOWN_MBPS") else None,
+        } if _env("SPEEDTEST_DOWN_MBPS") else None),
         "ntp": {
             "drift_seconds": _maybe_float("NTP_DRIFT_S"),
             "using_network_time": _env("NTP_USING_NETWORK_TIME"),
             "server": _env("NTP_SERVER"),
         },
+        "duplicate_ips": (_env("ARP_DUPLICATE_IPS").split()
+                          if _env("ARP_DUPLICATE_IPS") else []),
         "dhcp": {
             "server": _env("DHCP_SERVER"),
             "lease_start": _env("DHCP_LEASE_START"),
@@ -172,17 +254,22 @@ def main() -> None:
             "time_remaining_s": _maybe_int("DHCP_TIME_REMAINING_S"),
             "dns_servers": _env("DHCP_DNS_SERVERS"),
         },
-        "duplicate_ips": _env("ARP_DUPLICATE_IPS").split() if _env("ARP_DUPLICATE_IPS") else [],
-        "arp_gw_incomplete": _bool("ARP_GW_INCOMPLETE"),
-        "mtr": {
-            "first_lossy_hop": _env("MTR_FIRST_LOSSY_HOP"),
-        },
-        "target": _env("TARGET"),
-        "target_ping": {
-            "loss_pct": _maybe_float("TARGET_PING_LOSS"),
-            "rtt_avg_ms": _maybe_float("TARGET_PING_RTT"),
-        } if _env("TARGET") else None,
+        "mtr": build_mtr(),
+        "baseline": build_baseline(),
         "diagnosis": build_diagnosis(),
+        "most_likely_root_cause": _env("MOST_LIKELY_ROOT_CAUSE"),
+        "netdiag_extras": {
+            "arp_gw_incomplete": _bool("ARP_GW_INCOMPLETE"),
+            "target": target,
+            "target_ping": ({
+                "loss_pct": _maybe_float("TARGET_PING_LOSS"),
+                "rtt_avg_ms": _maybe_float("TARGET_PING_RTT"),
+            } if target else None),
+            "target_traceroute": ({
+                "target": target,
+                "hops": build_hops("TARGET_TRACE_LINES"),
+            } if target else None),
+        },
     }
     json.dump(data, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")

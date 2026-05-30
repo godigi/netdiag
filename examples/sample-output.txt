@@ -1,5 +1,5 @@
-netdiag  2026-05-30-030020
-log: /Users/bfreeman/net-diag/2026-05-30-030020.log
+netdiag  2026-05-30-111057
+log: /Users/bfreeman/net-diag/2026-05-30-111057.log
 
 ── Local network ──
   ✓ Interface: en0   IP: 192.168.50.56   Gateway: 192.168.50.1
@@ -16,45 +16,42 @@ log: /Users/bfreeman/net-diag/2026-05-30-030020.log
 
 ── WiFi neighborhood ──
   · Current channel: 36 (5GHz)
-  · Neighbours: 5 total, 1 on your channel
+  · Neighbours: 4 total, 1 on your channel
   · Top neighbour channels:
-      ch 6    × 1
-      ch 48   × 1
-      ch 40   × 1
+      ch 11   × 3
       ch 36   × 1
-      ch 11   × 1
 
 ── WiFi disconnects (past 1h) ──
-  · Disconnect/reassoc events in last hour: 14
+  · Disconnect/reassoc events in last hour: 36
   · Last 5 events:
-      2026-05-30 02:56:46.011166-0500 0x106ddec  Default     0x0                  470    0    airportd: (IO80211) [com.apple.WiFiManager:] Roam: <airport[470]> -[CWXPCInterfaceContext __updateRoamingProfileConfigurationWithInterface:]: Using roam profile Multi (4) from known network (wifi.ssid.<redacted-hex>)
-      2026-05-30 02:56:46.011172-0500 0x106ddec  Default     0x0                  470    0    airportd: (IO80211) [com.apple.WiFiManager:] Roam: <airport[470]> -[CWXPCInterfaceContext __updateRoamingProfileConfigurationWithInterface:]: -[CWXPCInterfaceContext __updateRoamingProfileConfigurationWithInterface:] Using roam profile 4/Multi, roamParamsType[3]/CWRoamParamsTypeMultiAP
-      2026-05-30 02:56:46.016086-0500 0x106ddec  Default     0x0                  470    0    airportd: (IO80211) [com.apple.WiFiManager:] Roam: <airport[470]> ROAM PARAMS updated to roam params[3]/CWRoamParamsTypeMultiAP, interface[en0], dictionary[{
+      2026-05-30 11:08:28.236827-0500 0x11d0a44  Default     0x0                  470    0    airportd: (IO80211) [com.apple.WiFiManager:] Roam: <airport[470]> -[CWXPCInterfaceContext __updateRoamingProfileConfigurationWithInterface:]: Using roam profile Multi (4) from known network (wifi.ssid.<redacted-hex>)
+      2026-05-30 11:08:28.236834-0500 0x11d0a44  Default     0x0                  470    0    airportd: (IO80211) [com.apple.WiFiManager:] Roam: <airport[470]> -[CWXPCInterfaceContext __updateRoamingProfileConfigurationWithInterface:]: -[CWXPCInterfaceContext __updateRoamingProfileConfigurationWithInterface:] Using roam profile 4/Multi, roamParamsType[3]/CWRoamParamsTypeMultiAP
+      2026-05-30 11:08:28.237075-0500 0x11d0a44  Default     0x0                  470    0    airportd: (IO80211) [com.apple.WiFiManager:] Roam: <airport[470]> ROAM PARAMS updated to roam params[3]/CWRoamParamsTypeMultiAP, interface[en0], dictionary[{
           IO80211InterfaceRoamMultiAP = 1;
           IO80211InterfaceRoamProfile = 3;
-  ⚠ WiFi link is flapping (14 disconnects in 1h).
+  ⚠ WiFi link is flapping (36 disconnects in 1h).
 
 ── DHCP lease ──
   · DHCP server: 192.168.50.1
-  · Lease started:  05/30/2026 01:05:02
-  · Lease expires:  05/31/2026 01:05:02
-  · Time remaining: ~22h
+  · Lease started:  05/30/2026 10:19:51
+  · Lease expires:  05/31/2026 10:19:51
+  · Time remaining: ~23h
   · DHCP-handed DNS: 192.168.50.1
 
 ── ARP / duplicate-IP scan ──
   ✓ No duplicate IPs in ARP table.
 
 ── Gateway reachability ──
-  ✓ Gateway 192.168.50.1: 0% loss, 4.087 ms avg
+  ✓ Gateway 192.168.50.1: 0% loss, 3.611 ms avg
 
 ── Public reachability ──
   ✓ Public IP: 203.0.113.42  (<isp-redacted>, <city country>)
   ✓ No captive portal.
 
 ── Bufferbloat (loaded vs idle latency) ──
-  · Idle:  gateway 4.087 ms · internet 30.508 ms
+  · Idle:  gateway 3.611 ms · internet 30.008 ms
   · Loading link with 100 MB download for 10 s...
-  · Loaded: gateway 4.290 ms (+0.2 ms) · internet 21.966 ms (+-8.5 ms)
+  · Loaded: gateway 5.126 ms (+1.5 ms) · internet 34.807 ms (+4.8 ms)
   ✓ Bufferbloat (gateway): grade A
   ✓ Bufferbloat (internet): grade A
 
@@ -67,46 +64,46 @@ log: /Users/bfreeman/net-diag/2026-05-30-030020.log
   ✓ 1.1.1.1 → apple.com = 17.253.144.10
   ✓ 8.8.8.8 → apple.com = 17.253.144.10
   ✓ 192.168.50.1 → cloudflare.com = 104.16.132.229
-  ✓ 1.1.1.1 → cloudflare.com = 104.16.133.229
-  ✓ 8.8.8.8 → cloudflare.com = 104.16.132.229
+  ✓ 1.1.1.1 → cloudflare.com = 104.16.132.229
+  ✓ 8.8.8.8 → cloudflare.com = 104.16.133.229
 
 ── IPv6 ──
   · No global IPv6 on en0 — v4-only network.
 
 ── TCP reach ──
-  ✓ 1.1.1.1:443  (28 ms)
-  ✓ 1.1.1.1:53  (35 ms)
-  ✓ 8.8.8.8:443  (34 ms)
-  ✓ github.com:443  (106 ms)
-  ✓ apple.com:443  (150 ms)
+  ✓ 1.1.1.1:443  (38 ms)
+  ✓ 1.1.1.1:53  (37 ms)
+  ✓ 8.8.8.8:443  (37 ms)
+  ✓ github.com:443  (111 ms)
+  ✓ apple.com:443  (156 ms)
 
 ── NTP / time sync ──
-  · sntp vs time.apple.com: +0.101531s drift
+  · sntp vs time.apple.com: +0.031743s drift
   ✓ Clock drift within tolerance.
 
 ── Traceroute to 1.1.1.1 ──
-   1  192.168.50.1  3.184 ms
-   2  100.64.0.1  25.295 ms
-   3  172.16.252.156  20.015 ms
-   4  206.224.76.148  19.606 ms
-   5  206.224.76.136  20.073 ms
-   6  200.25.2.148  20.147 ms
-   7  213.140.51.5  31.948 ms
-   8  1.1.1.1  20.841 ms
+   1  192.168.50.1  2.904 ms
+   2  100.64.0.1  26.538 ms
+   3  172.16.252.156  26.433 ms
+   4  206.224.76.132  33.352 ms
+   5  206.224.76.121  26.880 ms
+   6  200.25.2.148  32.439 ms
+   7  104.23.186.8  30.657 ms
+   8  1.1.1.1  36.024 ms
 
 ── Per-hop loss (5 packets each) ──
   · Tip: cache sudo creds (`sudo -v`) and re-run for the mtr-based view.
-  · hop 1  100.64.0.1  0% loss  21.447 ms
+  · hop 1  100.64.0.1  0% loss  37.708 ms
   ⚠ hop 2  172.16.252.156  100.0% loss  ? ms
-  ⚠ hop 3  206.224.76.148  100.0% loss  ? ms
-  · hop 4  206.224.76.136  0% loss  21.224 ms
-  · hop 5  200.25.2.148  0% loss  21.063 ms
-  · hop 6  213.140.51.5  0% loss  25.713 ms
-  · hop 7  1.1.1.1  0% loss  20.927 ms
+  ⚠ hop 3  206.224.76.132  100.0% loss  ? ms
+  · hop 4  206.224.76.121  0% loss  41.082 ms
+  · hop 5  200.25.2.148  0% loss  37.484 ms
+  · hop 6  104.23.186.8  0% loss  44.268 ms
+  · hop 7  1.1.1.1  0% loss  40.655 ms
   ⚠ First lossy hop: hop 2 (172.16.252.156)
 
 ── Diagnosis ──
-  ✗ First lossy hop: hop 2 (172.16.252.156) — blame this hop (and the router/ISP that owns it). Loss on subsequent hops is usually inherited from this one, not new.
-  ✗ WiFi link is flapping — 14 disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug.
+  ⚠ First lossy hop: hop 2 (172.16.252.156) — blame this hop (and the router/ISP that owns it). Loss on subsequent hops is usually inherited from this one, not new.
+  ⚠ WiFi link is flapping — 36 disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug.
 
-Report saved to: /Users/bfreeman/net-diag/2026-05-30-030020.log
+Report saved to: /Users/bfreeman/net-diag/2026-05-30-111057.log
