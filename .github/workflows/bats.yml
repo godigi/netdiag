@@ -1,0 +1,16 @@
+name: bats
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bats:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats-core and jq
+        run: brew install bats-core jq
+      - name: Run bats tests
+        run: bats tests/

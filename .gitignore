@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Local logs and runtime artifacts
+*.log
+*.tmp
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Nimbalyst editor metadata (workspace-local, never committed)
+nimbalyst-local/
+
+# Local sandbox / scratch
+scratch/
+.cache/
