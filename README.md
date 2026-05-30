@@ -25,7 +25,7 @@ the regression on the next pass.
 ## Install
 
 ```sh
-git clone https://github.com/bfreeman/netdiag.git
+git clone https://github.com/godigi/netdiag.git
 cd netdiag
 ./install.sh
 ```
