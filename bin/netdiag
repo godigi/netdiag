@@ -92,6 +92,7 @@ BUFFERBLOAT_GW_GRADE=""
 BUFFERBLOAT_INET_GRADE=""
 MTU_PATH_SIZE=""    # largest payload that passed DF
 MTU_EFFECTIVE=""    # MTU_PATH_SIZE + 28 (8 ICMP + 20 IP headers)
+MTR_FIRST_LOSSY_HOP=""
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -360,11 +361,13 @@ done <<EOF
 $(printf '%s\n' "$TRACE_OUT" | tail -n +2)
 EOF
 
-# ── 7. Per-hop quick ping (find first lossy hop) ───────────────────────────
-if [ "$QUICK" -eq 0 ] && [ "${#HOPS[@]}" -gt 0 ]; then
-  hdr "Per-hop loss (5 packets each)"
-  i=0
-  FIRST_LOSSY=""
+# ── 7. Per-hop loss (mtr if available + sudo, else 5-packet fallback) ──────
+run_per_hop_fallback() {
+  if [ "${#HOPS[@]}" -eq 0 ]; then
+    info "No hops to test (traceroute returned no IPs)."
+    return
+  fi
+  local i=0 h out loss lat first_lossy=""
   for h in "${HOPS[@]}"; do
     i=$((i+1))
     out="$(ping -c 5 -t 2 -i 0.2 "$h" 2>&1)"
@@ -375,12 +378,52 @@ if [ "$QUICK" -eq 0 ] && [ "${#HOPS[@]}" -gt 0 ]; then
       info "hop $i  $h  0% loss  ${lat} ms"
     else
       warn "hop $i  $h  ${loss}% loss  ${lat:-?} ms"
-      [ -z "$FIRST_LOSSY" ] && FIRST_LOSSY="hop $i ($h)"
+      [ -z "$first_lossy" ] && first_lossy="hop $i ($h)"
       # shellcheck disable=SC2034 # reserved for upcoming JSON/baseline support
       [ "$i" -eq 2 ] && NEXTHOP_LOSS="$loss"
     fi
   done
-  [ -n "$FIRST_LOSSY" ] && warn "First lossy hop: $FIRST_LOSSY"
+  [ -n "$first_lossy" ] && { MTR_FIRST_LOSSY_HOP="$first_lossy"; warn "First lossy hop: $first_lossy"; }
+}
+
+if [ "$QUICK" -eq 0 ]; then
+  if command -v mtr >/dev/null 2>&1 && sudo -n true 2>/dev/null && command -v jq >/dev/null 2>&1; then
+    hdr "Continuous loss to 1.1.1.1 (mtr -j -c 60 -i 0.2)"
+    MTR_JSON="$(sudo -n mtr -j -c 60 -n -i 0.2 1.1.1.1 2>/dev/null || true)"
+    printf '%s\n' "$MTR_JSON" >> "$LOG"
+    if [ -z "$MTR_JSON" ] || ! printf '%s' "$MTR_JSON" | jq -e .report >/dev/null 2>&1; then
+      warn "mtr returned no parseable report — falling back to per-hop loop."
+      run_per_hop_fallback
+    else
+      # TSV: hopnum, host, loss%, avg
+      MTR_TSV="$(printf '%s' "$MTR_JSON" \
+        | jq -r '.report.hubs[] | [.count, .host, (.["Loss%"]|tostring), (.Avg|tostring)] | @tsv')"
+      prev_loss=0
+      while IFS=$'\t' read -r hopnum host loss avg; do
+        [ -z "$hopnum" ] && continue
+        if awk -v l="$loss" 'BEGIN{exit !(l+0 > 2)}'; then
+          warn "hop $hopnum  $host  ${loss}% loss  ${avg} ms avg"
+          if [ -z "$MTR_FIRST_LOSSY_HOP" ] && awk -v p="$prev_loss" 'BEGIN{exit !(p+0 <= 2)}'; then
+            MTR_FIRST_LOSSY_HOP="hop $hopnum ($host)"
+          fi
+        else
+          info "hop $hopnum  $host  ${loss}% loss  ${avg} ms avg"
+        fi
+        prev_loss="$loss"
+      done <<<"$MTR_TSV"
+      [ -n "$MTR_FIRST_LOSSY_HOP" ] && warn "First lossy hop (culprit): $MTR_FIRST_LOSSY_HOP"
+    fi
+  else
+    hdr "Per-hop loss (5 packets each)"
+    if ! command -v mtr >/dev/null 2>&1; then
+      info "Tip: \`brew install mtr\` enables a 60-cycle continuous-loss view."
+    elif ! command -v jq >/dev/null 2>&1; then
+      info "Tip: \`brew install jq\` and re-run to enable the mtr-based view."
+    elif ! sudo -n true 2>/dev/null; then
+      info "Tip: cache sudo creds (\`sudo -v\`) and re-run for the mtr-based view."
+    fi
+    run_per_hop_fallback
+  fi
 fi
 
 # ── 8. Diagnosis ───────────────────────────────────────────────────────────
@@ -417,6 +460,9 @@ case "${BUFFERBLOAT_INET_GRADE:-}" in
 esac
 if [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1500 ]; then
   DIAG+=("Path MTU ${MTU_EFFECTIVE} (< 1500) — TLS handshakes to some sites will hang while others work. Suspect a PPPoE link, VPN, or tunnelled connection that needs MSS clamping at the router.")
+fi
+if [ -n "$MTR_FIRST_LOSSY_HOP" ]; then
+  DIAG+=("First lossy hop: $MTR_FIRST_LOSSY_HOP — blame this hop (and the router/ISP that owns it). Loss on subsequent hops is usually inherited from this one, not new.")
 fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."

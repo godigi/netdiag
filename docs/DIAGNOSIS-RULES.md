@@ -91,7 +91,18 @@ These are placeholders; each will be filled in when its source feature lands.
   ceiling; if DF is set and the router doesn't return ICMP frag-needed, the
   handshake hangs while smaller-frame sites still work.
 
-- **MT1** — First lossy hop identified via `mtr` → blame the hop *before* it.
+### MT1 — First lossy hop identified
+
+- Trigger: a hop in the `mtr -r -c 60 -i 0.2` report (or the per-hop
+  fallback) shows > 2% loss while the immediately previous hop had ≤ 2%.
+- Severity: `warn`.
+- Evidence: hop number and IP, the loss% on that hop and the previous one.
+- Recommendation: blame this hop (and the router/ISP that owns it). Loss
+  on later hops is usually inherited, not new.
+- Rationale: each ICMP TTL-exceeded reply comes from a different router;
+  routers further along the path may rate-limit ICMP, faking "loss" that
+  doesn't affect real traffic. The first hop where loss appears is the
+  one actually dropping packets.
 - **V6-1** — v6 broken with v4 healthy → router/ISP v6 misconfig (Happy Eyeballs masks).
 - **VPN-1** — VPN active → "gateway" below is the VPN endpoint, not your LAN router.
 - **TCP-1** — TCP/443 works but ICMP fails → ICMP filtered; ignore ping-based negatives.
