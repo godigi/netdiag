@@ -1,0 +1,168 @@
+{
+  "version": "0.2.0",
+  "timestamp": "2026-05-30T07:59:40Z",
+  "interface": {
+    "name": "en0",
+    "ip": "192.168.50.56",
+    "gateway": "192.168.50.1",
+    "type": "wifi"
+  },
+  "wifi": {
+    "ssid": "<redacted-ssid>",
+    "bssid": "<redacted-bssid>",
+    "security": "FT_PSK",
+    "rssi": null,
+    "noise": null,
+    "snr": null,
+    "channel": null,
+    "phy": null,
+    "tx_rate": null
+  },
+  "vpn": {
+    "active": false,
+    "type": null,
+    "name": null
+  },
+  "gateway": {
+    "ip": "192.168.50.1",
+    "loss_pct": 0.0,
+    "rtt_avg_ms": 4.818
+  },
+  "public": {
+    "ip": "203.0.113.42",
+    "asn": "AS14593",
+    "isp": "<isp-redacted>",
+    "city": "<city>",
+    "country": "<country>",
+    "captive_portal": false
+  },
+  "bufferbloat": {
+    "idle_gw_rtt_ms": null,
+    "loaded_gw_rtt_ms": null,
+    "idle_inet_rtt_ms": null,
+    "loaded_inet_rtt_ms": null,
+    "gw_delta_ms": null,
+    "inet_delta_ms": null,
+    "gw_grade": null,
+    "inet_grade": null
+  },
+  "mtu": {
+    "effective": null,
+    "path_size": null
+  },
+  "dns": [
+    {
+      "resolver": "192.168.50.1",
+      "name": "apple.com",
+      "answer": "17.253.144.10",
+      "ok": true
+    },
+    {
+      "resolver": "1.1.1.1",
+      "name": "apple.com",
+      "answer": "17.253.144.10",
+      "ok": true
+    },
+    {
+      "resolver": "8.8.8.8",
+      "name": "apple.com",
+      "answer": "17.253.144.10",
+      "ok": true
+    },
+    {
+      "resolver": "192.168.50.1",
+      "name": "cloudflare.com",
+      "answer": "104.16.132.229",
+      "ok": true
+    },
+    {
+      "resolver": "1.1.1.1",
+      "name": "cloudflare.com",
+      "answer": "104.16.132.229",
+      "ok": true
+    },
+    {
+      "resolver": "8.8.8.8",
+      "name": "cloudflare.com",
+      "answer": "104.16.132.229",
+      "ok": true
+    }
+  ],
+  "ipv6": {
+    "available": false,
+    "global_addr": null,
+    "gateway": null,
+    "ping_loss_pct": null,
+    "aaaa_ok": false,
+    "trace_hops": null,
+    "tcp_v6_ok": false
+  },
+  "tcp_reach": [
+    {
+      "host": "1.1.1.1",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 30.0
+    },
+    {
+      "host": "1.1.1.1",
+      "port": 53,
+      "ok": true,
+      "elapsed_ms": 33.0
+    },
+    {
+      "host": "8.8.8.8",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 25.0
+    },
+    {
+      "host": "github.com",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 126.0
+    },
+    {
+      "host": "apple.com",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 153.0
+    }
+  ],
+  "wifi_scan": {
+    "current_channel": null,
+    "current_band": null,
+    "neighbour_count": 0,
+    "current_channel_neighbours": 0
+  },
+  "wifi_disconnects": {
+    "window_hours": 1,
+    "count": 14
+  },
+  "speedtest": null,
+  "ntp": {
+    "drift_seconds": 0.102034,
+    "using_network_time": null,
+    "server": null
+  },
+  "dhcp": {
+    "server": "192.168.50.1",
+    "lease_start": "<redacted>",
+    "lease_end": "<redacted>",
+    "time_remaining_s": null,
+    "dns_servers": "192.168.50.1"
+  },
+  "duplicate_ips": [],
+  "arp_gw_incomplete": false,
+  "mtr": {
+    "first_lossy_hop": null
+  },
+  "target": null,
+  "target_ping": null,
+  "diagnosis": [
+    {
+      "severity": "warn",
+      "summary": "WiFi link is flapping — 14 disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug."
+    }
+  ]
+}
