@@ -19,19 +19,53 @@ fi
 
 set -u
 
+# Resolve where we live so helpers/*.py can be found even when the script
+# is symlinked into /usr/local/bin. macOS doesn't ship readlink -f.
+_resolve_path() {
+  local src="$1" target
+  while [ -L "$src" ]; do
+    target="$(readlink "$src")"
+    case "$target" in
+      /*) src="$target" ;;
+      *)  src="$(dirname "$src")/$target" ;;
+    esac
+  done
+  printf '%s' "$src"
+}
+SCRIPT_PATH="$(_resolve_path "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+HELPERS_DIR="${SCRIPT_DIR}/../helpers"
+
+NETDIAG_VERSION="0.2.0"
+
 NO_GPING=0
 QUICK=0
 NO_BUFFERBLOAT=0
 SPEED=0
 NO_SPEED=0
+JSON_MODE=0
+QUIET=0
+LOG_OVERRIDE=""
+BASELINE=1
+NO_BASELINE=0
 TARGET=""
-for arg in "$@"; do
-  case "$arg" in
+_take_value=0
+while [ "$#" -gt 0 ]; do
+  if [ "$_take_value" -eq 1 ]; then
+    LOG_OVERRIDE="$1"; _take_value=0; shift; continue
+  fi
+  case "$1" in
     --no-gping)       NO_GPING=1 ;;
     --quick)          QUICK=1 ;;
     --no-bufferbloat) NO_BUFFERBLOAT=1 ;;
     --speed)          SPEED=1 ;;
     --no-speed)       NO_SPEED=1 ;;
+    --json)           JSON_MODE=1 ;;
+    --quiet)          QUIET=1 ;;
+    --log)            _take_value=1 ;;
+    --log=*)          LOG_OVERRIDE="${1#--log=}" ;;
+    --baseline)       BASELINE=1 ;;
+    --no-baseline)    NO_BASELINE=1 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -40,6 +74,7 @@ diagnosis (wifi vs router vs ISP vs DNS), then launches gping against the
 discovered hops for live monitoring.
 
 Usage: netdiag [TARGET] [--quick] [--no-gping] [--no-bufferbloat] [--speed]
+               [--json] [--quiet] [--log PATH]
 
 Positional:
   TARGET            hostname/IP to add to ping, DNS, TCP reach, and a second
@@ -53,42 +88,85 @@ Flags:
                     metered links)
   --speed           run a speedtest (down/up/latency/jitter); ~30 s and ~50 MB
   --no-speed        forbid the speedtest even if --speed was passed
+  --json            emit one JSON object on stdout; no human-readable output
+                    unless --log PATH is also passed
+  --quiet           print only the Diagnosis section; full log still written
+  --log PATH        write the human-readable log to PATH (default
+                    ~/net-diag/<timestamp>.log)
+  --baseline        compare this run against medians of the last 10 runs
+                    in ~/net-diag/baseline.jsonl (default on)
+  --no-baseline     skip the baseline comparison and don't append to history
 HELP
       exit 0 ;;
     -*)
-      printf 'netdiag: unknown flag: %s (see --help)\n' "$arg" >&2; exit 2 ;;
+      printf 'netdiag: unknown flag: %s (see --help)\n' "$1" >&2; exit 2 ;;
     *)
       if [ -n "$TARGET" ]; then
-        printf 'netdiag: only one TARGET allowed (got: %s and %s)\n' "$TARGET" "$arg" >&2
+        printf 'netdiag: only one TARGET allowed (got: %s and %s)\n' "$TARGET" "$1" >&2
         exit 2
       fi
-      TARGET="$arg" ;;
+      TARGET="$1" ;;
   esac
+  shift
 done
+if [ "$_take_value" -eq 1 ]; then
+  printf 'netdiag: --log expects a path\n' >&2; exit 2
+fi
 
 LOG_DIR="$HOME/net-diag"
-mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y-%m-%d-%H%M%S)"
-LOG="$LOG_DIR/$STAMP.log"
+TIMESTAMP_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [ -n "$LOG_OVERRIDE" ]; then
+  LOG="$LOG_OVERRIDE"
+  mkdir -p "$(dirname "$LOG")"
+elif [ "$JSON_MODE" -eq 1 ]; then
+  # --json without --log: route the log to /dev/null so say() still works.
+  LOG="/dev/null"
+else
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/$STAMP.log"
+fi
 
-# Colors (also stripped from the log)
-if [ -t 1 ]; then
+# Colors. Suppressed under --json or --quiet (stdout consumers don't want them).
+if [ "$JSON_MODE" -eq 0 ] && [ -t 1 ]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
   C_RED=$'\033[31m'; C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_BLU=$'\033[34m'; C_DIM=$'\033[2m'
 else
   C_RESET=; C_BOLD=; C_RED=; C_GRN=; C_YEL=; C_BLU=; C_DIM=
 fi
 
-# Print to terminal AND log (log gets ANSI stripped)
+# Stdout gating: print iff not JSON_MODE and (not QUIET OR past the Diagnosis
+# header). The log gets ANSI-stripped raw text either way.
+DIAGNOSIS_REACHED=0
 say() {
-  printf '%s\n' "$*"
+  if [ "$JSON_MODE" -eq 0 ] && \
+     { [ "$QUIET" -eq 0 ] || [ "$DIAGNOSIS_REACHED" -eq 1 ]; }; then
+    printf '%s\n' "$*"
+  fi
   printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG"
 }
-hdr() { say ""; say "${C_BOLD}${C_BLU}── $* ──${C_RESET}"; }
+hdr() {
+  case "$*" in
+    Diagnosis*) DIAGNOSIS_REACHED=1 ;;
+  esac
+  say ""
+  say "${C_BOLD}${C_BLU}── $* ──${C_RESET}"
+}
 ok()   { say "  ${C_GRN}✓${C_RESET} $*"; }
 warn() { say "  ${C_YEL}⚠${C_RESET} $*"; }
 bad()  { say "  ${C_RED}✗${C_RESET} $*"; }
 info() { say "  ${C_DIM}·${C_RESET} $*"; }
+
+# Pipeline-target replacement for `tee -a "$LOG"`. Writes to log unconditionally;
+# also writes to stdout iff not JSON_MODE and not pre-diagnosis QUIET.
+log_pipe() {
+  if [ "$JSON_MODE" -eq 0 ] && \
+     { [ "$QUIET" -eq 0 ] || [ "$DIAGNOSIS_REACHED" -eq 1 ]; }; then
+    tee -a "$LOG"
+  else
+    cat >> "$LOG"
+  fi
+}
 
 # Findings — used by the diagnosis stage
 WIFI_RSSI=""        # empty if unknown/wired
@@ -148,6 +226,22 @@ DHCP_TIME_REMAINING_S=""
 DHCP_DNS_SERVERS=""
 TARGET_PING_LOSS=""
 TARGET_PING_RTT=""
+# Arrays-as-newline-strings for the JSON helper (env can't carry arrays).
+DNS_LINES=""           # one "resolver|name|answer|OK|FAIL" per line
+TCP_REACH_LINES=""     # one "host:port|OK|ms" or "host:port|FAIL" per line
+DIAGNOSIS_LINES=""     # one diagnosis summary per line
+CAPTIVE_PORTAL=0
+WIFI_SSID=""
+WIFI_BSSID=""
+WIFI_SEC=""
+WIFI_CHAN=""
+WIFI_PHY=""
+WIFI_TX=""
+PUB_IP=""
+PUB_ASN=""
+PUB_ISP=""
+PUB_CITY=""
+PUB_CC=""
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -182,7 +276,7 @@ fi
 GW_COUNT="$(netstat -rn -f inet 2>/dev/null | awk '$1=="default"{print $2}' | sort -u | wc -l | tr -d ' ')"
 if [ "${GW_COUNT:-0}" -gt 1 ]; then
   warn "Multiple default gateways detected:"
-  netstat -rn -f inet | awk '$1=="default"{print "      "$2"  ("$NF")"}' | tee -a "$LOG"
+  netstat -rn -f inet | awk '$1=="default"{print "      "$2"  ("$NF")"}' | log_pipe
 fi
 
 # ── 1b. VPN active? ─────────────────────────────────────────────────────────
@@ -223,7 +317,6 @@ fi
 # ── 2. WiFi info ───────────────────────────────────────────────────────────
 hdr "WiFi"
 IS_WIFI=0
-SSID=""
 # Detect WiFi via hardware port type (more reliable than networksetup -getairportnetwork,
 # which is broken on some macOS versions and falsely reports "not associated").
 if [ -n "$INTERFACE" ]; then
@@ -234,12 +327,12 @@ if [ -n "$INTERFACE" ]; then
     IS_WIFI=1
     # Pull SSID from ipconfig getsummary (works without sudo on modern macOS).
     SUMMARY="$(ipconfig getsummary "$INTERFACE" 2>/dev/null)"
-    SSID="$(printf '%s\n' "$SUMMARY" | awk -F': ' '/^[[:space:]]*SSID[[:space:]]*:/{print $2; exit}')"
-    BSSID="$(printf '%s\n' "$SUMMARY" | awk -F': ' '/^[[:space:]]*BSSID[[:space:]]*:/{print $2; exit}')"
-    SEC="$(printf '%s\n' "$SUMMARY"   | awk -F': ' '/^[[:space:]]*Security[[:space:]]*:/{print $2; exit}')"
-    ok "SSID: ${SSID:-?}  (interface $INTERFACE)"
-    [ -n "$BSSID" ] && info "BSSID: $BSSID"
-    [ -n "$SEC" ]   && info "Security: $SEC"
+    WIFI_SSID="$(printf '%s\n' "$SUMMARY" | awk -F': ' '/^[[:space:]]*SSID[[:space:]]*:/{print $2; exit}')"
+    WIFI_BSSID="$(printf '%s\n' "$SUMMARY" | awk -F': ' '/^[[:space:]]*BSSID[[:space:]]*:/{print $2; exit}')"
+    WIFI_SEC="$(printf '%s\n' "$SUMMARY"   | awk -F': ' '/^[[:space:]]*Security[[:space:]]*:/{print $2; exit}')"
+    ok "SSID: ${WIFI_SSID:-?}  (interface $INTERFACE)"
+    [ -n "$WIFI_BSSID" ] && info "BSSID: $WIFI_BSSID"
+    [ -n "$WIFI_SEC" ]   && info "Security: $WIFI_SEC"
   fi
 fi
 if [ "$IS_WIFI" -eq 1 ]; then
@@ -253,9 +346,9 @@ if [ "$IS_WIFI" -eq 1 ]; then
   if [ -n "$WDUTIL_OUT" ]; then
     RSSI="$(printf '%s\n' "$WDUTIL_OUT"   | awk -F': ' '/^[[:space:]]*RSSI/{gsub(/ dBm/,"",$2); print $2; exit}')"
     NOISE="$(printf '%s\n' "$WDUTIL_OUT"  | awk -F': ' '/^[[:space:]]*Noise/{gsub(/ dBm/,"",$2); print $2; exit}')"
-    CHAN="$(printf '%s\n' "$WDUTIL_OUT"   | awk -F': ' '/^[[:space:]]*Channel/{print $2; exit}')"
-    TXRATE="$(printf '%s\n' "$WDUTIL_OUT" | awk -F': ' '/Tx Rate/{print $2; exit}')"
-    PHYMODE="$(printf '%s\n' "$WDUTIL_OUT"| awk -F': ' '/PHY Mode/{print $2; exit}')"
+    WIFI_CHAN="$(printf '%s\n' "$WDUTIL_OUT"   | awk -F': ' '/^[[:space:]]*Channel/{print $2; exit}')"
+    WIFI_TX="$(printf '%s\n'   "$WDUTIL_OUT"   | awk -F': ' '/Tx Rate/{print $2; exit}')"
+    WIFI_PHY="$(printf '%s\n'  "$WDUTIL_OUT"   | awk -F': ' '/PHY Mode/{print $2; exit}')"
     WIFI_RSSI="${RSSI:-}"
     # shellcheck disable=SC2034 # reserved for upcoming JSON/baseline support
     WIFI_NOISE="${NOISE:-}"
@@ -265,9 +358,9 @@ if [ "$IS_WIFI" -eq 1 ]; then
       WIFI_SNR=$((RSSI - NOISE))
       info "SNR: ${WIFI_SNR} dB"
     fi
-    [ -n "$CHAN" ]    && info "Channel: $CHAN"
-    [ -n "$PHYMODE" ] && info "PHY: $PHYMODE"
-    [ -n "$TXRATE" ]  && info "Tx Rate: $TXRATE"
+    [ -n "$WIFI_CHAN" ] && info "Channel: $WIFI_CHAN"
+    [ -n "$WIFI_PHY" ]  && info "PHY: $WIFI_PHY"
+    [ -n "$WIFI_TX" ]   && info "Tx Rate: $WIFI_TX"
 
     # Quality interpretation
     if [ -n "$RSSI" ]; then
@@ -328,7 +421,7 @@ if [ "$IS_WIFI" -eq 1 ] && [ "$QUICK" -eq 0 ]; then
     if [ "$WIFI_SCAN_NEIGHBOR_COUNT" -gt 0 ]; then
       info "Top neighbour channels:"
       printf '%s\n' "$NEIGHBOR_CHANS" | sort | uniq -c | sort -rn | head -5 \
-        | awk '{printf "      ch %-4s × %d\n", $2, $1}' | tee -a "$LOG"
+        | awk '{printf "      ch %-4s × %d\n", $2, $1}' | log_pipe
     fi
     if [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
       warn "Your channel has $WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS other APs — consider switching."
@@ -351,7 +444,7 @@ if [ "$IS_WIFI" -eq 1 ]; then
   info "Disconnect/reassoc events in last hour: $WIFI_DISCONNECT_COUNT"
   if [ -n "$WIFI_LOG_OUT" ]; then
     info "Last 5 events:"
-    printf '%s\n' "$WIFI_LOG_OUT" | tail -5 | sed 's/^/      /' | tee -a "$LOG"
+    printf '%s\n' "$WIFI_LOG_OUT" | tail -5 | sed 's/^/      /' | log_pipe
   fi
   if [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
     warn "WiFi link is flapping ($WIFI_DISCONNECT_COUNT disconnects in 1h)."
@@ -404,7 +497,7 @@ fi
 if [ -n "${ARP_DUPLICATE_IPS//[[:space:]]/}" ]; then
   bad "Duplicate IP(s) seen:"
   for dup in $ARP_DUPLICATE_IPS; do
-    printf '%s\n' "$ARP_PAIRS" | awk -v ip="$dup" '$1==ip{print "      "$0}' | tee -a "$LOG"
+    printf '%s\n' "$ARP_PAIRS" | awk -v ip="$dup" '$1==ip{print "      "$0}' | log_pipe
   done
 else
   ok "No duplicate IPs in ARP table."
@@ -436,6 +529,7 @@ if [ -n "$PUB_OUT" ]; then
   PUBLIC_OK=1
   PUB_IP="$(printf '%s' "$PUB_OUT"   | sed -n 's/.*"ip": *"\([^"]*\)".*/\1/p')"
   PUB_ISP="$(printf '%s' "$PUB_OUT"  | sed -n 's/.*"asn_org": *"\([^"]*\)".*/\1/p')"
+  PUB_ASN="$(printf '%s' "$PUB_OUT"  | sed -n 's/.*"asn": *"\([^"]*\)".*/\1/p')"
   PUB_CITY="$(printf '%s' "$PUB_OUT" | sed -n 's/.*"city": *"\([^"]*\)".*/\1/p')"
   PUB_CC="$(printf '%s' "$PUB_OUT"   | sed -n 's/.*"country": *"\([^"]*\)".*/\1/p')"
   ok "Public IP: $PUB_IP  ($PUB_ISP, $PUB_CITY $PUB_CC)"
@@ -448,6 +542,7 @@ CAPTIVE="$(curl -s -m 3 -o /dev/null -w '%{http_code} %{redirect_url}' http://ca
 if printf '%s' "$CAPTIVE" | grep -q '^200'; then
   ok "No captive portal."
 elif printf '%s' "$CAPTIVE" | grep -qE '^3[0-9][0-9]'; then
+  CAPTIVE_PORTAL=1
   warn "Captive portal detected (HTTP $CAPTIVE) — log in via browser."
 fi
 
@@ -555,8 +650,15 @@ hdr "DNS"
 dns_check() {
   local resolver="$1" name="$2" out
   out="$(dig +time=2 +tries=1 +short @"$resolver" "$name" 2>/dev/null | head -1)"
-  if [ -n "$out" ]; then ok "$resolver → $name = $out"; return 0
-  else bad "$resolver → $name FAILED"; return 1; fi
+  if [ -n "$out" ]; then
+    ok "$resolver → $name = $out"
+    DNS_LINES+="${resolver}|${name}|${out}|OK"$'\n'
+    return 0
+  else
+    bad "$resolver → $name FAILED"
+    DNS_LINES+="${resolver}|${name}||FAIL"$'\n'
+    return 1
+  fi
 }
 DNS_FAIL=0
 SYS_RES="$(scutil --dns 2>/dev/null | awk '/nameserver\[0\]/{print $3; exit}')"
@@ -741,7 +843,7 @@ fi
 # ── 6. Traceroute ──────────────────────────────────────────────────────────
 hdr "Traceroute to 1.1.1.1"
 TRACE_OUT="$(traceroute -n -q 1 -w 2 -m 18 1.1.1.1 2>/dev/null)"
-printf '%s\n' "$TRACE_OUT" | tee -a "$LOG" | sed 's/^/  /'
+printf '%s\n' "$TRACE_OUT" | log_pipe | sed 's/^/  /'
 # Extract hop IPs (skip *'s)
 while read -r line; do
   ip="$(printf '%s' "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/){print $i; exit}}')"
@@ -755,7 +857,7 @@ EOF
 if [ -n "$TARGET" ]; then
   hdr "Traceroute to $TARGET"
   TRACE_TARGET_OUT="$(traceroute -n -q 1 -w 2 -m 18 "$TARGET" 2>/dev/null)"
-  printf '%s\n' "$TRACE_TARGET_OUT" | tee -a "$LOG" | sed 's/^/  /'
+  printf '%s\n' "$TRACE_TARGET_OUT" | log_pipe | sed 's/^/  /'
 fi
 
 # ── 7. Per-hop loss (mtr if available + sudo, else 5-packet fallback) ──────
@@ -897,11 +999,146 @@ fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."
 else
-  for d in "${DIAG[@]}"; do bad "$d"; done
+  for d in "${DIAG[@]}"; do
+    bad "$d"
+    DIAGNOSIS_LINES+="${d}"$'\n'
+  done
 fi
 
-say ""
-say "${C_DIM}Report saved to: $LOG${C_RESET}"
+# Concatenate TCP_REACH_RESULTS into TCP_REACH_LINES for the JSON helper.
+for r in "${TCP_REACH_RESULTS[@]}"; do
+  TCP_REACH_LINES+="${r}"$'\n'
+done
+
+# ── 8b. JSON build (always) + baseline + output ────────────────────────────
+# Build JSON unconditionally so the baseline helper has something to compare
+# against; rebuild after baseline so regressions show up in the JSON's
+# diagnosis field too.
+JSON_TMP="$(mktemp "${TMPDIR:-/tmp}/netdiag-out.XXXXXX.json")"
+build_json() {
+
+NETDIAG_VERSION="$NETDIAG_VERSION" \
+  NETDIAG_TIMESTAMP="$TIMESTAMP_ISO" \
+  NETDIAG_INTERFACE="$INTERFACE" \
+  NETDIAG_LOCAL_IP="${LOCAL_IP:-}" \
+  NETDIAG_GATEWAY="$GATEWAY" \
+  NETDIAG_IS_WIFI="$IS_WIFI" \
+  NETDIAG_WIFI_SSID="$WIFI_SSID" \
+  NETDIAG_WIFI_BSSID="$WIFI_BSSID" \
+  NETDIAG_WIFI_SEC="$WIFI_SEC" \
+  NETDIAG_WIFI_RSSI="${WIFI_RSSI:-}" \
+  NETDIAG_WIFI_NOISE="${WIFI_NOISE:-}" \
+  NETDIAG_WIFI_SNR="${WIFI_SNR:-}" \
+  NETDIAG_WIFI_CHAN="$WIFI_CHAN" \
+  NETDIAG_WIFI_PHY="$WIFI_PHY" \
+  NETDIAG_WIFI_TX="$WIFI_TX" \
+  NETDIAG_VPN_ACTIVE="$VPN_ACTIVE" \
+  NETDIAG_VPN_TYPE="$VPN_TYPE" \
+  NETDIAG_VPN_NAME="$VPN_NAME" \
+  NETDIAG_GW_LOSS="${GW_LOSS:-}" \
+  NETDIAG_GW_LATENCY="${GW_LATENCY:-}" \
+  NETDIAG_PUB_IP="$PUB_IP" \
+  NETDIAG_PUB_ASN="$PUB_ASN" \
+  NETDIAG_PUB_ISP="$PUB_ISP" \
+  NETDIAG_PUB_CITY="$PUB_CITY" \
+  NETDIAG_PUB_CC="$PUB_CC" \
+  NETDIAG_CAPTIVE_PORTAL="$CAPTIVE_PORTAL" \
+  NETDIAG_BUFFERBLOAT_IDLE_GW_RTT="$BUFFERBLOAT_IDLE_GW_RTT" \
+  NETDIAG_BUFFERBLOAT_LOADED_GW_RTT="$BUFFERBLOAT_LOADED_GW_RTT" \
+  NETDIAG_BUFFERBLOAT_IDLE_INET_RTT="$BUFFERBLOAT_IDLE_INET_RTT" \
+  NETDIAG_BUFFERBLOAT_LOADED_INET_RTT="$BUFFERBLOAT_LOADED_INET_RTT" \
+  NETDIAG_BUFFERBLOAT_GW_DELTA="$BUFFERBLOAT_GW_DELTA" \
+  NETDIAG_BUFFERBLOAT_INET_DELTA="$BUFFERBLOAT_INET_DELTA" \
+  NETDIAG_BUFFERBLOAT_GW_GRADE="$BUFFERBLOAT_GW_GRADE" \
+  NETDIAG_BUFFERBLOAT_INET_GRADE="$BUFFERBLOAT_INET_GRADE" \
+  NETDIAG_MTU_EFFECTIVE="$MTU_EFFECTIVE" \
+  NETDIAG_MTU_PATH_SIZE="$MTU_PATH_SIZE" \
+  NETDIAG_DNS_LINES="$DNS_LINES" \
+  NETDIAG_IPV6_AVAILABLE="$IPV6_AVAILABLE" \
+  NETDIAG_IPV6_GLOBAL_ADDR="$IPV6_GLOBAL_ADDR" \
+  NETDIAG_IPV6_GATEWAY="$IPV6_GATEWAY" \
+  NETDIAG_IPV6_PING_LOSS="$IPV6_PING_LOSS" \
+  NETDIAG_IPV6_AAAA_OK="$IPV6_AAAA_OK" \
+  NETDIAG_IPV6_TRACE_HOPS="$IPV6_TRACE_HOPS" \
+  NETDIAG_IPV6_TCP_OK="$IPV6_TCP_OK" \
+  NETDIAG_TCP_REACH_LINES="$TCP_REACH_LINES" \
+  NETDIAG_WIFI_SCAN_CURRENT_CHANNEL="$WIFI_SCAN_CURRENT_CHANNEL" \
+  NETDIAG_WIFI_SCAN_CURRENT_BAND="$WIFI_SCAN_CURRENT_BAND" \
+  NETDIAG_WIFI_SCAN_NEIGHBOR_COUNT="$WIFI_SCAN_NEIGHBOR_COUNT" \
+  NETDIAG_WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS="$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" \
+  NETDIAG_WIFI_DISCONNECT_WINDOW_HOURS="$WIFI_DISCONNECT_WINDOW_HOURS" \
+  NETDIAG_WIFI_DISCONNECT_COUNT="$WIFI_DISCONNECT_COUNT" \
+  NETDIAG_SPEEDTEST_DOWN_MBPS="$SPEEDTEST_DOWN_MBPS" \
+  NETDIAG_SPEEDTEST_UP_MBPS="$SPEEDTEST_UP_MBPS" \
+  NETDIAG_SPEEDTEST_LATENCY_MS="$SPEEDTEST_LATENCY_MS" \
+  NETDIAG_SPEEDTEST_JITTER_MS="$SPEEDTEST_JITTER_MS" \
+  NETDIAG_SPEEDTEST_SERVER="$SPEEDTEST_SERVER" \
+  NETDIAG_NTP_DRIFT_S="$NTP_DRIFT_S" \
+  NETDIAG_NTP_USING_NETWORK_TIME="$NTP_USING_NETWORK_TIME" \
+  NETDIAG_NTP_SERVER="$NTP_SERVER" \
+  NETDIAG_DHCP_SERVER="$DHCP_SERVER" \
+  NETDIAG_DHCP_LEASE_START="$DHCP_LEASE_START" \
+  NETDIAG_DHCP_LEASE_END="$DHCP_LEASE_END" \
+  NETDIAG_DHCP_TIME_REMAINING_S="${DHCP_TIME_REMAINING_S:-}" \
+  NETDIAG_DHCP_DNS_SERVERS="$DHCP_DNS_SERVERS" \
+  NETDIAG_ARP_DUPLICATE_IPS="$ARP_DUPLICATE_IPS" \
+  NETDIAG_ARP_GW_INCOMPLETE="$ARP_GW_INCOMPLETE" \
+  NETDIAG_MTR_FIRST_LOSSY_HOP="$MTR_FIRST_LOSSY_HOP" \
+  NETDIAG_TARGET="$TARGET" \
+  NETDIAG_TARGET_PING_LOSS="$TARGET_PING_LOSS" \
+  NETDIAG_TARGET_PING_RTT="$TARGET_PING_RTT" \
+  NETDIAG_DIAGNOSIS_LINES="$DIAGNOSIS_LINES" \
+  python3 "$HELPERS_DIR/emit_json.py"
+}
+
+build_json > "$JSON_TMP"
+
+# Baseline comparison: compare current JSON to history, surface any
+# regressions, then rebuild the JSON so they appear in its diagnosis array.
+if [ "$NO_BASELINE" -eq 0 ] && [ "$BASELINE" -eq 1 ]; then
+  mkdir -p "$LOG_DIR"
+  BASELINE_OUT="$(python3 "$HELPERS_DIR/baseline.py" \
+    --history "$LOG_DIR/baseline.jsonl" --current "$JSON_TMP" --n 10 2>/dev/null || true)"
+  if [ -n "$BASELINE_OUT" ]; then
+    BASELINE_LINES="$(printf '%s' "$BASELINE_OUT" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for r in d.get('regressions', []):
+    kind  = r.get('kind', '?')
+    label = r.get('label', r.get('metric'))
+    cur   = r.get('current'); med = r.get('median')
+    if kind == 'spike':
+        print(f'{label} is {cur} vs {med} median (×{r.get(\"factor\",\"?\")} spike)')
+    elif kind == 'drop':
+        print(f'{label} dropped to {cur} from {med} median')
+    elif kind == 'drift':
+        print(f'{label} drifted to {cur} from {med} median')
+    elif kind == 'change':
+        print(f'{label} changed: \"{cur}\" (was previously \"{med}\")')
+")"
+    if [ -n "$BASELINE_LINES" ]; then
+      while IFS= read -r reg; do
+        [ -z "$reg" ] && continue
+        DIAG+=("Baseline regression: $reg")
+        DIAGNOSIS_LINES+="Baseline regression: $reg"$'\n'
+        bad "Baseline regression: $reg"
+      done <<<"$BASELINE_LINES"
+      # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
+      build_json > "$JSON_TMP"
+    fi
+  fi
+  # Append final snapshot to history (one record per run).
+  python3 -c "import json; print(json.dumps(json.load(open('$JSON_TMP'))))" \
+    >> "$LOG_DIR/baseline.jsonl" 2>/dev/null || true
+fi
+
+if [ "$JSON_MODE" -eq 1 ]; then
+  cat "$JSON_TMP"
+else
+  say ""
+  say "${C_DIM}Report saved to: $LOG${C_RESET}"
+fi
+rm -f "$JSON_TMP"
 
 # ── 9. Launch gping ────────────────────────────────────────────────────────
 if [ "$NO_GPING" -eq 0 ] && command -v gping >/dev/null 2>&1; then
