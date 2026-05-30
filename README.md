@@ -5,12 +5,15 @@
 
 `netdiag` runs a battery of macOS-native checks (interface, WiFi, gateway,
 DNS, traceroute, bufferbloat, PMTU, mtr, IPv6, VPN, TCP reach, WiFi scan +
-disconnect history, NTP drift, ARP, DHCP), writes a timestamped JSON +
-human log, then prints a **Diagnosis** section that names a likely culprit
-with evidence and a recommendation. It also tracks a rolling baseline so
-intermittent regressions ("WiFi RSSI dropped from -55 to -78 since
-yesterday", "gateway RTT is 4× the 30-day median") get caught the next time
-you run it.
+disconnect history, NTP drift, ARP, DHCP, plus NAT/WAN topology — dual-WAN,
+double-NAT, UPnP/NAT-PMP), writes a timestamped JSON + human log, then
+prints a **Diagnosis** section that names a likely culprit with evidence
+and a recommendation. It also tracks a rolling baseline so intermittent
+regressions ("WiFi RSSI dropped from -55 to -78 since yesterday", "gateway
+RTT is 4× the 30-day median") get caught the next time you run it.
+
+Independent probes run as parallel background jobs, so a typical full
+run finishes well inside the spec's 30 s budget on a healthy link.
 
 ## Why
 
@@ -35,7 +38,7 @@ the system prefix isn't writable) and runs `brew install bash` if it
 needs to. Pass `--prefix DIR` to override the install location;
 `--no-brew` to skip the bash bootstrap.
 
-Homebrew tap and a `curl | bash` one-liner are on the v0.3 roadmap.
+A Homebrew tap and a `curl | bash` one-liner are still on the roadmap.
 
 ## Usage
 

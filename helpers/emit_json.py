@@ -8,8 +8,12 @@ become JSON null.
 Top-level keys follow the order specified in netdiag-prompt.md:
   version, timestamp, interface, wifi, gateway, public, dns, traceroute,
   per_hop, bufferbloat, mtu, ipv6, vpn, tcp_reach, wifi_scan,
-  wifi_disconnects, speedtest, ntp, duplicate_ips, dhcp, mtr, baseline,
-  diagnosis, most_likely_root_cause, netdiag_extras
+  wifi_disconnects, speedtest, ntp, duplicate_ips, dhcp, mtr, wan,
+  baseline, diagnosis, most_likely_root_cause, netdiag_extras
+
+`wan` (v0.3+) covers NAT / WAN topology — dual-WAN load balancing,
+double-NAT detection, UPnP/NAT-PMP status. Sub-keys: load_balancing,
+double_nat, upnp.
 """
 
 from __future__ import annotations
@@ -151,12 +155,38 @@ def build_mtr() -> dict:
     }
 
 
+def build_wan() -> dict:
+    """NAT / WAN topology section (v0.3+). All three sub-objects are present
+    even when the underlying probe was skipped — fields are nullable instead.
+    """
+    lb_asns = (_env("WAN_LB_ASNS") or "").split()
+    lb_ips = (_env("WAN_LB_IPS") or "").split()
+    double_nat_chain = (_env("WAN_DOUBLE_NAT_CHAIN") or "").split()
+    return {
+        "load_balancing": {
+            "distinct_asns": lb_asns,
+            "distinct_ips": lb_ips,
+            "active": _bool("WAN_LB_ACTIVE"),
+        },
+        "double_nat": {
+            "detected": _bool("WAN_DOUBLE_NAT"),
+            "rfc1918_chain": double_nat_chain,
+        },
+        "upnp": {
+            "state": _env("WAN_UPNP_STATE"),
+            "device": _env("WAN_UPNP_DEVICE"),
+            "url": _env("WAN_UPNP_URL"),
+            "tested_via": _env("WAN_UPNP_TESTED_VIA"),
+        },
+    }
+
+
 def main() -> None:
     is_wifi = _bool("IS_WIFI")
     target = _env("TARGET")
 
     data: dict = {
-        "version": _env("VERSION") or "0.2.0",
+        "version": _env("VERSION") or "0.3.0",
         "timestamp": _env("TIMESTAMP"),
         "interface": {
             "name": _env("INTERFACE"),
@@ -255,6 +285,7 @@ def main() -> None:
             "dns_servers": _env("DHCP_DNS_SERVERS"),
         },
         "mtr": build_mtr(),
+        "wan": build_wan(),
         "baseline": build_baseline(),
         "diagnosis": build_diagnosis(),
         "most_likely_root_cause": _env("MOST_LIKELY_ROOT_CAUSE"),

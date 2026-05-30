@@ -6,6 +6,85 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-30
+
+The "architecture + NAT/WAN topology" release. `bin/netdiag` was a single
+1238-line bash file in v0.2.x; this release splits it into 23 modules
+under `lib/`, adds a parallel-launch helper so independent checks run
+concurrently, introduces a `with_timeout` wrapper to keep any one probe
+from blocking the whole run, and ships a new NAT / WAN topology section
+covering dual-WAN, double-NAT, and UPnP/NAT-PMP status.
+
+### Added
+
+- **Modular layout (lib/\*.sh).** Each section is its own module with a
+  documented "Reads / Writes / Entry" header. `bin/netdiag` is now a
+  ~230-line orchestrator. `lib/common.sh` holds shared printing,
+  diagnosis accumulator, timeout wrapper, and parallel-launch helpers;
+  `lib/globals.sh` centralises every cross-module variable.
+- **Parallel batch.** DNS, IPv6, TCP reach, NTP, WiFi neighborhood,
+  WiFi disconnect history, dual-WAN probe, and UPnP probe now run as
+  background jobs collected via a fan-in helper. Per-section stdout is
+  buffered so output order stays canonical even though execution is
+  concurrent. On this Starlink link the parallel batch is bound by
+  `system_profiler SPAirPortDataType` (~15 s); the previously-sequential
+  work that used to fill that window is now overlapped.
+- **`with_timeout SECS cmd…` helper.** macOS has no `timeout(1)`; this
+  is a small shell wrapper that kills the wrapped command after SECS
+  and returns 124 on timeout (matches GNU `timeout`). Applied to DNS
+  `dig`, TCP `nc`, `traceroute`, `mtr`, and `sntp`.
+- **NAT / WAN topology section** (`lib/wan.sh`, ~215 LOC):
+  - **WAN-1 / WAN-1b — dual-WAN / load-balancing probe.** Three
+    parallel `curl -s https://ifconfig.co/json` requests; flags if
+    they return more than one distinct ASN or more than one public IP
+    within the same ASN. Surfaces "outbound is being load-balanced
+    across N ISPs" as a `warn` (or single-ASN multi-IP as `info` —
+    likely CGNAT round-robin).
+  - **NAT-1 — double-NAT detection.** Walks the traceroute output and
+    counts consecutive RFC1918 hops before the first CGNAT or public
+    address. > 1 → `warn` with the chain printed. Pure parse; no extra
+    network call.
+  - **UP-1 — UPnP / NAT-PMP status.** Prefers Homebrew `miniupnpc`
+    (`upnpc -s`); falls back to a raw SSDP M-SEARCH via `nc -u`, then a
+    NAT-PMP probe to gateway:5351. Reports `enabled` / `disabled` /
+    `unknown`; `info` severity (disabled is the safer default but
+    games / Plex / Steam often need it).
+  - **JSON schema additions** — new top-level `wan` object with
+    `load_balancing.{distinct_asns,distinct_ips,active}`,
+    `double_nat.{detected,rfc1918_chain}`, and
+    `upnp.{state,device,url,tested_via}`. Additive only; v0.2.x
+    consumers see the same other keys.
+- **Bats fixtures + parser unit tests** (`tests/test_parse.bats`).
+  24 tests covering `grade_bufferbloat` thresholds, traceroute
+  parser (`*` skip + banner skip + renumbering), mtr first-lossy-hop
+  detection, ARP duplicate detection (with synthetic `arp_dup.txt`),
+  DHCP lease-end date math, PMTU computation, and the new double-NAT
+  RFC1918 chain walker. Fixtures captured from this Mac
+  (`tests/fixtures/{wdutil_info,ipconfig_getsummary,traceroute,arp_an,
+  system_profiler}.txt`) are sanitized — MACs, SSIDs, BSSIDs replaced
+  with synthetic values.
+- **`tests/integration_sudo.sh`** — interactive one-shot that asks for
+  sudo once, then exercises the mtr-under-sudo branch end-to-end
+  (`bats` can't drive sudo so this lives outside the suite).
+
+### Fixed
+
+- **`traceroute -n` parser dropped hop 1.** The awk skipped NR=1
+  expecting a banner, but macOS writes the "traceroute to ..." banner
+  to stderr and netdiag was redirecting stderr — so NR=1 was actually
+  hop 1. Now matches on `$1 == "traceroute"` so it skips the banner
+  only when it's actually present. This v0.2.x bug was latent because
+  no v0.2 rule walked the trace data; the new NAT-1 rule surfaced it.
+- **`with_timeout` orphaned `sleep` could pin command substitution.**
+  The killer subshell's `sleep` inherited stdout, so `$(with_timeout
+  ...)` would block for the full timeout even after the wrapped
+  command had completed. Killer subshell output now goes to /dev/null.
+
+### Changed
+
+- **JSON `version` is now `"0.3.0"`** (was `"0.2.0"` — the
+  `emit_json.py` default).
+
 ## [0.2.1] - 2026-05-30
 
 Bugfix release driven by a 13-test pass of v0.2.0 on a real Starlink link.

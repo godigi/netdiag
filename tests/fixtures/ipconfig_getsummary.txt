@@ -1,0 +1,60 @@
+<dictionary> {
+  BSSID : aa:bb:cc:dd:ee:00
+  ConnectionID : 1
+  IPv4 : <array> {
+    0 : <dictionary> {
+      Addresses : <array> {
+        0 : 192.168.50.56
+      }
+      ChildServiceID : LINKLOCAL-en0
+      ConfigMethod : DHCP
+      DHCP : <dictionary> {
+        LeaseExpirationTime : 05/31/2026 10:19:51
+        LeaseStartTime : 05/30/2026 10:19:51
+        Packet : op = BOOTREPLY
+htype = 1
+flags = 0x0
+hlen = 6
+hops = 0
+xid = 0xbc79c785
+secs = 0
+ciaddr = 0.0.0.0
+yiaddr = 192.168.50.56
+siaddr = 0.0.0.0
+giaddr = 0.0.0.0
+chaddr = fe:f4:7a:33:e3:99
+sname = 
+file = 
+options:
+Options count is 7
+dhcp_message_type (uint8): ACK 0x5
+server_identifier (ip): 192.168.50.1
+lease_time (uint32): 0x15180
+subnet_mask (ip): 255.255.255.0
+router (ip_mult): {192.168.50.1}
+domain_name_server (ip_mult): {192.168.50.1}
+end (none): 
+
+        State : BOUND
+      }
+      IsPublished : TRUE
+      Router : 192.168.50.1
+      RouterARPVerified : TRUE
+      ServiceID : 10BB6BA2-205C-49D4-AF11-BDCFF65B2D5C
+      SubnetMasks : <array> {
+        0 : 255.255.255.0
+      }
+    }
+    1 : <dictionary> {
+      ConfigMethod : LinkLocal
+      IsPublished : TRUE
+      ParentServiceID : 10BB6BA2-205C-49D4-AF11-BDCFF65B2D5C
+      ServiceID : LINKLOCAL-en0
+    }
+  }
+  IPv6 : <array> {
+    0 : <dictionary> {
+      ConfigMethod : Automatic
+      DHCPv6 : <dictionary> {
+        Mode : None
+        State : Inactive

@@ -199,3 +199,56 @@ These are placeholders; each will be filled in when its source feature lands.
 - Evidence: both addresses side-by-side.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
+
+## Rules added in v0.3.0 — NAT / WAN topology
+
+### WAN-1 — Outbound traffic load-balanced across multiple ISPs
+
+- Trigger: 3 parallel probes to `ifconfig.co/json` return more than one
+  distinct `asn_org`. Emitted by `lib/wan.sh::wan_load_balancing_run`.
+- Severity: `warn`.
+- Evidence: list of distinct ASNs and IPs observed.
+- Recommendation: often intentional (multi-WAN router, mwan3, etc.) —
+  it just explains the IP-rebinding TLS warnings and asymmetric-routing
+  surprises that some apps complain about.
+- Rationale: outgoing connections from the same Mac to the same
+  destination can land on different egress paths, breaking sticky
+  session assumptions in some services.
+
+### WAN-1b — Same ISP, multiple public IPs (CGNAT round-robin)
+
+- Trigger: 3 probes return one ASN but more than one IP.
+- Severity: `info`.
+- Evidence: ASN and the distinct IPs.
+- Recommendation: usually carrier-grade NAT round-robin; nothing the
+  user can fix locally. Worth flagging if a service complains about
+  "your IP keeps changing."
+
+### NAT-1 — Double-NAT detected
+
+- Trigger: traceroute path has > 1 consecutive RFC1918 hops before the
+  first CGNAT (`100.64/10`) or public address. Emitted by
+  `lib/wan.sh::wan_double_nat_run` (pure parse over `TRACE_LINES`).
+- Severity: `warn`.
+- Evidence: the RFC1918 chain printed in order.
+- Recommendation: if you control multiple routers in the chain, put
+  the inner one(s) in bridge/AP mode. UPnP and per-app port forwarding
+  generally don't survive a double-NAT path.
+- Caveat: ISPs sometimes use `10/8` for their internal transit, so a
+  detected "chain" may include hops you can't influence. The diagnosis
+  text prints the full chain so the user can identify which hops are
+  in their own house vs the ISP's network.
+
+### UP-1 — UPnP / NAT-PMP is enabled
+
+- Trigger: probe to the gateway via `upnpc -s` (Homebrew `miniupnpc`),
+  raw SSDP M-SEARCH on `239.255.255.250:1900`, or NAT-PMP on
+  `gateway:5351` returned a response.
+- Severity: `info`.
+- Evidence: which probe succeeded (`miniupnpc` / `ssdp` / `nat-pmp`)
+  and the IGD URL when known.
+- Recommendation: disabled-UPnP is the safer default; enabled means
+  apps can open ports without asking. If you don't run games / Plex /
+  Steam / consoles that need it, you can disable it in the router UI.
+- Rationale: defensive call-out, not a fault — most home networks have
+  UPnP on by default and the user may not realise.

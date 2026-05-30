@@ -1,0 +1,5 @@
+? (192.168.50.1) at aa:bb:cc:dd:ee:01 on en0 ifscope [ethernet]
+? (192.168.50.10) at aa:bb:cc:dd:ee:02 on en0 ifscope [ethernet]
+? (192.168.50.10) at aa:bb:cc:dd:ee:03 on en0 ifscope [ethernet]
+? (192.168.50.20) at (incomplete) on en0 ifscope [ethernet]
+? (192.168.50.30) at aa:bb:cc:dd:ee:04 on en0 ifscope [ethernet]
