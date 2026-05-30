@@ -103,7 +103,19 @@ These are placeholders; each will be filled in when its source feature lands.
   routers further along the path may rate-limit ICMP, faking "loss" that
   doesn't affect real traffic. The first hop where loss appears is the
   one actually dropping packets.
-- **V6-1** — v6 broken with v4 healthy → router/ISP v6 misconfig (Happy Eyeballs masks).
+### V6-1 — IPv6 broken while IPv4 works
+
+- Trigger: `ipv6.available == true AND public.ok == true AND
+  (ipv6.ping_loss >= 20% OR ipv6.aaaa_ok == false OR ipv6.tcp_v6_ok == false)`.
+- Severity: `warn` (Happy Eyeballs will hide it for most traffic).
+- Evidence: ping6 loss, AAAA OK?, TCP/443 to ipv6.google.com OK?
+- Recommendation: router or ISP IPv6 misconfig. Reboot the router; if it
+  persists, ask the ISP whether they've actually provisioned a v6 prefix.
+- Rationale: macOS Happy Eyeballs races v4 and v6, picking the first
+  responder. A degraded v6 path slows down loads of v6-preferred sites
+  (large-CDN, Google, Cloudflare) by exactly the timeout window before
+  v4 wins, ~250 ms — enough to feel like "the internet is laggy" without
+  any v4-side culprit.
 - **VPN-1** — VPN active → "gateway" below is the VPN endpoint, not your LAN router.
 - **TCP-1** — TCP/443 works but ICMP fails → ICMP filtered; ignore ping-based negatives.
 - **WS-1** — Channel congestion → too many neighbouring APs on the same channel.

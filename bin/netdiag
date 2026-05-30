@@ -93,6 +93,13 @@ BUFFERBLOAT_INET_GRADE=""
 MTU_PATH_SIZE=""    # largest payload that passed DF
 MTU_EFFECTIVE=""    # MTU_PATH_SIZE + 28 (8 ICMP + 20 IP headers)
 MTR_FIRST_LOSSY_HOP=""
+IPV6_AVAILABLE=0
+IPV6_GLOBAL_ADDR=""
+IPV6_GATEWAY=""
+IPV6_PING_LOSS=""
+IPV6_AAAA_OK=0
+IPV6_TRACE_HOPS=""
+IPV6_TCP_OK=0
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -349,6 +356,56 @@ for name in apple.com cloudflare.com; do
 done
 [ "$DNS_FAIL" -eq 0 ] && DNS_OK=1
 
+# ── 5b. IPv6 parity ─────────────────────────────────────────────────────────
+hdr "IPv6"
+if [ -n "$INTERFACE" ]; then
+  IPV6_GLOBAL_ADDR="$(ifconfig "$INTERFACE" inet6 2>/dev/null \
+    | awk '/inet6 / && !/fe80::/ && !/::1/ && !/%/ {print $2; exit}')"
+fi
+if [ -z "$IPV6_GLOBAL_ADDR" ]; then
+  info "No global IPv6 on $INTERFACE — v4-only network."
+else
+  IPV6_AVAILABLE=1
+  ok "Global IPv6: $IPV6_GLOBAL_ADDR"
+  IPV6_GATEWAY="$(route -n get -inet6 default 2>/dev/null | awk '/gateway:/{print $2}')"
+  [ -n "$IPV6_GATEWAY" ] && info "v6 default route: $IPV6_GATEWAY"
+
+  # Ping Cloudflare v6
+  PING6_OUT="$(ping6 -c 5 -i 0.2 -W 2000 2606:4700:4700::1111 2>/dev/null || true)"
+  IPV6_PING_LOSS="$(printf '%s\n' "$PING6_OUT" \
+    | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
+  IPV6_PING_LOSS="${IPV6_PING_LOSS:-100}"
+  if [ "${IPV6_PING_LOSS%.*}" -eq 0 ]; then
+    ok "ping6 2606:4700:4700::1111: 0% loss"
+  else
+    bad "ping6 2606:4700:4700::1111: ${IPV6_PING_LOSS}% loss"
+  fi
+
+  # AAAA resolution via Cloudflare
+  AAAA="$(dig +time=2 +tries=1 +short AAAA cloudflare.com @1.1.1.1 2>/dev/null | head -1)"
+  if [ -n "$AAAA" ]; then
+    IPV6_AAAA_OK=1
+    ok "AAAA cloudflare.com → $AAAA"
+  else
+    bad "AAAA cloudflare.com FAILED"
+  fi
+
+  # Traceroute6 hop count
+  if command -v traceroute6 >/dev/null 2>&1; then
+    IPV6_TRACE_HOPS="$(traceroute6 -n -q 1 -w 2 -m 12 2606:4700:4700::1111 2>/dev/null \
+      | awk '/^[[:space:]]*[0-9]+/' | wc -l | tr -d ' ')"
+    info "traceroute6: ${IPV6_TRACE_HOPS} hops to Cloudflare"
+  fi
+
+  # TCP/443 to v6-only host
+  if nc -6 -G 3 -z ipv6.google.com 443 2>/dev/null; then
+    IPV6_TCP_OK=1
+    ok "TCP/443 to ipv6.google.com: reachable"
+  else
+    bad "TCP/443 to ipv6.google.com: failed"
+  fi
+fi
+
 # ── 6. Traceroute ──────────────────────────────────────────────────────────
 hdr "Traceroute to 1.1.1.1"
 TRACE_OUT="$(traceroute -n -q 1 -w 2 -m 18 1.1.1.1 2>/dev/null)"
@@ -463,6 +520,15 @@ if [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1500 ]; then
 fi
 if [ -n "$MTR_FIRST_LOSSY_HOP" ]; then
   DIAG+=("First lossy hop: $MTR_FIRST_LOSSY_HOP — blame this hop (and the router/ISP that owns it). Loss on subsequent hops is usually inherited from this one, not new.")
+fi
+if [ "$IPV6_AVAILABLE" -eq 1 ]; then
+  v6_broken=0
+  [ -n "$IPV6_PING_LOSS" ] && [ "${IPV6_PING_LOSS%.*}" -ge 20 ] && v6_broken=1
+  [ "$IPV6_AAAA_OK" -eq 0 ] && v6_broken=1
+  [ "$IPV6_TCP_OK" -eq 0 ] && v6_broken=1
+  if [ "$v6_broken" -eq 1 ] && [ "$PUBLIC_OK" -eq 1 ]; then
+    DIAG+=("IPv6 is broken (loss ${IPV6_PING_LOSS}%, AAAA $( [ $IPV6_AAAA_OK -eq 1 ] && echo OK || echo FAIL ), TCP6 $( [ $IPV6_TCP_OK -eq 1 ] && echo OK || echo FAIL )) while IPv4 works — router/ISP v6 misconfig. Happy Eyeballs hides this and just makes some sites mysteriously slow.")
+  fi
 fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."
