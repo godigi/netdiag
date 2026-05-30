@@ -138,8 +138,26 @@ These are placeholders; each will be filled in when its source feature lands.
   letting TCP through.
 - Rationale: ping-based diagnostics conflate "ICMP works" with "network
   works." A green TCP panel + red ICMP panel is the textbook tell.
-- **WS-1** — Channel congestion → too many neighbouring APs on the same channel.
-- **WD-1** — WiFi link flapping → > 3 disconnects/hour.
+### WS-1 — WiFi channel is congested
+
+- Trigger: `wifi_scan.current_channel_neighbors > 3`.
+- Severity: `warn`.
+- Evidence: current channel, count of neighbour APs on it.
+- Recommendation: switch to a less crowded channel — for 5GHz, try the
+  upper UNII-3 block (149/153/157/161) which most consumer routers don't
+  pick by default.
+- Limitation: macOS Tahoe doesn't expose neighbour RSSI via
+  `system_profiler`, so we can only count APs, not weight by signal
+  strength. A neighbour with -90 dBm is "noise floor only" and doesn't
+  really compete, but we count it the same as a -50 dBm AP next door.
+### WD-1 — WiFi link is flapping
+
+- Trigger: `wifi_disconnects.count > 3` over a 1-hour window.
+- Severity: `warn`.
+- Evidence: count + last 5 events from `log show`.
+- Recommendation: roaming between APs, marginal signal at the desk, or
+  a router firmware bug. If sticky/asymmetric roaming is suspected,
+  disable the lower band's "auto" or split SSIDs by band.
 - **ST-1** — Speed regression vs baseline.
 - **NT-1** — System clock drift > 30 s → TLS failures everywhere.
 - **BL-1** — Metric regression vs 30-day median (gateway RTT, RSSI, PMTU, etc.).

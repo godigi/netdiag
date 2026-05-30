@@ -105,6 +105,12 @@ IPV6_TRACE_HOPS=""
 IPV6_TCP_OK=0
 TCP_REACH_ANY_OK=0
 TCP_REACH_RESULTS=()  # each entry: "host:port|OK|ms" or "host:port|FAIL"
+WIFI_SCAN_CURRENT_CHANNEL=""
+WIFI_SCAN_CURRENT_BAND=""
+WIFI_SCAN_NEIGHBOR_COUNT=0
+WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS=0
+WIFI_DISCONNECT_COUNT=0
+WIFI_DISCONNECT_WINDOW_HOURS=1
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -248,6 +254,71 @@ if [ "$IS_WIFI" -eq 1 ]; then
   fi
 else
   info "Not on WiFi (interface $INTERFACE looks wired)."
+fi
+
+# ── 2b. WiFi neighborhood scan ─────────────────────────────────────────────
+# system_profiler is the only remaining shell-callable WiFi scanner on
+# modern macOS (airport(8) was retired; wdutil has no scan subcommand). It
+# doesn't need sudo. Trade-off: it doesn't expose RSSI for *neighbour* APs,
+# so we can only count channel utilisation, not compare signal strength.
+if [ "$IS_WIFI" -eq 1 ] && [ "$QUICK" -eq 0 ]; then
+  hdr "WiFi neighborhood"
+  SP_OUT="$(system_profiler SPAirPortDataType -detailLevel full 2>/dev/null || true)"
+  if [ -z "$SP_OUT" ]; then
+    warn "system_profiler returned no WiFi data."
+  else
+    SP_PARSED="$(printf '%s\n' "$SP_OUT" | awk '
+      /Current Network Information:/{section="current"; next}
+      /Other Local Wi-Fi Networks:/{section="other"; next}
+      /^[A-Z]/ && section{section=""}
+      /^[[:space:]]*Channel:[[:space:]]*[0-9]+/{
+        match($0, /[0-9]+/); ch = substr($0, RSTART, RLENGTH)
+        band = "?"
+        if (match($0, /\(([^,]+)/)) band = substr($0, RSTART+1, RLENGTH-1)
+        if (section=="current")    print "CURRENT\t" ch "\t" band
+        else if (section=="other") print "OTHER\t"   ch "\t" band
+      }')"
+    WIFI_SCAN_CURRENT_CHANNEL="$(printf '%s' "$SP_PARSED" | awk -F'\t' '$1=="CURRENT"{print $2; exit}')"
+    WIFI_SCAN_CURRENT_BAND="$(printf '%s' "$SP_PARSED"   | awk -F'\t' '$1=="CURRENT"{print $3; exit}')"
+    NEIGHBOR_CHANS="$(printf '%s' "$SP_PARSED" | awk -F'\t' '$1=="OTHER"{print $2}')"
+    WIFI_SCAN_NEIGHBOR_COUNT="$(printf '%s' "$NEIGHBOR_CHANS" | grep -c . || true)"
+    if [ -n "$WIFI_SCAN_CURRENT_CHANNEL" ]; then
+      WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS="$(printf '%s' "$NEIGHBOR_CHANS" \
+        | awk -v c="$WIFI_SCAN_CURRENT_CHANNEL" '$1==c{n++} END{print n+0}')"
+    fi
+    info "Current channel: ${WIFI_SCAN_CURRENT_CHANNEL:-?} (${WIFI_SCAN_CURRENT_BAND:-?})"
+    info "Neighbours: $WIFI_SCAN_NEIGHBOR_COUNT total, $WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS on your channel"
+    if [ "$WIFI_SCAN_NEIGHBOR_COUNT" -gt 0 ]; then
+      info "Top neighbour channels:"
+      printf '%s\n' "$NEIGHBOR_CHANS" | sort | uniq -c | sort -rn | head -5 \
+        | awk '{printf "      ch %-4s × %d\n", $2, $1}' | tee -a "$LOG"
+    fi
+    if [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
+      warn "Your channel has $WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS other APs — consider switching."
+    fi
+  fi
+fi
+
+# ── 2c. WiFi disconnect / roam history ─────────────────────────────────────
+# Queries the user's own log database — no sudo needed for these subsystems.
+# Times out the log call at 6s so a slow log database can't dominate the run.
+if [ "$IS_WIFI" -eq 1 ]; then
+  hdr "WiFi disconnects (past ${WIFI_DISCONNECT_WINDOW_HOURS}h)"
+  WIFI_LOG_OUT="$(log show \
+      --predicate 'subsystem CONTAINS[c] "wifi" OR subsystem CONTAINS[c] "airport"' \
+      --info --last "${WIFI_DISCONNECT_WINDOW_HOURS}h" 2>/dev/null \
+    | grep -Ei 'association|disassoc|deauth|roam|link down|link up' || true)"
+  WIFI_DISCONNECT_COUNT="$(printf '%s' "$WIFI_LOG_OUT" \
+    | grep -Eic 'disassoc|deauth|link down' || true)"
+  WIFI_DISCONNECT_COUNT="${WIFI_DISCONNECT_COUNT:-0}"
+  info "Disconnect/reassoc events in last hour: $WIFI_DISCONNECT_COUNT"
+  if [ -n "$WIFI_LOG_OUT" ]; then
+    info "Last 5 events:"
+    printf '%s\n' "$WIFI_LOG_OUT" | tail -5 | sed 's/^/      /' | tee -a "$LOG"
+  fi
+  if [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
+    warn "WiFi link is flapping ($WIFI_DISCONNECT_COUNT disconnects in 1h)."
+  fi
 fi
 
 # ── 3. Gateway reachability ────────────────────────────────────────────────
@@ -611,6 +682,12 @@ if [ "$IPV6_AVAILABLE" -eq 1 ]; then
 fi
 if [ "$TCP_REACH_ANY_OK" -eq 1 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge 50 ]; then
   DIAG+=("TCP reach panel succeeded but gateway ping shows ${GW_LOSS}% loss — ICMP is being filtered somewhere on the path. Ignore the ping-based failures; the network itself is up.")
+fi
+if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
+  DIAG+=("WiFi channel ${WIFI_SCAN_CURRENT_CHANNEL} has ${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} other APs visible — switch to a less crowded channel (5GHz 149/153/157/161 if your router supports it).")
+fi
+if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
+  DIAG+=("WiFi link is flapping — $WIFI_DISCONNECT_COUNT disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug.")
 fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."
