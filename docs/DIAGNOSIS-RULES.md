@@ -159,7 +159,17 @@ These are placeholders; each will be filled in when its source feature lands.
   a router firmware bug. If sticky/asymmetric roaming is suspected,
   disable the lower band's "auto" or split SSIDs by band.
 - **ST-1** — Speed regression vs baseline.
-- **NT-1** — System clock drift > 30 s → TLS failures everywhere.
+### NT-1 — System clock drift > 30 s
+
+- Trigger: `|ntp.drift_seconds| > 30`.
+- Severity: `critical`.
+- Evidence: drift in seconds from `sntp -t 3 time.apple.com`.
+- Recommendation: re-enable network time (System Settings → General →
+  Date & Time → Set automatically).
+- Rationale: TLS validates cert NotBefore/NotAfter against the system
+  clock. > 30 s drift starts breaking handshakes on certs near their
+  rotation window; days of drift breaks everything. Users see this as
+  "nothing loads" without any network-level fault to blame.
 - **BL-1** — Metric regression vs 30-day median (gateway RTT, RSSI, PMTU, etc.).
 - **DI-1** — Duplicate IPs in ARP table or `(incomplete)` gateway entry.
 - **DH-1** — DHCP lease expires within 1 hour.

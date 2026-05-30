@@ -22,11 +22,15 @@ set -u
 NO_GPING=0
 QUICK=0
 NO_BUFFERBLOAT=0
+SPEED=0
+NO_SPEED=0
 for arg in "$@"; do
   case "$arg" in
     --no-gping)       NO_GPING=1 ;;
     --quick)          QUICK=1 ;;
     --no-bufferbloat) NO_BUFFERBLOAT=1 ;;
+    --speed)          SPEED=1 ;;
+    --no-speed)       NO_SPEED=1 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -34,13 +38,16 @@ Runs a battery of checks, writes a timestamped report, attempts a root-cause
 diagnosis (wifi vs router vs ISP vs DNS), then launches gping against the
 discovered hops for live monitoring.
 
-Usage: netdiag [--quick] [--no-gping] [--no-bufferbloat]
+Usage: netdiag [--quick] [--no-gping] [--no-bufferbloat] [--speed]
 
 Flags:
-  --quick           skip slow checks (bufferbloat, per-hop loss)
+  --quick           skip slow checks (bufferbloat, per-hop loss, speed test,
+                    WiFi scan)
   --no-gping        don't launch gping after the report
   --no-bufferbloat  skip the 100 MB / 10 s bufferbloat probe (saves data on
                     metered links)
+  --speed           run a speedtest (down/up/latency/jitter); ~30 s and ~50 MB
+  --no-speed        forbid the speedtest even if --speed was passed
 HELP
       exit 0 ;;
   esac
@@ -111,6 +118,14 @@ WIFI_SCAN_NEIGHBOR_COUNT=0
 WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS=0
 WIFI_DISCONNECT_COUNT=0
 WIFI_DISCONNECT_WINDOW_HOURS=1
+SPEEDTEST_DOWN_MBPS=""
+SPEEDTEST_UP_MBPS=""
+SPEEDTEST_LATENCY_MS=""
+SPEEDTEST_JITTER_MS=""
+SPEEDTEST_SERVER=""
+NTP_DRIFT_S=""
+NTP_USING_NETWORK_TIME=""
+NTP_SERVER=""
 
 # Grade a bufferbloat delta in ms using the Waveform/DSLReports thresholds.
 # A < +5ms, B < +30ms, C < +60ms, D < +200ms, F ≥ +200ms.
@@ -556,6 +571,74 @@ for entry in "${TCP_TARGETS[@]}"; do
 done
 rm -rf "$TCP_TMP"
 
+# ── 5d. Speed test ──────────────────────────────────────────────────────────
+# Sequenced after bufferbloat so the two don't compete for the link.
+if [ "$SPEED" -eq 1 ] && [ "$NO_SPEED" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
+  hdr "Speed test"
+  if command -v speedtest >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    info "Running Ookla speedtest..."
+    ST_OUT="$(speedtest --format=json --accept-license --accept-gdpr 2>/dev/null || true)"
+    if [ -n "$ST_OUT" ] && printf '%s' "$ST_OUT" | jq -e .download.bandwidth >/dev/null 2>&1; then
+      SPEEDTEST_DOWN_MBPS="$(printf '%s' "$ST_OUT" | jq -r '.download.bandwidth * 8 / 1000000' | awk '{printf "%.1f", $1}')"
+      SPEEDTEST_UP_MBPS="$(  printf '%s' "$ST_OUT" | jq -r '.upload.bandwidth   * 8 / 1000000' | awk '{printf "%.1f", $1}')"
+      SPEEDTEST_LATENCY_MS="$(printf '%s' "$ST_OUT" | jq -r '.ping.latency')"
+      SPEEDTEST_JITTER_MS="$( printf '%s' "$ST_OUT" | jq -r '.ping.jitter')"
+      SPEEDTEST_SERVER="$(    printf '%s' "$ST_OUT" | jq -r '.server.name')"
+      ok "Down ${SPEEDTEST_DOWN_MBPS} Mbps · Up ${SPEEDTEST_UP_MBPS} Mbps · ${SPEEDTEST_LATENCY_MS} ms (jitter ${SPEEDTEST_JITTER_MS} ms)"
+      info "Server: $SPEEDTEST_SERVER"
+    else
+      warn "Ookla speedtest failed or returned unparseable output."
+    fi
+  elif command -v speedtest-cli >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    info "Running speedtest-cli..."
+    ST_OUT="$(speedtest-cli --json 2>/dev/null || true)"
+    if [ -n "$ST_OUT" ] && printf '%s' "$ST_OUT" | jq -e .download >/dev/null 2>&1; then
+      SPEEDTEST_DOWN_MBPS="$(printf '%s' "$ST_OUT" | jq -r '.download / 1000000' | awk '{printf "%.1f", $1}')"
+      SPEEDTEST_UP_MBPS="$(  printf '%s' "$ST_OUT" | jq -r '.upload   / 1000000' | awk '{printf "%.1f", $1}')"
+      SPEEDTEST_LATENCY_MS="$(printf '%s' "$ST_OUT" | jq -r '.ping')"
+      SPEEDTEST_SERVER="$(   printf '%s' "$ST_OUT" | jq -r '.server.host')"
+      ok "Down ${SPEEDTEST_DOWN_MBPS} Mbps · Up ${SPEEDTEST_UP_MBPS} Mbps · ${SPEEDTEST_LATENCY_MS} ms"
+      info "Server: $SPEEDTEST_SERVER"
+    else
+      warn "speedtest-cli failed or returned unparseable output."
+    fi
+  else
+    warn "No speedtest CLI installed. Install with: brew install speedtest (Ookla) or brew install speedtest-cli."
+  fi
+fi
+
+# ── 5e. NTP / time sync drift ───────────────────────────────────────────────
+# Wrong system time breaks TLS cert validation across the board; users see
+# it as "the internet is broken" without any network-level fault to point at.
+hdr "NTP / time sync"
+NTP_OUT="$(sntp -t 3 time.apple.com 2>/dev/null || true)"
+if [ -n "$NTP_OUT" ]; then
+  # sntp prints chatty debug when the first probe times out, then a real
+  # result line like "+0.001234 +/- 0.012345 time.apple.com 17.253.4.13".
+  # Filter to lines containing the +/- token to get just the result.
+  NTP_DRIFT_S="$(printf '%s\n' "$NTP_OUT" | grep -F '+/-' | tail -1 | awk '{print $1}')"
+  if [ -n "$NTP_DRIFT_S" ]; then
+    info "sntp vs time.apple.com: ${NTP_DRIFT_S}s drift"
+    DRIFT_ABS="$(awk -v d="$NTP_DRIFT_S" 'BEGIN{print (d<0)?-d:d}')"
+    if awk -v d="$DRIFT_ABS" 'BEGIN{exit !(d > 30)}'; then
+      bad "Clock drift > 30 s — TLS handshakes will fail. Re-enable network time / NTP."
+    else
+      ok "Clock drift within tolerance."
+    fi
+  fi
+else
+  warn "sntp returned no result (firewall blocking UDP/123?)."
+fi
+# Network time settings — getters need root on Tahoe; try -n, skip on failure.
+if sudo -n true 2>/dev/null; then
+  NTP_USING_NETWORK_TIME="$(sudo -n systemsetup -getusingnetworktime 2>/dev/null \
+    | sed 's/^Network Time: //')"
+  NTP_SERVER="$(sudo -n systemsetup -getnetworktimeserver 2>/dev/null \
+    | sed 's/^Network Time Server: //')"
+  [ -n "$NTP_USING_NETWORK_TIME" ] && info "Network time: $NTP_USING_NETWORK_TIME"
+  [ -n "$NTP_SERVER" ]             && info "Network time server: $NTP_SERVER"
+fi
+
 # ── 6. Traceroute ──────────────────────────────────────────────────────────
 hdr "Traceroute to 1.1.1.1"
 TRACE_OUT="$(traceroute -n -q 1 -w 2 -m 18 1.1.1.1 2>/dev/null)"
@@ -688,6 +771,9 @@ if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; the
 fi
 if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
   DIAG+=("WiFi link is flapping — $WIFI_DISCONNECT_COUNT disconnect/reassoc events in the past hour. Check for roaming between APs, marginal signal at the desk, or a router firmware bug.")
+fi
+if [ -n "$NTP_DRIFT_S" ] && awk -v d="$NTP_DRIFT_S" 'BEGIN{exit !((d<0?-d:d) > 30)}'; then
+  DIAG+=("System clock drifted ${NTP_DRIFT_S}s — TLS handshakes are likely failing across the board. Re-enable network time (System Settings → General → Date & Time).")
 fi
 if [ "${#DIAG[@]}" -eq 0 ]; then
   ok "Nothing obviously wrong from these checks."
