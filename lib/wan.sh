@@ -222,13 +222,13 @@ _wan_upnp_persist() {
 # NAT-1 / UP-1 rules per docs/DIAGNOSIS-RULES.md.
 wan_diagnosis_run() {
   if [ "$WAN_LB_ACTIVE" -eq 1 ]; then
-    add_diag warn "Outbound traffic is being load-balanced across multiple ISPs ($WAN_LB_ASNS). Often intentional, but it explains IP-rebinding TLS warnings and asymmetric-routing surprises."
+    add_diag warn "Your outgoing connections are landing on multiple internet providers ($WAN_LB_ASNS). This is usually intentional (multi-WAN router) but explains some odd behaviour: services may complain that your IP keeps changing, and some apps may behave inconsistently. Nothing to fix if you set this up on purpose."
   elif [ -n "$WAN_LB_ASNS" ]; then
     # Single ASN but multiple IPs — info-only nudge.
     local n_ip
     n_ip="$(printf '%s' "$WAN_LB_IPS" | awk '{print NF}')"
     if [ "${n_ip:-0}" -gt 1 ]; then
-      add_diag info "Same ISP ($WAN_LB_ASNS) but multiple public IPs ($WAN_LB_IPS) — likely CGNAT round-robin."
+      add_diag info "You're behind your ISP's shared-address pool — they're handing your traffic different public IPs ($WAN_LB_IPS) each time even though it's all the same ISP ($WAN_LB_ASNS). Common on cellular and budget connections. Apps that geo-locate or need a stable IP may get confused (technical: CGNAT round-robin)."
     fi
   fi
   if [ "$WAN_DOUBLE_NAT" -eq 1 ]; then
@@ -250,11 +250,13 @@ wan_diagnosis_run() {
     home_count="$(printf '%s' "$home_chain" | awk -F' → ' 'NF{print NF; exit} {print 0}')"
     isp_count="$(printf '%s'  "$isp_chain"  | awk -F' → ' 'NF{print NF; exit} {print 0}')"
     if [ "${home_count:-0}" -gt 1 ]; then
-      add_diag warn "Double-NAT: ${home_count} home routers in series (${home_chain})${isp_chain:+ before ISP transit ($isp_chain)}. UPnP/port-forwarding from apps will likely fail. Put the inner router in bridge/AP mode if you control it."
+      local _isp_note=""
+      [ -n "$isp_chain" ] && _isp_note=", then your ISP transit ($isp_chain)"
+      add_diag warn "You have ${home_count} routers chained together in your home (${home_chain})${_isp_note}. That breaks games, Plex, Steam in-home streaming, video doorbells, and anything else that needs to \"open a port\" — incoming connections get lost between the routers. Fix: log into the outer router's admin page and set it to \"bridge mode\" or \"access-point mode\" so the inner router does the routing alone."
     elif [ "${isp_count:-0}" -gt 1 ]; then
-      add_diag info "Your ISP uses RFC1918 (${isp_chain}) for internal transit before reaching public IP space. Not actionable from your end; mentioning for context."
+      add_diag info "Your ISP routes you through their internal network (${isp_chain}) before reaching the public internet. That's their normal setup, not a problem on your end; mentioning it because it explains why traceroute shows private-network addresses several hops in."
     else
-      add_diag warn "Double-NAT detected — RFC1918 chain to first public hop: $WAN_DOUBLE_NAT_CHAIN. UPnP/port-forwarding will likely fail."
+      add_diag warn "You have multiple routers chained in series before your connection reaches a public address ($WAN_DOUBLE_NAT_CHAIN). Games, Plex, Steam, and other apps that need to \"open a port\" will likely fail. If you control any of those routers, put the outer one in bridge / access-point mode."
     fi
   fi
   # UPnP state is already shown in its own section with a `warn`-styled

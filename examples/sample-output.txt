@@ -1,115 +1,29 @@
-netdiag  2026-05-30-132356
-log: /Users/bfreeman/net-diag/2026-05-30-132356.log
+netdiag  2026-06-01-035732
+log: /Users/bfreeman/net-diag/2026-06-01-035732.log
 
-── Local network ──
-  ✓ Interface: en0   IP: 192.168.50.56   Gateway: 192.168.50.1
+── Report ──
+  ⚠  NAT topology        double-NAT detected
+  ⚠  Router config       UPnP / port-forwarding enabled
 
-── VPN ──
-  ✓ No VPN active.
+  ✓  Network             en0 · WiFi 5GHz ch40
+  ✓  Router              192.168.68.1 · 0% loss · 6.5 ms · ±3.3 ms jitter
+  ✓  Internet            Example ISP (Sometown, XX)
+  ✓  Latency             1.1.1.1 · 11 ms · ±0.5 ms jitter
+  ✓  DNS                 working
+  ✓  Bufferbloat         grade A/A · clean under load
+  ✓  Packet size         1500 bytes · standard
+  ✓  Hosts file          clean (only macOS defaults)
+  ·  VPN                 not active
+  ·  IPv6                not available (IPv4-only network)
+  ·  Speed               not tested (run with --speed)
 
-── WiFi ──
-  ✓ SSID: Test-SSID  (interface en0)
-  · BSSID: <redacted>
-  · Security: FT_PSK
-  ⚠ Rich WiFi metrics (RSSI/noise/channel) need sudo. Re-run as:
-  · sudo netdiag    # for RSSI, noise, channel, PHY, tx rate
+── What we found ──
+  ⚠ You have 2 routers chained together in your home (192.168.68.1 →
+    192.168.58.1). That breaks games, Plex, Steam in-home streaming, video
+    doorbells, and anything else that needs to "open a port" — incoming
+    connections get lost between the routers. Fix: log into the outer
+    router's admin page and set it to "bridge mode" or "access-point mode"
+    so the inner router does the routing alone.
 
-── DHCP lease ──
-  · DHCP server: 192.168.50.1
-  · Lease started:  05/30/2026 10:19:51
-  · Lease expires:  05/31/2026 10:19:51
-  · Time remaining: ~20h
-  · DHCP-handed DNS: 192.168.50.1
-
-── ARP / duplicate-IP scan ──
-  ✓ No duplicate IPs in ARP table.
-
-── Gateway reachability ──
-  ✗ Gateway 192.168.50.1: 20.0% loss — LAN/WiFi link is degraded
-
-── Public reachability ──
-  ✓ Public IP: 198.51.100.42  (Example ISP, Sometown XX)
-  ✓ No captive portal.
-
-── DNS ──
-  · System resolver: 192.168.50.1
-  ✓ 192.168.50.1 → apple.com = 17.253.144.10
-  ✓ 1.1.1.1 → apple.com = 17.253.144.10
-  ✓ 8.8.8.8 → apple.com = 17.253.144.10
-  ✓ 192.168.50.1 → cloudflare.com = 104.16.132.229
-  ✓ 1.1.1.1 → cloudflare.com = 104.16.132.229
-  ✓ 8.8.8.8 → cloudflare.com = 104.16.132.229
-
-── IPv6 ──
-  · No global IPv6 on en0 — v4-only network.
-
-── TCP reach ──
-  ✓ 1.1.1.1:443  (95 ms)
-  ✓ 1.1.1.1:53  (93 ms)
-  ✓ 8.8.8.8:443  (51 ms)
-  ✓ github.com:443  (199 ms)
-  ✓ apple.com:443  (77 ms)
-
-── NTP / time sync ──
-  · sntp vs time.apple.com: +0.143613s drift
-  ✓ Clock drift within tolerance.
-
-── WiFi neighborhood ──
-  · Current channel: 149 (5GHz)
-  · Neighbours: 5 total, 2 on your channel
-  · Top neighbour channels:
-      ch 149  × 2
-      ch 6    × 1
-      ch 52   × 1
-      ch 11   × 1
-
-── WiFi disconnects (past 1h) ──
-  · Disconnect/reassoc events in last hour: 0
-  · Last 5 events:
-      <event line — truncated for example. Each event is one line from `log show ... --info` matching the disconnect / re-assoc patterns. macOS redacts SSIDs/BSSIDs in this output.>
-
-── WAN load-balancing probe ──
-  ✓ Single egress ASN (AS65000), single IP (198.51.100.42) — no load-balancing detected.
-
-── UPnP / NAT-PMP status ──
-  ⚠ UPnP IGD enabled: IGD at ?
-  · Note: disabled-UPnP is the safer default; enabled means apps can open ports without asking.
-
-── Path MTU (DF-set probe to 1.1.1.1) ──
-  ✓ Effective path MTU: 1500 (full ethernet frames pass DF)
-
-── Traceroute to 1.1.1.1 ──
-   1  192.168.50.1  3.138 ms
-   2  192.168.1.254  7.223 ms
-   3  *
-   4  10.166.41.210  25.333 ms
-   5  10.166.41.209  20.778 ms
-   6  200.24.35.200  28.069 ms
-   7  200.24.35.180  42.221 ms
-   8  206.223.124.188  26.330 ms
-   9  8.242.82.170  77.255 ms
-  10  1.1.1.1  89.183 ms
-
-── NAT topology ──
-  ⚠ Double-NAT detected: 4 consecutive RFC1918 hops before the first public address.
-  · Chain: 192.168.50.1 192.168.1.254 10.166.41.210 10.166.41.209
-  · UPnP / port-forwarding from apps usually fails through double-NAT.
-
-── Per-hop loss (5 packets each) ──
-  · Tip: cache sudo creds (`sudo -v`) and re-run for the mtr-based view.
-  · hop 1  192.168.50.1  0% loss  4.528 ms
-  · hop 2  192.168.1.254  0% loss  17.594 ms
-  · hop 3  10.166.41.210  0% loss  32.985 ms
-  · hop 4  10.166.41.209  0% loss  29.578 ms
-  · hop 5  200.24.35.200  0% loss  31.475 ms
-  · hop 6  200.24.35.180  0% loss  36.364 ms
-  · hop 7  206.223.124.188  0% loss  40.872 ms
-  · hop 8  8.242.82.170  0% loss  85.972 ms
-  · hop 9  1.1.1.1  0% loss  90.658 ms
-
-── Diagnosis ──
-  ✗ Gateway loss with healthy WiFi → router itself is misbehaving (reboot it).
-  ⚠ Double-NAT detected — RFC1918 chain to first public hop: 192.168.50.1 192.168.1.254 10.166.41.210 10.166.41.209. UPnP/port-forwarding will likely fail. If you control multiple routers in this chain, put the inner one(s) in bridge/AP mode.
-  · UPnP / NAT-PMP is enabled on the router (miniupnpc). Convenient for games/Plex/Steam; disable in the router UI if you don't run those.
-
-Report saved to: /Users/bfreeman/net-diag/2026-05-30-132356.log
+Pass --expert to see the underlying measurements.
+Report saved to: /Users/bfreeman/net-diag/2026-06-01-035732.log

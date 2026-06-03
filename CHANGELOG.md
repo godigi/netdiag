@@ -6,6 +6,106 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-01
+
+UX-focused release. The default report dropped from 130 lines of dense
+section bodies to a ~30-line "Report card + What we found" — scannable
+in a second, plain-English diagnoses underneath. `gping` is no longer
+the default at-end action. `--quick` now actually meets its 8-second
+spec budget (was 17 s). A live progress spinner replaces the previous
+silent wait. New always-on latency / jitter / hosts-file / VPN /
+internet-ping rows give the user more at-a-glance signal.
+
+### Added
+
+- **Compact "Report" card** by default — one column-aligned row per
+  metric category (Network, Router, Internet, Latency, DNS, IPv6,
+  Speed, Bufferbloat, Packet size, NAT topology, Router config, WiFi
+  channel, Hosts file, VPN, Clock). Severity-sorted so warnings are at
+  the top, healthy items grouped under them, neutral/skipped at the
+  bottom. Dim labels keep the value column the visual anchor.
+- **`What we found`** section replaces `Diagnosis`. Each diagnosis is
+  rendered as a wrapped paragraph (70-col `fmt`) with a blank line
+  between entries — readable instead of a wall of text.
+- **`--expert` flag** restores the v0.3 verbose section-by-section
+  output for power users. Default mode hides those bodies; expert
+  mode shows everything plus the Report card + diagnoses.
+- **`--gping` flag** + interactive prompt. gping no longer launches by
+  default. Pass `--gping` to opt in, or answer the post-report
+  `Launch live ping monitor? [y/N]` (5-second default-no timeout).
+  The prompt is suppressed under `--quiet`, `--json`, `--watch`,
+  `--watch-child`, or non-TTY stdin/stdout.
+- **Progress spinner on stderr** during every section. The orchestrator
+  was previously silent for 25-40 s in default mode; now each section's
+  name animates while it runs (`⠋ Bufferbloat (loaded vs idle latency)…`).
+  Stays out of stdout so JSON / piped consumers aren't affected.
+- **Always-on internet latency probe** (`lib/internet_ping.sh`). 8-packet
+  burst to 1.1.1.1, captures avg RTT + stddev (jitter) + loss. Report
+  row: `Latency · 1.1.1.1 · 14 ms · ±7.2 ms jitter`. New JSON object:
+  `internet_latency.{target,rtt_avg_ms,rtt_jitter_ms,loss_pct}`.
+- **Gateway jitter.** `lib/gateway.sh` parses ping's stddev too. Report
+  row gains `± X ms jitter`; JSON `gateway.rtt_jitter_ms` added.
+- **`/etc/hosts` sanity check** (`lib/hosts.sh`). Counts non-default
+  entries and flags any that redirect well-known consumer domains
+  (facebook / google / netflix / amazon / apple / microsoft / github /
+  …) to 127.0.0.1 / 0.0.0.0 / ::1 — usually an ad-blocker or
+  parental-control tool, occasionally malware. New JSON object:
+  `hosts_file.{custom_count,suspicious_redirects}`.
+- **VPN row is now always shown.** Previously only when active.
+  Defaults to `· VPN · not active`; when active, points the user at
+  the Internet row for the exit-country lookup.
+- **`tell()` helper** in `lib/common.sh` for "always visible" lines
+  (the `netdiag` banner, "Report saved to" footer) that survive the
+  new section-body gating.
+
+### Changed
+
+- **`--quick` now meets its 8-second budget** (was 17.6 s). Under
+  `--quick`: NTP probe, internet ping, and default traceroute are
+  skipped, and the gateway ping is cut from 10 to 5 packets. Side
+  effect: NAT-1 (double-NAT) doesn't fire under `--quick` because it
+  depends on TRACE_LINES — run without `--quick` for the NAT topology
+  check.
+- **`--quiet` semantics tightened.** Prints only the header + `What
+  we found`. Drop the Report card too so the diagnoses are pipe-clean
+  for mail / tickets.
+- **Diagnosis text rewritten in plain English** across every rule
+  (`lib/diagnosis.sh`, `lib/wan.sh`, `lib/output.sh` baseline-regression).
+  Pattern: visible symptom first, plain cause, concrete action, with
+  technical term parenthetical for power users. E.g. "Bufferbloat at
+  gateway (grade D, +230 ms under load) — router lacks SQM/fq_codel.
+  VOIP/Zoom will glitch under load." →
+  "Your router chokes under load — whenever someone's downloading or
+  uploading, Zoom / FaceTime / WhatsApp calls will glitch and games
+  will lag badly (extra +230 ms delay, bufferbloat grade D). Fix:
+  enable \"Smart Queue Management\" or \"QoS\" in your router's
+  admin page, or replace the router with one that supports it."
+- **Section ordering tweaked** to L2 → L3 → app: WiFi → Gateway →
+  ARP → DHCP → Public, instead of the prior DHCP-before-Gateway order.
+- **Bufferbloat / Speed / Packet size / Latency rows show "skipped"**
+  under `--quick` so the Report card stays the same shape across
+  modes (used to silently omit those rows).
+- **NTP soft-warning tier.** Clock drift between 1 s and 30 s now
+  warns instead of being silently ignored; previously only the > 30 s
+  band fired any diagnosis.
+
+### Fixed
+
+- **mktemp template bug.** `mktemp ".../netdiag-out.XXXXXX.json"`
+  doesn't substitute the X's on macOS because the suffix isn't at the
+  end — the literal-named file was being created once, then every
+  subsequent run failed with "File exists" and emitted no JSON.
+  Dropped the `.json` suffix.
+- **gping crash on non-tty stdout.** gping renders a TUI and dies
+  with "Device not configured (os error 6)" when piped to `tee` or
+  redirected to a file. `gping_run` now also requires `[ -t 1 ]`.
+- **Long IP-pair wraps cleanly in diagnoses.** The
+  `(192.168.50.1 → 192.168.1.254)` notation now breaks at the spaces
+  around `→` rather than spilling past the 70-col cap (sanitization
+  regex fix).
+- **Hosts row no longer marooned at the end** of the Report card.
+  Severity-sort places it among the other healthy items.
+
 ## [0.3.0] - 2026-05-30
 
 The "architecture + NAT/WAN topology" release. `bin/netdiag` was a single

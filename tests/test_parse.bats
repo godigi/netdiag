@@ -103,12 +103,24 @@ setup() {
 
 # ── mtr first-lossy-hop detection ────────────────────────────────────────
 
-@test "parse_mtr_tsv: identifies first lossy hop after a clean prefix" {
-  # mtr fixture: hops 1-3 clean, hop 4 jumps to 50% loss → first lossy = hop 4.
+@test "parse_mtr_tsv: identifies first lossy hop when loss propagates downstream" {
+  # mtr fixture: hops 1-3 clean, hop 4 jumps to 50% loss and it persists
+  # to the destination → real forwarding loss starting at hop 4.
+  MTR_FIRST_LOSSY_HOP=""
   tsv="$(jq -r '.report.hubs[] | [.count, .host, (.["Loss%"]|tostring), (.Avg|tostring)] | @tsv' < "$FIX/mtr.json")"
   parse_mtr_tsv <<<"$tsv"
   [[ "$MTR_FIRST_LOSSY_HOP" == *"hop 4"* ]]
   [[ "$MTR_FIRST_LOSSY_HOP" == *"203.0.113.5"* ]]
+}
+
+@test "parse_mtr_tsv: rate-limited middle hops with clean destination → empty" {
+  # ICMP-rate-limit pattern: hops 4-5 show 100% loss but hop 6 (destination)
+  # is clean. Data is making it through; the middle hops just deprioritise
+  # ICMP TTL-Exceeded. This must NOT be flagged as a real lossy hop.
+  MTR_FIRST_LOSSY_HOP=""
+  tsv="$(jq -r '.report.hubs[] | [.count, .host, (.["Loss%"]|tostring), (.Avg|tostring)] | @tsv' < "$FIX/mtr_rate_limited.json")"
+  parse_mtr_tsv <<<"$tsv"
+  [ -z "$MTR_FIRST_LOSSY_HOP" ]
 }
 
 @test "parse_mtr_tsv: clean run leaves MTR_FIRST_LOSSY_HOP empty" {

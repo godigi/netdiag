@@ -43,7 +43,7 @@ A Homebrew tap and a `curl | bash` one-liner are still on the roadmap.
 ## Usage
 
 ```
-netdiag [TARGET] [--quick] [--no-gping] [--no-bufferbloat] [--speed]
+netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
                  [--json] [--quiet] [--log PATH]
                  [--baseline | --no-baseline]
 netdiag --watch[=SEC]            # foreground loop, every SEC (default 300)
@@ -56,7 +56,11 @@ netdiag --uninstall-watcher
 |----------------------|--------------------------------------------------------|
 | `TARGET`             | host added to ping, DNS, TCP, and a 2nd traceroute     |
 | `--quick`            | skip bufferbloat, mtr, speed test, WiFi scan           |
-| `--no-gping`         | don't launch `gping` after the report                  |
+| `--expert`           | show every detailed measurement section (RSSI, full    |
+|                      | DNS / TCP / traceroute / DHCP / per-hop loss). Default |
+|                      | is a compact Report card + diagnoses only.             |
+| `--gping`            | launch live ping monitor on the discovered hops at end |
+| `--no-gping`         | skip the gping prompt (scripts / watchers)             |
 | `--no-bufferbloat`   | skip the 100 MB / 10 s probe (metered link)            |
 | `--speed`            | run a speedtest (~30 s, ~50 MB)                        |
 | `--json`             | emit schema-conformant JSON on stdout                  |

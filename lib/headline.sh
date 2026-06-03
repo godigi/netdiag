@@ -1,101 +1,234 @@
 # shellcheck shell=bash
-# lib/headline.sh — one-line "Summary" panel printed just before Diagnosis.
-# Reads the headline metrics from globals populated by every other module
-# and emits them in a single greppable line. Bad/warn parts get coloured
-# so users can spot them at a glance.
+# lib/headline.sh — "Report" card printed before the diagnoses. One line
+# per category, status icon + label column + value. Replaces the prior
+# dense one-line summary so a non-technical reader can scan health at a
+# glance.
 #
-# Reads:  GW_LOSS, GW_LATENCY, PUBLIC_OK, PUB_ISP, PUB_CC, DNS_OK, IS_WIFI,
-#         WIFI_SCAN_CURRENT_CHANNEL, WIFI_RSSI, BUFFERBLOAT_GW_GRADE,
-#         BUFFERBLOAT_INET_GRADE, MTU_EFFECTIVE, IPV6_AVAILABLE,
-#         TCP_REACH_ANY_OK, WAN_DOUBLE_NAT, WAN_UPNP_STATE
+# Reads:  most module globals. Stays read-only.
 # Entry:  headline_run
 
-# Hdr() already flips DIAGNOSIS_REACHED on "Diagnosis" prefixes; the
-# orchestrator calls headline_run right before diagnosis_run so QUIET-mode
-# users still see the Summary too. The "Summary" prefix flips the flag.
+# Hdr() flips DIAGNOSIS_REACHED on "Report" so all the say() calls below
+# print even in default mode (where section bodies are suppressed).
 
 headline_run() {
-  hdr "Summary"
+  # --quiet wants only the diagnoses themselves — skip the Report card.
+  [ "$QUIET" -eq 0 ] || return 0
 
-  local parts=()
-  # Helper: append a coloured chunk to parts[]. Severity arg is optional —
-  # neutral / informational chunks pass just the text.
-  _hl_add() {
-    local txt="$1" sev="${2:-}"
+  hdr "Report"
+
+  # Rows are buffered into severity tiers and emitted in priority order
+  # (bad → warn → ok → neutral) so the user sees the things that need
+  # attention first. Within each tier we keep insertion order so the
+  # logical grouping in the code (network → router → internet → …) holds.
+  local _bad_rows=() _warn_rows=() _ok_rows=() _neutral_rows=()
+
+  # Each row: icon · dim label (padded) · value. The icon's colour comes
+  # from the severity arg. Dim labels keep the value column the visual
+  # anchor — your eye lands on the data, not the column header.
+  _row() {
+    local sev="$1" label="$2" value="$3"
+    local icon
     case "$sev" in
-      bad)  parts+=("${C_RED}${txt}${C_RESET}") ;;
-      warn) parts+=("${C_YEL}${txt}${C_RESET}") ;;
-      ok)   parts+=("${C_GRN}${txt}${C_RESET}") ;;
-      *)    parts+=("$txt") ;;
+      ok)   icon="${C_GRN}✓${C_RESET}" ;;
+      warn) icon="${C_YEL}⚠${C_RESET}" ;;
+      bad)  icon="${C_RED}✗${C_RESET}" ;;
+      *)    icon="${C_DIM}·${C_RESET}" ;;
+    esac
+    local line
+    line="$(printf '  %s  %s%-18s%s  %s' \
+      "$icon" "${C_DIM}" "$label" "${C_RESET}" "$value")"
+    case "$sev" in
+      bad)  _bad_rows+=("$line") ;;
+      warn) _warn_rows+=("$line") ;;
+      ok)   _ok_rows+=("$line") ;;
+      *)    _neutral_rows+=("$line") ;;
     esac
   }
 
-  # Gateway: loss% / latency-ms
-  if [ -n "$GW_LOSS" ] && [ -n "$GW_LATENCY" ]; then
+  # ── Network connection (interface + WiFi info) ─────────────────────────
+  if [ -n "$INTERFACE" ]; then
+    local netline="$INTERFACE"
+    if [ "$IS_WIFI" -eq 1 ]; then
+      netline="$netline · WiFi"
+      [ -n "$WIFI_SCAN_CURRENT_BAND" ]    && netline="$netline ${WIFI_SCAN_CURRENT_BAND}"
+      [ -n "$WIFI_SCAN_CURRENT_CHANNEL" ] && netline="$netline ch${WIFI_SCAN_CURRENT_CHANNEL}"
+      if [ -n "$WIFI_RSSI" ]; then
+        local quality="excellent"
+        [ "$WIFI_RSSI" -lt -55 ] && quality="good"
+        [ "$WIFI_RSSI" -lt -65 ] && quality="fair"
+        [ "$WIFI_RSSI" -lt -72 ] && quality="weak"
+        [ "$WIFI_RSSI" -lt -80 ] && quality="very weak"
+        netline="$netline · ${WIFI_RSSI} dBm ($quality)"
+      fi
+    else
+      netline="$netline · wired"
+    fi
+    _row ok "Network" "$netline"
+  else
+    _row bad "Network" "no default route"
+  fi
+
+  # ── VPN (always shown so the user can confirm one way or the other) ──
+  if [ "$VPN_ACTIVE" -eq 1 ]; then
+    # When a VPN is up, the "Internet" row's location reflects the VPN
+    # exit (because we look it up via curl, which goes through the VPN).
+    _row "" "VPN" "active · ${VPN_NAME:-?} · exit shown on Internet row"
+  else
+    _row "" "VPN" "not active"
+  fi
+
+  # ── Router (gateway) — loss / latency / jitter ────────────────────────
+  if [ -n "$GATEWAY" ] && [ -n "$GW_LOSS" ] && [ -n "$GW_LATENCY" ]; then
     local sev=ok
     [ "${GW_LOSS%.*}" -ge 1 ]  && sev=warn
     [ "${GW_LOSS%.*}" -ge 20 ] && sev=bad
-    _hl_add "gw $(printf '%s' "${GW_LOSS%.*}")%/$(printf '%.1f' "$GW_LATENCY" 2>/dev/null || printf '%s' "$GW_LATENCY")ms" "$sev"
+    local rline
+    rline="$GATEWAY · ${GW_LOSS%.*}% loss · $(printf '%.1f' "$GW_LATENCY" 2>/dev/null || printf '%s' "$GW_LATENCY") ms"
+    [ -n "$GW_JITTER" ] && rline="$rline · ±$(printf '%.1f' "$GW_JITTER" 2>/dev/null || printf '%s' "$GW_JITTER") ms jitter"
+    _row "$sev" "Router" "$rline"
   fi
 
-  # Public reach + ISP
+  # ── Internet (public reach) ───────────────────────────────────────────
   if [ "$PUBLIC_OK" -eq 1 ]; then
-    _hl_add "pub ${PUB_ISP:-?}${PUB_CC:+ ($PUB_CC)}" ok
+    local publine="${PUB_ISP:-?}"
+    [ -n "$PUB_CITY" ] && publine="$publine (${PUB_CITY}${PUB_CC:+, $PUB_CC})"
+    _row ok "Internet" "$publine"
   else
-    _hl_add "pub unreachable" bad
+    _row bad "Internet" "unreachable"
   fi
 
-  # DNS
-  if [ "$DNS_OK" -eq 1 ]; then _hl_add "DNS ok" ok; else _hl_add "DNS partial" warn; fi
-
-  # WiFi (channel / RSSI) — only when on WiFi
-  if [ "$IS_WIFI" -eq 1 ]; then
-    local wp="WiFi" sev=ok
-    [ -n "$WIFI_SCAN_CURRENT_CHANNEL" ] && wp="${wp} ch${WIFI_SCAN_CURRENT_CHANNEL}"
-    if [ -n "$WIFI_RSSI" ]; then
-      wp="${wp}/${WIFI_RSSI}dBm"
-      [ "$WIFI_RSSI" -lt -72 ] && sev=warn
-      [ "$WIFI_RSSI" -lt -80 ] && sev=bad
-    fi
-    _hl_add "$wp" "$sev"
-  fi
-
-  # Bufferbloat — only when both grades exist
-  if [ -n "$BUFFERBLOAT_GW_GRADE" ] && [ -n "$BUFFERBLOAT_INET_GRADE" ]; then
-    local bb="BB ${BUFFERBLOAT_GW_GRADE}/${BUFFERBLOAT_INET_GRADE}" sev=ok
-    case "${BUFFERBLOAT_GW_GRADE}${BUFFERBLOAT_INET_GRADE}" in
-      *D*|*F*) sev=bad ;;
-      *C*)     sev=warn ;;
-    esac
-    _hl_add "$bb" "$sev"
-  fi
-
-  # PMTU
-  if [ -n "$MTU_EFFECTIVE" ]; then
+  # ── Internet latency / jitter (always-on probe to 1.1.1.1) ────────────
+  if [ -n "$INET_RTT_AVG" ]; then
     local sev=ok
-    [ "$MTU_EFFECTIVE" -lt 1500 ] && sev=warn
-    [ "$MTU_EFFECTIVE" -lt 1400 ] && sev=bad
-    _hl_add "PMTU $MTU_EFFECTIVE" "$sev"
+    [ -n "$INET_LOSS" ] && [ "${INET_LOSS%.*}" -ge 1 ] && sev=warn
+    [ -n "$INET_LOSS" ] && [ "${INET_LOSS%.*}" -ge 20 ] && sev=bad
+    # High jitter (> 30 ms stddev) marks an unstable connection even at low loss.
+    if [ -n "$INET_RTT_JITTER" ] && awk -v j="$INET_RTT_JITTER" 'BEGIN{exit !(j > 30)}'; then
+      [ "$sev" = ok ] && sev=warn
+    fi
+    local iline
+    iline="1.1.1.1 · $(printf '%.0f' "$INET_RTT_AVG" 2>/dev/null || printf '%s' "$INET_RTT_AVG") ms"
+    [ -n "$INET_RTT_JITTER" ] && iline="$iline · ±$(printf '%.1f' "$INET_RTT_JITTER" 2>/dev/null || printf '%s' "$INET_RTT_JITTER") ms jitter"
+    [ -n "$INET_LOSS" ] && [ "${INET_LOSS%.*}" -gt 0 ] && iline="$iline · ${INET_LOSS}% loss"
+    _row "$sev" "Latency" "$iline"
+  elif [ "$QUICK" -eq 1 ]; then
+    _row "" "Latency" "skipped (--quick)"
   fi
 
-  # IPv6
-  if [ "$IPV6_AVAILABLE" -eq 1 ]; then _hl_add "v6 ok" ok; else _hl_add "v4-only" ; fi
+  # ── DNS ──────────────────────────────────────────────────────────────
+  if [ "$DNS_OK" -eq 1 ]; then
+    _row ok "DNS" "working"
+  else
+    _row warn "DNS" "some lookups failing"
+  fi
 
-  # NAT topology
-  if [ "$WAN_DOUBLE_NAT" -eq 1 ]; then _hl_add "NAT double" warn; fi
+  # ── IPv6 ─────────────────────────────────────────────────────────────
+  if [ "$IPV6_AVAILABLE" -eq 1 ]; then
+    local v6_ok=1
+    [ "$IPV6_AAAA_OK" -eq 0 ] && v6_ok=0
+    [ "$IPV6_TCP_OK" -eq 0 ]  && v6_ok=0
+    [ -n "$IPV6_PING_LOSS" ] && [ "${IPV6_PING_LOSS%.*}" -ge 20 ] && v6_ok=0
+    if [ "$v6_ok" -eq 1 ]; then
+      _row ok "IPv6" "working"
+    else
+      _row warn "IPv6" "available but broken — see below"
+    fi
+  else
+    _row "" "IPv6" "not available (IPv4-only network)"
+  fi
 
-  # UPnP
+  # ── Speed test (only if --speed was passed and got a result) ──────────
+  if [ -n "$SPEEDTEST_DOWN_MBPS" ]; then
+    _row ok "Speed" "${SPEEDTEST_DOWN_MBPS} Mbps down · ${SPEEDTEST_UP_MBPS} Mbps up · ${SPEEDTEST_LATENCY_MS} ms"
+  elif [ "$SPEED" -eq 1 ]; then
+    _row warn "Speed" "test ran but returned no result"
+  elif [ "$QUICK" -eq 1 ]; then
+    _row "" "Speed" "skipped (--quick)"
+  else
+    _row "" "Speed" "not tested (run with --speed)"
+  fi
+
+  # ── Bufferbloat ──────────────────────────────────────────────────────
+  if [ -n "$BUFFERBLOAT_GW_GRADE" ] && [ -n "$BUFFERBLOAT_INET_GRADE" ]; then
+    local bb_sev=ok bb_descr=""
+    case "${BUFFERBLOAT_GW_GRADE}${BUFFERBLOAT_INET_GRADE}" in
+      AA|AB|BA|BB) bb_sev=ok;   bb_descr="clean under load" ;;
+      *C*)         bb_sev=warn; bb_descr="noticeable lag under load" ;;
+      *D*|*F*)     bb_sev=bad;  bb_descr="severe lag under load" ;;
+    esac
+    _row "$bb_sev" "Bufferbloat" "grade ${BUFFERBLOAT_GW_GRADE}/${BUFFERBLOAT_INET_GRADE} · $bb_descr"
+  elif [ "$NO_BUFFERBLOAT" -eq 1 ] || [ "$QUICK" -eq 1 ]; then
+    _row "" "Bufferbloat" "skipped (--quick / --no-bufferbloat)"
+  fi
+
+  # ── MTU (packet size) ────────────────────────────────────────────────
+  if [ -n "$MTU_EFFECTIVE" ]; then
+    local mtu_sev=ok mtu_note="standard"
+    if [ "$MTU_EFFECTIVE" -lt 1400 ]; then
+      mtu_sev=bad; mtu_note="severely clamped · many sites broken"
+    elif [ "$MTU_EFFECTIVE" -lt 1500 ]; then
+      mtu_sev=warn; mtu_note="below standard · some sites may hang"
+    fi
+    _row "$mtu_sev" "Packet size" "$MTU_EFFECTIVE bytes · $mtu_note"
+  elif [ "$QUICK" -eq 1 ]; then
+    _row "" "Packet size" "skipped (--quick)"
+  fi
+
+  # ── NAT topology ─────────────────────────────────────────────────────
+  if [ "$WAN_DOUBLE_NAT" -eq 1 ]; then
+    _row warn "NAT topology" "double-NAT detected"
+  fi
+
+  # ── UPnP / router config ─────────────────────────────────────────────
   case "$WAN_UPNP_STATE" in
-    enabled)  _hl_add "UPnP on"  warn ;;
-    disabled) _hl_add "UPnP off" ok   ;;
+    enabled)  _row warn "Router config" "UPnP / port-forwarding enabled" ;;
+    disabled) _row ok "Router config" "UPnP disabled (safer default)" ;;
   esac
 
-  # Print the joined line via info() (colour stays, ANSI strips on the log
-  # side). Use a single non-bulleted line — denser than the section bodies.
-  local line=""
-  local p
-  for p in "${parts[@]}"; do
-    if [ -z "$line" ]; then line="$p"; else line="$line ${C_DIM}·${C_RESET} $p"; fi
-  done
-  say "  $line"
+  # ── WiFi congestion (only when crowded) ──────────────────────────────
+  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
+    _row warn "WiFi channel" "crowded · ${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} neighbouring networks"
+  fi
+
+  # ── Clock drift (only when off by > 1 s) ─────────────────────────────
+  if [ -n "$NTP_DRIFT_S" ]; then
+    local drift_abs
+    drift_abs="$(awk -v d="$NTP_DRIFT_S" 'BEGIN{print (d<0)?-d:d}')"
+    if awk -v d="$drift_abs" 'BEGIN{exit !(d > 30)}'; then
+      _row bad "Clock" "off by ${NTP_DRIFT_S} s"
+    elif awk -v d="$drift_abs" 'BEGIN{exit !(d > 1)}'; then
+      _row warn "Clock" "off by ${NTP_DRIFT_S} s"
+    fi
+  fi
+
+  # ── ARP issues (only when present) ───────────────────────────────────
+  if [ "$ARP_GW_INCOMPLETE" -eq 1 ]; then
+    _row bad "Local network" "can't reach router at hardware layer"
+  elif [ -n "${ARP_DUPLICATE_IPS//[[:space:]]/}" ]; then
+    _row bad "Local network" "duplicate IP(s) on the LAN"
+  fi
+
+  # ── /etc/hosts ──────────────────────────────────────────────────────
+  if [ -n "$HOSTS_SUSPICIOUS_LINES" ]; then
+    local n_susp
+    n_susp="$(printf '%s\n' "$HOSTS_SUSPICIOUS_LINES" | grep -c .)"
+    _row warn "Hosts file" "${n_susp} entr$([ "$n_susp" -eq 1 ] && echo y || echo ies) redirect well-known services"
+  elif [ "$HOSTS_CUSTOM_COUNT" -gt 0 ]; then
+    _row "" "Hosts file" "$HOSTS_CUSTOM_COUNT custom entr$([ "$HOSTS_CUSTOM_COUNT" -eq 1 ] && echo y || echo ies)"
+  else
+    _row ok "Hosts file" "clean (only macOS defaults)"
+  fi
+
+  # ── Emit in priority order ──────────────────────────────────────────
+  # Bad first (need-attention), then warnings, then healthy items, then
+  # neutral/informational. A blank line separates the warn tier from
+  # the healthy tier so the eye anchors on what needs action.
+  local line
+  for line in "${_bad_rows[@]}";  do say "$line"; done
+  for line in "${_warn_rows[@]}"; do say "$line"; done
+  if [ "${#_bad_rows[@]}" -gt 0 ] || [ "${#_warn_rows[@]}" -gt 0 ]; then
+    [ "${#_ok_rows[@]}" -gt 0 ] || [ "${#_neutral_rows[@]}" -gt 0 ] && say ""
+  fi
+  for line in "${_ok_rows[@]}";      do say "$line"; done
+  for line in "${_neutral_rows[@]}"; do say "$line"; done
 }

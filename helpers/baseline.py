@@ -16,7 +16,7 @@ Output (stdout): a JSON object
   }
 
 Regressions are surfaced when:
-  * a "higher is worse" metric (RTT, loss, delta, drift) exceeds median × FACTOR
+  * a "higher is worse" metric (RTT, loss, delta) exceeds median × FACTOR
   * a "higher is better" metric (RSSI, throughput) falls below median × FACTOR
   * an absolute-comparison metric (PMTU, ISP, WiFi channel) changes value
 """
@@ -33,8 +33,18 @@ from typing import Any
 # (path, human label, kind, factor)
 #   spike: flag when current > median * factor
 #   drop:  flag when current < median * factor
-#   drift: flag when |current - median| / |median| > 0.5
 #   change: flag when value != prior majority
+#
+# (The "drift" kind, which fired on |current - median|/|median| > 0.5, was
+# removed along with ntp.drift_seconds — sub-second sntp jitter swamped the
+# ratio and produced false positives. Reintroduce it only if a future metric
+# genuinely needs symmetric, ratio-based comparison.)
+#
+# Note: ntp.drift_seconds is intentionally excluded. Sntp's sub-second drift
+# values are dominated by UDP round-trip noise, so a "drift increased from
+# 37ms to 60ms" regression isn't actionable — it's just two samples of the
+# same noise floor. The ntp module surfaces drift directly when it crosses
+# the 1s/30s thresholds where it actually affects apps.
 METRICS: list[tuple[str, str, str, float | None]] = [
     ("gateway.rtt_avg_ms",        "gateway RTT",         "spike", 3.0),
     ("gateway.loss_pct",          "gateway loss%",       "spike", 2.0),
@@ -42,7 +52,6 @@ METRICS: list[tuple[str, str, str, float | None]] = [
     ("bufferbloat.inet_delta_ms", "bufferbloat inet Δ",  "spike", 3.0),
     ("mtu.effective",             "path MTU",            "change", None),
     ("wifi.rssi",                 "WiFi RSSI",           "drop", 1.15),  # current < median * 1.15 → worse
-    ("ntp.drift_seconds",         "NTP drift",           "drift", None),
     ("speedtest.down_mbps",       "speedtest down",      "drop", 0.5),
     ("speedtest.up_mbps",         "speedtest up",        "drop", 0.5),
     ("public.isp",                "ISP",                 "change", None),
@@ -126,11 +135,6 @@ def evaluate(current: dict, history: list[dict]) -> list[dict]:
                     "metric": path, "current": cur_f, "median": med,
                     "label": label, "kind": "drop",
                 })
-        elif kind == "drift" and med != 0 and abs(cur_f - med) / abs(med) > 0.5:
-            regressions.append({
-                "metric": path, "current": cur_f, "median": med,
-                "label": label, "kind": "drift",
-            })
     return regressions
 
 

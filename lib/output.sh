@@ -43,6 +43,12 @@ build_json() {
   NETDIAG_VPN_NAME="$VPN_NAME" \
   NETDIAG_GW_LOSS="${GW_LOSS:-}" \
   NETDIAG_GW_LATENCY="${GW_LATENCY:-}" \
+  NETDIAG_GW_JITTER="${GW_JITTER:-}" \
+  NETDIAG_INET_RTT_AVG="${INET_RTT_AVG:-}" \
+  NETDIAG_INET_RTT_JITTER="${INET_RTT_JITTER:-}" \
+  NETDIAG_INET_LOSS="${INET_LOSS:-}" \
+  NETDIAG_HOSTS_CUSTOM_COUNT="${HOSTS_CUSTOM_COUNT:-0}" \
+  NETDIAG_HOSTS_SUSPICIOUS_LINES="${HOSTS_SUSPICIOUS_LINES:-}" \
   NETDIAG_PUB_IP="$PUB_IP" \
   NETDIAG_PUB_ASN="$PUB_ASN" \
   NETDIAG_PUB_ISP="$PUB_ISP" \
@@ -113,7 +119,11 @@ build_json() {
 
 output_run() {
   local json_tmp baseline_out baseline_lines reg
-  json_tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-out.XXXXXX.json")"
+  # macOS mktemp(1) only substitutes the trailing X's. Any suffix after
+  # them (e.g. ".json") is treated as literal and breaks subsequent runs
+  # because the file already exists. Keep X's at the end; the file is
+  # internal so the extension doesn't matter.
+  json_tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-out.XXXXXX")"
   build_json > "$json_tmp"
 
   # Baseline comparison: compare current JSON to history, surface any
@@ -135,17 +145,15 @@ for r in d.get('regressions', []):
         print(f'{label} is {cur} vs {med} median (×{r.get(\"factor\",\"?\")} spike)')
     elif kind == 'drop':
         print(f'{label} dropped to {cur} from {med} median')
-    elif kind == 'drift':
-        print(f'{label} drifted to {cur} from {med} median')
     elif kind == 'change':
         print(f'{label} changed: \"{cur}\" (was previously \"{med}\")')
 ")"
       if [ -n "$baseline_lines" ]; then
         while IFS= read -r reg; do
           [ -z "$reg" ] && continue
-          add_diag warn "Baseline regression: $reg"
-          DIAGNOSIS_LINES+="warn|Baseline regression: $reg"$'\n'
-          warn "Baseline regression: $reg"
+          add_diag warn "Something changed since your last runs: $reg"
+          DIAGNOSIS_LINES+="warn|Something changed since your last runs: $reg"$'\n'
+          warn "Something changed since your last runs: $reg"
         done <<<"$baseline_lines"
         # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
         build_json > "$json_tmp"
@@ -160,6 +168,11 @@ for r in d.get('regressions', []):
     cat "$json_tmp"
   elif [ "$WATCH_CHILD" -eq 0 ]; then
     say ""
+    # Hint about --expert only when we suppressed the section bodies AND
+    # the user didn't already ask for the minimal output.
+    if [ "$EXPERT" -eq 0 ] && [ "$QUIET" -eq 0 ]; then
+      say "${C_DIM}Pass --expert to see the underlying measurements.${C_RESET}"
+    fi
     say "${C_DIM}Report saved to: $LOG${C_RESET}"
   fi
   rm -f "$json_tmp"

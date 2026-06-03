@@ -11,6 +11,10 @@
 # Safe to run in parallel — UDP/123 is light traffic.
 
 ntp_run() {
+  # sntp -t 3 dominates the parallel batch at ~3-5 s; skip under --quick
+  # so the run hits its 8 s spec budget. Clock drift > 30 s is a critical
+  # rule but the default mode catches it.
+  [ "$QUICK" -eq 0 ] || return 0
   hdr "NTP / time sync"
   local ntp_out drift_abs
   ntp_out="$(with_timeout 5 sntp -t 3 time.apple.com 2>/dev/null || true)"
@@ -20,12 +24,17 @@ ntp_run() {
     # Filter to lines containing the +/- token to get just the result.
     NTP_DRIFT_S="$(printf '%s\n' "$ntp_out" | grep -F '+/-' | tail -1 | awk '{print $1}')"
     if [ -n "$NTP_DRIFT_S" ]; then
-      info "sntp vs time.apple.com: ${NTP_DRIFT_S}s drift"
+      # Only surface the number when the clock is actually wrong enough to
+      # cause problems. Sub-second drift is round-trip noise, not a real
+      # condition users can act on. The diagnosis rule (NT-1) escalates
+      # the > 30 s case to critical in its own section.
       drift_abs="$(awk -v d="$NTP_DRIFT_S" 'BEGIN{print (d<0)?-d:d}')"
       if awk -v d="$drift_abs" 'BEGIN{exit !(d > 30)}'; then
-        bad "Clock drift > 30 s — TLS handshakes will fail. Re-enable network time / NTP."
+        bad "Clock is off by ${NTP_DRIFT_S}s — TLS handshakes will fail. Re-enable network time / NTP."
+      elif awk -v d="$drift_abs" 'BEGIN{exit !(d > 1)}'; then
+        warn "Clock is off by ${NTP_DRIFT_S}s — some apps and TLS validations may misbehave."
       else
-        ok "Clock drift within tolerance."
+        ok "Clock is synced."
       fi
     fi
   else

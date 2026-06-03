@@ -9,6 +9,10 @@
 gping_run() {
   [ "$NO_GPING" -eq 0 ]              || return 0
   command -v gping >/dev/null 2>&1   || return 0
+  # gping renders a live TUI and dies with "Device not configured (os error 6)"
+  # if stdout isn't a terminal (e.g. piped through `tee`, captured to a file,
+  # or run under nohup). Skip the exec in that case — the report is already done.
+  [ -t 1 ]                           || return 0
   local targets=()
   [ -n "$GATEWAY" ] && targets+=("$GATEWAY")
   local h

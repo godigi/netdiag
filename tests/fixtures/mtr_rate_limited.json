@@ -1,0 +1,20 @@
+{
+  "report": {
+    "mtr": {
+      "src": "test",
+      "dst": "1.1.1.1",
+      "tos": 0,
+      "tests": 6,
+      "psize": "64",
+      "bitpattern": "0x00"
+    },
+    "hubs": [
+      { "count": 1, "host": "192.168.1.1",    "Loss%": 0.0,   "Avg": 3.2  },
+      { "count": 2, "host": "10.0.0.1",       "Loss%": 0.0,   "Avg": 8.4  },
+      { "count": 3, "host": "100.64.0.1",     "Loss%": 0.0,   "Avg": 18.1 },
+      { "count": 4, "host": "100.126.222.5",  "Loss%": 100.0, "Avg": 0    },
+      { "count": 5, "host": "100.126.222.42", "Loss%": 100.0, "Avg": 0    },
+      { "count": 6, "host": "1.1.1.1",        "Loss%": 0.0,   "Avg": 27.3 }
+    ]
+  }
+}

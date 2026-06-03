@@ -186,7 +186,7 @@ def main() -> None:
     target = _env("TARGET")
 
     data: dict = {
-        "version": _env("VERSION") or "0.3.0",
+        "version": _env("VERSION") or "0.4.0",
         "timestamp": _env("TIMESTAMP"),
         "interface": {
             "name": _env("INTERFACE"),
@@ -209,6 +209,13 @@ def main() -> None:
             "ip": _env("GATEWAY"),
             "loss_pct": _maybe_float("GW_LOSS"),
             "rtt_avg_ms": _maybe_float("GW_LATENCY"),
+            "rtt_jitter_ms": _maybe_float("GW_JITTER"),
+        },
+        "internet_latency": {
+            "target": "1.1.1.1",
+            "rtt_avg_ms": _maybe_float("INET_RTT_AVG"),
+            "rtt_jitter_ms": _maybe_float("INET_RTT_JITTER"),
+            "loss_pct": _maybe_float("INET_LOSS"),
         },
         "public": {
             "ip": _env("PUB_IP"),
@@ -286,6 +293,14 @@ def main() -> None:
         },
         "mtr": build_mtr(),
         "wan": build_wan(),
+        "hosts_file": {
+            "custom_count": _maybe_int("HOSTS_CUSTOM_COUNT"),
+            "suspicious_redirects": [
+                line.strip() for line in
+                (os.environ.get("NETDIAG_HOSTS_SUSPICIOUS_LINES", "") or "").splitlines()
+                if line.strip()
+            ],
+        },
         "baseline": build_baseline(),
         "diagnosis": build_diagnosis(),
         "most_likely_root_cause": _env("MOST_LIKELY_ROOT_CAUSE"),

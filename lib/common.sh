@@ -25,24 +25,109 @@ else
 fi
 
 # ── Printing ─────────────────────────────────────────────────────────────
-# Stdout gating: print iff not JSON_MODE and (not QUIET OR past the Diagnosis
-# header). The log gets ANSI-stripped raw text either way.
+# Stdout gating per mode:
+#   --json       : nothing on stdout (JSON object is emitted separately)
+#   --quiet      : only the diagnoses (no Report card, no section bodies)
+#   --expert     : every section body, plus Report card + diagnoses
+#   default      : Report card + diagnoses; section bodies silent
+# The log file gets ANSI-stripped raw text in every mode.
+#
+# DIAGNOSIS_REACHED flips to 1 when hdr() sees one of the "punchline"
+# section names (Report / Summary / Diagnosis / What we found). After that,
+# all say() calls reach stdout regardless of mode (except --json).
 DIAGNOSIS_REACHED=0
+_should_print_stdout() {
+  [ "$JSON_MODE" -eq 0 ] || return 1
+  # Past the punchline → always print (unless JSON).
+  [ "$DIAGNOSIS_REACHED" -eq 1 ] && return 0
+  # Before the punchline: --quiet wins (silent), then --expert (verbose),
+  # then default (silent).
+  [ "$QUIET" -eq 1 ]  && return 1
+  [ "$EXPERT" -eq 1 ] && return 0
+  return 1
+}
 say() {
-  if [ "$JSON_MODE" -eq 0 ] && \
-     { [ "$QUIET" -eq 0 ] || [ "$DIAGNOSIS_REACHED" -eq 1 ]; }; then
+  if _should_print_stdout; then
+    printf '%s\n' "$*"
+  fi
+  printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG"
+}
+# tell() prints regardless of EXPERT/QUIET — used for the "netdiag" header
+# and other always-visible lines that should appear even in compact-default
+# output. JSON_MODE still suppresses stdout.
+tell() {
+  if [ "$JSON_MODE" -eq 0 ]; then
     printf '%s\n' "$*"
   fi
   printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG"
 }
 hdr() {
-  # "Summary" and "Diagnosis" both count as having reached the
-  # human-facing punchline — flip the QUIET gate so both show under --quiet.
+  # The "punchline" section names flip the QUIET / default gate so the
+  # Report card and diagnoses always show even when section bodies were
+  # suppressed. Non-punchline sections start an animated spinner on
+  # stderr so the user has something to watch during the long wait
+  # (bufferbloat: 10 s, mtr-under-sudo: 12 s, etc.). Each hdr stops the
+  # previous spinner before starting a new one.
+  progress_spin_stop
   case "$*" in
-    Diagnosis*|Summary*) DIAGNOSIS_REACHED=1 ;;
+    Diagnosis*|Summary*|Report*|"What we found"*)
+      DIAGNOSIS_REACHED=1
+      progress_clear
+      ;;
+    *)
+      progress_spin_start "$*"
+      ;;
   esac
   say ""
   say "${C_BOLD}${C_BLU}── $* ──${C_RESET}"
+}
+
+# ── Progress indicator (stderr) ──────────────────────────────────────────
+# Writes an overwriting status line to stderr so the user sees activity
+# during the 25-40 s wait that the default-compact mode would otherwise
+# show as silence. Stays out of stdout so JSON / piped consumers aren't
+# affected. Suppressed under --json, --watch-child, or non-TTY stderr.
+_progress_active() {
+  [ -t 2 ] || return 1
+  [ "$JSON_MODE" -eq 0 ] || return 1
+  [ "${WATCH_CHILD:-0}" -eq 0 ] || return 1
+  return 0
+}
+progress() {
+  _progress_active || return 0
+  # \r returns to column 1; \e[K clears to end of line.
+  printf '\r\e[K%s⟳ %s…%s' "${C_DIM}" "$*" "${C_RESET}" >&2
+}
+progress_clear() {
+  _progress_active || return 0
+  printf '\r\e[K' >&2
+}
+
+# Animated spinner for the parallel batch — fork a background process
+# that overwrites the progress line every 100 ms. Caller is responsible
+# for calling progress_spin_stop before returning.
+_progress_spinner_pid=""
+progress_spin_start() {
+  _progress_active || return 0
+  local label="$1"
+  (
+    local frames=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
+    local i=0
+    while true; do
+      printf '\r\e[K%s%s %s…%s' "${C_DIM}" "${frames[$((i % 10))]}" "$label" "${C_RESET}" >&2
+      sleep 0.1
+      i=$((i + 1))
+    done
+  ) &
+  _progress_spinner_pid=$!
+}
+progress_spin_stop() {
+  if [ -n "$_progress_spinner_pid" ]; then
+    kill "$_progress_spinner_pid" 2>/dev/null || true
+    wait "$_progress_spinner_pid" 2>/dev/null || true
+    _progress_spinner_pid=""
+  fi
+  progress_clear
 }
 ok()   { say "  ${C_GRN}✓${C_RESET} $*"; }
 warn() { say "  ${C_YEL}⚠${C_RESET} $*"; }
@@ -50,10 +135,9 @@ bad()  { say "  ${C_RED}✗${C_RESET} $*"; }
 info() { say "  ${C_DIM}·${C_RESET} $*"; }
 
 # Pipeline-target replacement for `tee -a "$LOG"`. Writes to log unconditionally;
-# also writes to stdout iff not JSON_MODE and not pre-diagnosis QUIET.
+# also writes to stdout iff _should_print_stdout would.
 log_pipe() {
-  if [ "$JSON_MODE" -eq 0 ] && \
-     { [ "$QUIET" -eq 0 ] || [ "$DIAGNOSIS_REACHED" -eq 1 ]; }; then
+  if _should_print_stdout; then
     tee -a "$LOG"
   else
     cat >> "$LOG"
@@ -124,6 +208,7 @@ with_timeout() {
 #   - use say/hdr/ok/warn/info as usual (they're overridden to buffer-only)
 #   - call setvar NAME "value" to persist a variable across the boundary
 PAR_NAMES=()
+PAR_PIDS=()
 PAR_TMP=""
 launch_parallel() {
   local name="$1" fn="$2"
@@ -159,6 +244,7 @@ launch_parallel() {
     log_pipe() { cat; }
     "$fn"
   ) &
+  PAR_PIDS+=("$!")
 }
 
 # Persist a variable across the parallel boundary. Appends `NAME=quoted-VALUE`
@@ -181,16 +267,24 @@ setvar() {
 }
 
 # Wait for all background launches, then in launch order: replay each
-# section's stdout buffer to terminal+LOG and source its vars file.
+# section's stdout buffer to terminal+LOG and source its vars file. The
+# stdout replay uses _should_print_stdout so section bodies stay hidden
+# in default-compact mode while expert mode shows everything.
 collect_parallel() {
-  wait
+  # Wait only on the section PIDs, not on every background job — the
+  # progress spinner is a separate child process that runs concurrently
+  # and would otherwise pin `wait` indefinitely.
+  local pid
+  for pid in "${PAR_PIDS[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  PAR_PIDS=()
   local name out vars
   for name in "${PAR_NAMES[@]}"; do
     out="$PAR_TMP/$name.out"
     vars="$PAR_TMP/$name.vars"
     if [ -s "$out" ]; then
-      if [ "$JSON_MODE" -eq 0 ] && \
-         { [ "$QUIET" -eq 0 ] || [ "$DIAGNOSIS_REACHED" -eq 1 ]; }; then
+      if _should_print_stdout; then
         cat "$out"
       fi
       sed $'s/\033\\[[0-9;]*m//g' "$out" >> "$LOG"

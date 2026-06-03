@@ -4,6 +4,14 @@
 > triggers on, what evidence it cites, what severity it carries, and the
 > rationale. Rules are ranked by severity × confidence; the highest-ranked
 > rule is surfaced as `most_likely_root_cause` in the JSON output.
+>
+> **As of v0.4.0** the canonical user-facing string for each rule lives
+> in the bash module that emits it (`lib/diagnosis.sh`, `lib/wan.sh`,
+> `lib/output.sh`). The strings are written in plain English (symptom →
+> cause → action, with technical terms parenthetical for power users).
+> This file documents the trigger/evidence/rationale for rule
+> maintainers; grep the bash sources for the literal `add_diag` calls
+> if you need the exact user text.
 
 ## Severity
 

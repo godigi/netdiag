@@ -44,6 +44,12 @@ VPN_NAME=""
 # Gateway reachability (lib/gateway.sh)
 GW_LOSS=""
 GW_LATENCY=""
+GW_JITTER=""           # stddev from ping summary, ms
+
+# Internet-side ping (lib/internet_ping.sh)
+INET_RTT_AVG=""
+INET_RTT_JITTER=""
+INET_LOSS=""
 
 # Public reach / target ping (lib/public.sh)
 PUBLIC_OK=0
@@ -118,6 +124,10 @@ DHCP_DNS_SERVERS=""
 # ARP (lib/arp.sh)
 ARP_DUPLICATE_IPS=""
 ARP_GW_INCOMPLETE=0
+
+# /etc/hosts (lib/hosts.sh)
+HOSTS_CUSTOM_COUNT=0
+HOSTS_SUSPICIOUS_LINES=""
 
 # NAT / WAN topology (lib/wan.sh) — v0.3 additions
 WAN_LB_ASNS=""           # space-separated list, set if dual-WAN probe ran

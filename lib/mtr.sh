@@ -10,66 +10,117 @@
 # NEXTHOP_LOSS is declared in globals.sh and is reserved for upcoming JSON
 # / baseline support — currently set but not yet read elsewhere.
 # shellcheck disable=SC2034
+
+# Threshold above which a hop's loss% is "interesting" (vs measurement noise).
+_MTR_LOSS_THRESHOLD=2
+
+# Classify a hop as "rate_limited" when its loss exceeds the threshold but
+# at least one downstream hop is healthy — that means data is making it
+# through, so the loss is the router refusing to send ICMP TTL-Exceeded
+# replies fast enough, not a real forwarding failure. Real loss propagates
+# to every hop past the bad one.
+#
+# Args: $1 = current hop's loss%, $2... = downstream hops' loss%s.
+# Echoes: "rate_limited" or empty string.
+_classify_hop_loss() {
+  local cur_loss="$1"; shift
+  awk -v l="$cur_loss" -v t="$_MTR_LOSS_THRESHOLD" 'BEGIN{exit !(l+0 > t)}' \
+    || { printf ''; return; }
+  local d
+  for d in "$@"; do
+    if awk -v l="$d" -v t="$_MTR_LOSS_THRESHOLD" 'BEGIN{exit !(l+0 <= t)}'; then
+      printf 'rate_limited'
+      return
+    fi
+  done
+  printf ''
+}
+
+# Walk the collected hop arrays (HOP_NUMS, HOP_IPS, HOP_LOSSES, HOP_AVGS),
+# tag rate-limited hops, emit PER_HOP_LINES, print them in the right severity,
+# and set MTR_FIRST_LOSSY_HOP only when loss is real (propagates downstream).
+_emit_per_hop_results() {
+  local n total status hop_line avg_disp
+  total=${#HOP_NUMS[@]}
+  for ((n=0; n<total; n++)); do
+    status="$(_classify_hop_loss "${HOP_LOSSES[$n]}" "${HOP_LOSSES[@]:$((n+1))}")"
+    PER_HOP_LINES+="${HOP_NUMS[$n]}|${HOP_IPS[$n]}|${HOP_LOSSES[$n]}|${HOP_AVGS[$n]}"$'\n'
+    avg_disp="${HOP_AVGS[$n]:-?}"
+    hop_line="$(printf 'hop %2d  %-15s  %5s%% loss  %7s ms' \
+      "${HOP_NUMS[$n]}" "${HOP_IPS[$n]}" "${HOP_LOSSES[$n]:-?}" "$avg_disp")"
+    if awk -v l="${HOP_LOSSES[$n]}" -v t="$_MTR_LOSS_THRESHOLD" 'BEGIN{exit !(l+0 > t)}'; then
+      if [ "$status" = "rate_limited" ]; then
+        # Downstream is healthy; this hop just deprioritises ICMP TTL replies.
+        info "$hop_line  (likely ICMP rate-limit, downstream is clean)"
+      else
+        warn "$hop_line"
+        [ -z "$MTR_FIRST_LOSSY_HOP" ] && \
+          MTR_FIRST_LOSSY_HOP="hop ${HOP_NUMS[$n]} (${HOP_IPS[$n]})"
+      fi
+    else
+      info "$hop_line"
+    fi
+  done
+  [ -n "$MTR_FIRST_LOSSY_HOP" ] && warn "First lossy hop: $MTR_FIRST_LOSSY_HOP"
+  return 0
+}
+
 _run_per_hop_fallback() {
   if [ "${#HOPS[@]}" -eq 0 ]; then
     info "No hops to test (traceroute returned no IPs)."
     return
   fi
-  # Fire all hop pings concurrently to one temp file per hop, then iterate
-  # in original hop order to preserve output. Bounded by the slowest hop
-  # (~1-2 s) rather than the sum of all hops (~12 s for 8 hops).
-  local hop_tmp i h out loss lat first_lossy=""
+  # Fire all hop pings concurrently to one temp file per hop, then collect in
+  # original hop order. Bounded by the slowest hop (~1-2 s) rather than the
+  # sum (~12 s for 8 hops).
+  local hop_tmp i h out loss lat
   hop_tmp="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-hops.XXXXXX")"
   i=0
+  # Track each ping's PID so we wait only on our own children, not on
+  # the progress-spinner the orchestrator may have forked.
+  local ping_pids=()
   for h in "${HOPS[@]}"; do
     i=$((i+1))
     ping -c 5 -t 2 -i 0.2 "$h" > "$hop_tmp/hop-$i" 2>&1 &
+    ping_pids+=("$!")
   done
-  wait
+  local pid
+  for pid in "${ping_pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  HOP_NUMS=(); HOP_IPS=(); HOP_LOSSES=(); HOP_AVGS=()
   i=0
   for h in "${HOPS[@]}"; do
     i=$((i+1))
     out="$(cat "$hop_tmp/hop-$i" 2>/dev/null)"
     loss="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
     lat="$(printf '%s\n' "$out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3)}' | head -1)"
-    loss="${loss:-100}"
-    PER_HOP_LINES+="${i}|${h}|${loss}|${lat:-}"$'\n'
-    local hop_line
-    # Right-align the hop number and loss%, pad IP to 15 cols so columns line up.
-    hop_line="$(printf 'hop %2d  %-15s  %5s%% loss  %7s ms' "$i" "$h" "${loss:-?}" "${lat:-?}")"
-    if [ "${loss%.*}" -eq 0 ]; then
-      info "$hop_line"
-    else
-      warn "$hop_line"
-      [ -z "$first_lossy" ] && first_lossy="hop $i ($h)"
-      [ "$i" -eq 2 ] && NEXTHOP_LOSS="$loss"
+    HOP_NUMS+=("$i")
+    HOP_IPS+=("$h")
+    HOP_LOSSES+=("${loss:-100}")
+    HOP_AVGS+=("${lat:-}")
+    # NEXTHOP_LOSS tracks hop 2's loss for legacy JSON consumers.
+    if [ "$i" -eq 2 ] && [ -n "$loss" ] && [ "${loss%.*}" -gt 0 ]; then
+      NEXTHOP_LOSS="$loss"
     fi
   done
   rm -rf "$hop_tmp"
-  [ -n "$first_lossy" ] && { MTR_FIRST_LOSSY_HOP="$first_lossy"; warn "First lossy hop: $first_lossy"; }
+  _emit_per_hop_results
 }
 
-# Compute MTR_FIRST_LOSSY_HOP from an mtr JSON report's TSV form.
-# Reads "hopnum<TAB>host<TAB>loss%<TAB>avg" lines on stdin, writes PER_HOP_LINES
-# entries, and updates MTR_FIRST_LOSSY_HOP if the previous hop had ≤ 2% loss
-# and the current hop has > 2% loss. Designed so unit tests can call this
-# directly with fixture data.
+# Parse mtr's TSV (hopnum<TAB>host<TAB>loss%<TAB>avg) into the HOP_* arrays
+# and emit. Designed to be called directly from tests with fixture data.
 parse_mtr_tsv() {
-  local hopnum host loss avg prev_loss=0 hop_line
+  local hopnum host loss avg
+  HOP_NUMS=(); HOP_IPS=(); HOP_LOSSES=(); HOP_AVGS=()
   while IFS=$'\t' read -r hopnum host loss avg; do
     [ -z "$hopnum" ] && continue
-    PER_HOP_LINES+="${hopnum}|${host}|${loss}|${avg}"$'\n'
-    hop_line="$(printf 'hop %2d  %-15s  %5s%% loss  %7s ms avg' "$hopnum" "$host" "$loss" "$avg")"
-    if awk -v l="$loss" 'BEGIN{exit !(l+0 > 2)}'; then
-      warn "$hop_line"
-      if [ -z "$MTR_FIRST_LOSSY_HOP" ] && awk -v p="$prev_loss" 'BEGIN{exit !(p+0 <= 2)}'; then
-        MTR_FIRST_LOSSY_HOP="hop $hopnum ($host)"
-      fi
-    else
-      info "$hop_line"
-    fi
-    prev_loss="$loss"
+    HOP_NUMS+=("$hopnum")
+    HOP_IPS+=("$host")
+    HOP_LOSSES+=("$loss")
+    HOP_AVGS+=("$avg")
   done
+  _emit_per_hop_results
 }
 
 mtr_run() {
@@ -89,7 +140,6 @@ mtr_run() {
     mtr_tsv="$(printf '%s' "$mtr_json" \
       | jq -r '.report.hubs[] | [.count, .host, (.["Loss%"]|tostring), (.Avg|tostring)] | @tsv')"
     parse_mtr_tsv <<<"$mtr_tsv"
-    [ -n "$MTR_FIRST_LOSSY_HOP" ] && warn "First lossy hop (culprit): $MTR_FIRST_LOSSY_HOP"
     return
   fi
 
