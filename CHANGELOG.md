@@ -6,6 +6,85 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-07
+
+Correctness pass. No new checks — this fixes cases where netdiag reported
+something confidently wrong, and closes three gaps against the spec in
+`netdiag-prompt.md`.
+
+### Fixed
+
+- **A Mac with no network reported "healthy" and exited 0.** Every
+  diagnosis rule guards on a measurement that only exists once there's a
+  link (`[ -n "$GW_LOSS" ]` and friends), so with WiFi off *nothing* fired
+  and the run ended with "Nothing obviously wrong — your network looks
+  healthy". New rule **N1** fires on an empty default route, states the
+  obvious, and makes the exit code 2. See `docs/DIAGNOSIS-RULES.md`.
+- **`sntp` drift was parsed positionally.** `awk '{print $1}'` assumed the
+  offset led the result line, but ntp 4.2.8 — what macOS ships — prefixes
+  it with a timestamp. On that format netdiag reported a clock "off by
+  2026-08-07 seconds" (the date, compared as a *string*, silently passed
+  the `> 1` threshold). The field is now located by the `+/-` token, and
+  validated numeric before use.
+- **Double-NAT contradicted itself on ISP transit.** Carriers routinely
+  run 10/8 between the CPE and their edge. The chain walker counted those
+  hops, so the Report card showed a yellow "double-NAT detected" directly
+  above a diagnosis explaining it wasn't a problem. The home/ISP split now
+  happens in `wan_double_nat_run`, before the card is built:
+  `WAN_DOUBLE_NAT` means *home-side* double-NAT, and ISP transit gets a
+  neutral row.
+- **Usage errors exited 2**, colliding with "≥ 1 critical diagnosis". An
+  unknown flag, a second positional TARGET, or a bare `--log` now exit 3.
+  An `EXIT` trap also remaps unplanned aborts (a `set -u` violation exits
+  1 or 127 depending on the failure) to 3, so exit 1 always means
+  "warnings only" and never "the script broke".
+- **`--quick` ran the baseline diff**, contrary to acceptance criterion 3.
+  It cost two `python3` starts plus a full parse of `baseline.jsonl` — the
+  most expensive thing left in a quick run. The comparison is now skipped;
+  the snapshot is still appended, so the `--quick`-driven launchd watcher
+  keeps building history.
+- The Report card's DNS row and rule **D1** both keyed off `DNS_OK`, which
+  defaults to 0 — a run that skipped DNS reported lookups as failing when
+  none were attempted. Both now require evidence the check ran.
+- `traceroute` output was piped `| log_pipe | sed`, so the log got
+  un-indented text and, in compact mode, `sed` ran on empty input. The
+  indent now precedes the log stage.
+- Non-numeric `wdutil` scrapes no longer reach `$((rssi - noise))` (a
+  syntax error) or the `[ -ge ]` ladder ("integer expression expected").
+- `install.sh --prefix` with no argument aborted on `$2` unbound under
+  `set -u` instead of printing a usable message.
+
+### Added
+
+- **`--mtu-only`** and **`--wifi-only`**, listed in the documented CLI
+  surface since v0.1 but never implemented — `netdiag --mtu-only` hit the
+  unknown-flag path. Each runs one section plus its prerequisites, then
+  the Report card and diagnoses over what it produced. The card filters to
+  the focused section, so a partial run can't report on checks it skipped.
+  Both suppress the baseline diff: a partial run isn't comparable to a
+  full one, and recording it would poison the history.
+- `wan.double_nat` in the JSON gains `home_chain`, `home_count`,
+  `isp_transit_chain`, and `isp_transit_count`.
+- `is_numeric` in `lib/common.sh` — the guard to use before feeding a
+  scraped value to `[ -lt ]`, `$(( ))`, or an awk comparison.
+- 24 tests: the `sntp` formats (both), `is_numeric`, the home/ISP chain
+  split, the N1 floor case, and the exit-code contract.
+
+### Changed
+
+- shellcheck is clean at default severity again. The 11 pre-existing
+  `SC2317` findings (trap handlers and the parallel-subshell function
+  overrides, all reached by indirect dispatch) now carry justified
+  disables, so the CI job reflects real problems.
+
+### Known
+
+- `.github/workflows/shellcheck.yml` still carries a stale
+  `nimbalyst-local` entry in `ignore_paths`, left over from another
+  project. Harmless, but it should be dropped — the change isn't in this
+  release because pushing workflow files needs a token scope this branch
+  didn't have.
+
 ## [0.4.0] - 2026-06-01
 
 UX-focused release. The default report dropped from 130 lines of dense

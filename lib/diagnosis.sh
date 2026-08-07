@@ -12,6 +12,20 @@
 
 diagnosis_run() {
   hdr "What we found"
+
+  # N1 — no usable network at all. Every rule below keys off a measurement
+  # that only exists once there IS a link, so without this the most basic
+  # failure mode (WiFi off, cable unplugged) fired zero rules and the run
+  # ended with "Nothing obviously wrong — your network looks healthy" and
+  # exit 0, on a machine with no network whatsoever.
+  if [ -z "$GATEWAY" ]; then
+    add_diag critical "Your Mac has no network connection at all — there's no default route, which means it isn't joined to a WiFi network and has no working ethernet link. Turn WiFi on and pick a network, or check that the ethernet cable is seated at both ends. Nothing else can be diagnosed until this is fixed."
+  elif [ "$PUBLIC_OK" -eq 0 ] && [ -z "$GW_LOSS" ]; then
+    # Reachable only from a focused run (--mtu-only), where the gateway
+    # section is skipped so P1/P2 below can't evaluate.
+    add_diag critical "Your Mac has a router but nothing on the public internet responded. Re-run plain \`netdiag\` (without --mtu-only) for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
+  fi
+
   # W1, W2, G1/G2 — WiFi quality and gateway loss interplay.
   if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt -75 ]; then
     add_diag warn "Your WiFi signal is weak (${WIFI_RSSI} dBm — anything below -75 is poor). Web pages will be slow and video calls will stutter. Try moving closer to the router, or switch to the 5 GHz network if your router broadcasts both bands."
@@ -36,8 +50,9 @@ diagnosis_run() {
     fi
   fi
 
-  # D1 — partial DNS, internet reachable.
-  if [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
+  # D1 — partial DNS, internet reachable. DNS_LINES proves the check ran;
+  # without it a skipped-DNS run would accuse a healthy resolver.
+  if [ -n "$DNS_LINES" ] && [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
     add_diag warn "The internet works but some name lookups are failing — your DNS server is flaky. Switch your DNS to 1.1.1.1 (Cloudflare) or 8.8.8.8 (Google) in System Settings → Network → Details → DNS."
   fi
 

@@ -110,6 +110,10 @@ build_json() {
   NETDIAG_WAN_LB_ACTIVE="$WAN_LB_ACTIVE" \
   NETDIAG_WAN_DOUBLE_NAT="$WAN_DOUBLE_NAT" \
   NETDIAG_WAN_DOUBLE_NAT_CHAIN="$WAN_DOUBLE_NAT_CHAIN" \
+  NETDIAG_WAN_NAT_HOME_CHAIN="$WAN_NAT_HOME_CHAIN" \
+  NETDIAG_WAN_NAT_HOME_COUNT="$WAN_NAT_HOME_COUNT" \
+  NETDIAG_WAN_NAT_ISP_CHAIN="$WAN_NAT_ISP_CHAIN" \
+  NETDIAG_WAN_NAT_ISP_COUNT="$WAN_NAT_ISP_COUNT" \
   NETDIAG_WAN_UPNP_STATE="$WAN_UPNP_STATE" \
   NETDIAG_WAN_UPNP_DEVICE="$WAN_UPNP_DEVICE" \
   NETDIAG_WAN_UPNP_URL="$WAN_UPNP_URL" \
@@ -130,11 +134,17 @@ output_run() {
   # regressions, then rebuild the JSON so they appear in its diagnosis array.
   if [ "$NO_BASELINE" -eq 0 ] && [ "$BASELINE" -eq 1 ]; then
     mkdir -p "$LOG_DIR"
-    baseline_out="$(python3 "$HELPERS_DIR/baseline.py" \
-      --history "$LOG_DIR/baseline.jsonl" --current "$json_tmp" --n 10 2>/dev/null || true)"
-    BASELINE_JSON="$baseline_out"
-    if [ -n "$baseline_out" ]; then
-      baseline_lines="$(printf '%s' "$baseline_out" | python3 -c "
+    # --quick skips the *comparison* per the spec's 8 s budget: it costs two
+    # python3 starts plus a full parse of baseline.jsonl, which is the most
+    # expensive thing left in a quick run. The snapshot is still appended
+    # below, so the launchd watcher — which runs --quick — keeps building
+    # the history that full runs are measured against.
+    if [ "$QUICK" -eq 0 ]; then
+      baseline_out="$(python3 "$HELPERS_DIR/baseline.py" \
+        --history "$LOG_DIR/baseline.jsonl" --current "$json_tmp" --n 10 2>/dev/null || true)"
+      BASELINE_JSON="$baseline_out"
+      if [ -n "$baseline_out" ]; then
+        baseline_lines="$(printf '%s' "$baseline_out" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 for r in d.get('regressions', []):
@@ -148,15 +158,16 @@ for r in d.get('regressions', []):
     elif kind == 'change':
         print(f'{label} changed: \"{cur}\" (was previously \"{med}\")')
 ")"
-      if [ -n "$baseline_lines" ]; then
-        while IFS= read -r reg; do
-          [ -z "$reg" ] && continue
-          add_diag warn "Something changed since your last runs: $reg"
-          DIAGNOSIS_LINES+="warn|Something changed since your last runs: $reg"$'\n'
-          warn "Something changed since your last runs: $reg"
-        done <<<"$baseline_lines"
-        # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
-        build_json > "$json_tmp"
+        if [ -n "$baseline_lines" ]; then
+          while IFS= read -r reg; do
+            [ -z "$reg" ] && continue
+            add_diag warn "Something changed since your last runs: $reg"
+            DIAGNOSIS_LINES+="warn|Something changed since your last runs: $reg"$'\n'
+            warn "Something changed since your last runs: $reg"
+          done <<<"$baseline_lines"
+          # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
+          build_json > "$json_tmp"
+        fi
       fi
     fi
     # Append final snapshot to history (one record per run).

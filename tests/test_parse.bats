@@ -21,6 +21,96 @@ setup() {
   . "$REPO/lib/wan.sh"
 }
 
+# ── N1: no network at all must not report "healthy" ──────────────────────
+# Regression guard. Every other rule short-circuits on missing data, so a
+# machine with WiFi off used to produce zero diagnoses and exit 0.
+
+@test "diagnosis: empty GATEWAY yields a critical and MAX_SEVERITY 2" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=""
+  run diagnosis_run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no network connection at all"* ]]
+  [[ "$output" != *"Nothing obviously wrong"* ]]
+
+  # Re-run in-process so the accumulator side effects are visible.
+  GATEWAY=""
+  DIAG=(); DIAG_SEV=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "$MAX_SEVERITY" -eq 2 ]
+  [ "${DIAG_SEV[0]}" = "critical" ]
+}
+
+@test "diagnosis: a present GATEWAY does not trip N1" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="192.168.1.1"
+  GW_LOSS="0"
+  PUBLIC_OK=1
+  DIAG=(); DIAG_SEV=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "$MAX_SEVERITY" -eq 0 ]
+  [ "${#DIAG[@]}" -eq 0 ]
+}
+
+# ── is_numeric guard ─────────────────────────────────────────────────────
+
+@test "is_numeric: accepts integers, decimals, and signed values" {
+  is_numeric 0
+  is_numeric 42
+  is_numeric -52
+  is_numeric +0.001234
+  is_numeric 3.485
+  is_numeric .5
+}
+
+@test "is_numeric: rejects empty, dates, and unit-suffixed values" {
+  ! is_numeric ""
+  ! is_numeric "2026-08-07"
+  ! is_numeric "-52 dBm"
+  ! is_numeric "abc"
+  ! is_numeric "1.2.3"
+}
+
+# ── sntp drift parse (position-independent) ──────────────────────────────
+
+# The drift field is located by the "+/-" token, not by position, because
+# ntp 4.2.8 prefixes the result line with a timestamp on macOS while other
+# builds lead with the offset.
+_sntp_drift() {
+  awk '{ for (i = 1; i < NF; i++) if ($(i+1) == "+/-") d = $i }
+       END { if (d != "") print d }'
+}
+
+@test "sntp parse: offset-first format" {
+  result="$(printf '%s\n' '+0.047883 +/- 0.021456 time.apple.com 17.253.66.253' | _sntp_drift)"
+  [ "$result" = "+0.047883" ]
+}
+
+@test "sntp parse: ntp 4.2.8 timestamp-prefixed format" {
+  line='2026-08-07 12:00:00.123456 (+0000) +0.047883 +/- 0.021456 time.apple.com 17.253.66.253'
+  result="$(printf '%s\n' "$line" | _sntp_drift)"
+  [ "$result" = "+0.047883" ]
+  # Regression guard: the old `awk {print $1}` returned the date here, which
+  # then passed the `> 1` string comparison and reported a bogus clock skew.
+  [ "$result" != "2026-08-07" ]
+  is_numeric "$result"
+}
+
+@test "sntp parse: skips retry chatter, keeps the last result line" {
+  input='sntp 4.2.8p15@1.3728-o Fri Feb 16 17:32:26 UTC 2024 (1)
+kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
+2026-08-07 12:00:00.123456 (+0000) +0.047883 +/- 0.021456 time.apple.com 17.253.66.253'
+  result="$(printf '%s\n' "$input" | _sntp_drift)"
+  [ "$result" = "+0.047883" ]
+}
+
+@test "sntp parse: unparseable output yields empty, not garbage" {
+  result="$(printf '%s\n' 'sntp: no servers can be used, exiting' | _sntp_drift)"
+  [ -z "$result" ]
+}
+
 # ── grade_bufferbloat (Waveform A-F thresholds) ──────────────────────────
 
 @test "grade_bufferbloat: 0ms → A" {
@@ -218,4 +308,50 @@ setup() {
   chain="$(printf '%s' "$input" | _wan_count_rfc1918_chain)"
   # awk emits no NF line on empty input, so the chain string is empty.
   [ -z "$chain" ]
+}
+
+# ── WAN home-vs-ISP chain split ──────────────────────────────────────────
+# Only home-side hops (192.168/16, 172.16/12) count as double-NAT. ISP
+# transit over 10/8 is normal carrier routing.
+
+@test "_wan_split_nat_chain: two home routers → home_count 2, no ISP transit" {
+  _wan_split_nat_chain "192.168.68.1 192.168.58.1"
+  [ "$WAN_NAT_HOME_COUNT" -eq 2 ]
+  [ "$WAN_NAT_HOME_CHAIN" = "192.168.68.1 → 192.168.58.1" ]
+  [ "$WAN_NAT_ISP_COUNT" -eq 0 ]
+  [ -z "$WAN_NAT_ISP_CHAIN" ]
+}
+
+@test "_wan_split_nat_chain: pure 10/8 transit is ISP-side, not double-NAT" {
+  _wan_split_nat_chain "10.166.41.210 10.166.41.209"
+  [ "$WAN_NAT_HOME_COUNT" -eq 0 ]
+  [ "$WAN_NAT_ISP_COUNT" -eq 2 ]
+  [ "$WAN_NAT_ISP_CHAIN" = "10.166.41.210 → 10.166.41.209" ]
+}
+
+@test "_wan_split_nat_chain: mixed chain separates home from ISP transit" {
+  _wan_split_nat_chain "192.168.50.1 192.168.1.254 10.166.41.210 10.166.41.209"
+  [ "$WAN_NAT_HOME_COUNT" -eq 2 ]
+  [ "$WAN_NAT_HOME_CHAIN" = "192.168.50.1 → 192.168.1.254" ]
+  [ "$WAN_NAT_ISP_COUNT" -eq 2 ]
+  [ "$WAN_NAT_ISP_CHAIN" = "10.166.41.210 → 10.166.41.209" ]
+}
+
+@test "_wan_split_nat_chain: 172.16/12 counts as home-side" {
+  _wan_split_nat_chain "172.16.0.1 172.31.255.1"
+  [ "$WAN_NAT_HOME_COUNT" -eq 2 ]
+  [ "$WAN_NAT_ISP_COUNT" -eq 0 ]
+}
+
+@test "_wan_split_nat_chain: single home hop → not double-NAT" {
+  _wan_split_nat_chain "192.168.1.1"
+  [ "$WAN_NAT_HOME_COUNT" -eq 1 ]
+}
+
+@test "_wan_split_nat_chain: empty chain → all zero" {
+  _wan_split_nat_chain ""
+  [ "$WAN_NAT_HOME_COUNT" -eq 0 ]
+  [ "$WAN_NAT_ISP_COUNT" -eq 0 ]
+  [ -z "$WAN_NAT_HOME_CHAIN" ]
+  [ -z "$WAN_NAT_ISP_CHAIN" ]
 }

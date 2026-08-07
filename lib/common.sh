@@ -9,6 +9,7 @@
 #   say/hdr/ok/warn/bad/info     — colour-aware printing (writes to $LOG too)
 #   log_pipe                     — pipeline target equivalent to `tee -a $LOG`
 #   add_diag <sev> <msg>         — append a diagnosis, update $MAX_SEVERITY
+#   is_numeric <value>           — guard before [ -lt ] / $(( )) / awk math
 #   grade_bufferbloat <delta_ms> — A/B/C/D/F from the Waveform thresholds
 #   with_timeout <secs> <cmd...> — kill cmd if it runs past secs; returns 124
 #   launch_parallel <name> <fn>  — fan out a check; results collected later
@@ -162,6 +163,21 @@ add_diag() {
   esac
 }
 
+# ── Numeric guard ────────────────────────────────────────────────────────
+# Succeeds iff the argument is a plain signed decimal number.
+#
+# Every metric in this script is scraped out of another tool's text output,
+# and those formats drift between macOS releases. Without a guard, a parse
+# that lands on the wrong field feeds a string into `[ -lt ]` ("integer
+# expression expected" on stderr), into `$(( ))` (a syntax error), or into
+# an awk comparison — where it silently degrades to a *string* compare and
+# produces a confidently wrong diagnosis. Parsers should gate on this and
+# blank the variable instead, so the section reports "unknown" rather than
+# a fabricated number.
+is_numeric() {
+  [[ "${1:-}" =~ ^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)$ ]]
+}
+
 # ── Bufferbloat grading ──────────────────────────────────────────────────
 # Waveform/DSLReports thresholds: A < +5ms, B < +30ms, C < +60ms,
 # D < +200ms, F ≥ +200ms.
@@ -218,9 +234,10 @@ launch_parallel() {
   PAR_NAMES+=("$name")
   # The subshell below intentionally redefines say/hdr/etc. The launched
   # function $fn invokes them via name resolution at call time, so SC2329
-  # ("function never invoked") is a false positive. SC2030 / SC2031 on
-  # NETDIAG_PAR_OUT/PAR_VARS are by design — they're scoped to the
-  # subshell on purpose so each parallel check writes its own files.
+  # ("function never invoked") and SC2317 ("command unreachable") are both
+  # false positives — shellcheck can't see the indirect "$fn" dispatch.
+  # SC2030 / SC2031 on NETDIAG_PAR_OUT/PAR_VARS are by design: they're
+  # scoped to the subshell on purpose so each check writes its own files.
   # shellcheck disable=SC2030
   (
     NETDIAG_PAR_OUT="$PAR_TMP/$name.out"
@@ -228,19 +245,19 @@ launch_parallel() {
     : >"$NETDIAG_PAR_OUT"
     : >"$NETDIAG_PAR_VARS"
     exec 1>"$NETDIAG_PAR_OUT" 2>&1
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     say()  { printf '%s\n' "$*"; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     hdr()  { say ""; say "${C_BOLD}${C_BLU}── $* ──${C_RESET}"; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     ok()   { say "  ${C_GRN}✓${C_RESET} $*"; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     warn() { say "  ${C_YEL}⚠${C_RESET} $*"; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     bad()  { say "  ${C_RED}✗${C_RESET} $*"; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     info() { say "  ${C_DIM}·${C_RESET} $*"; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     log_pipe() { cat; }
     "$fn"
   ) &

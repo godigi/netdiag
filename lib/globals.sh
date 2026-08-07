@@ -133,8 +133,12 @@ HOSTS_SUSPICIOUS_LINES=""
 WAN_LB_ASNS=""           # space-separated list, set if dual-WAN probe ran
 WAN_LB_IPS=""            # space-separated list of distinct public IPs
 WAN_LB_ACTIVE=0          # 1 = > 1 distinct ASN observed
-WAN_DOUBLE_NAT_CHAIN=""  # space-separated RFC1918 hops if double-NAT detected
-WAN_DOUBLE_NAT=0
+WAN_DOUBLE_NAT_CHAIN=""  # space-separated RFC1918 hops before the first public one
+WAN_DOUBLE_NAT=0         # 1 = > 1 *home-side* router chained (ISP 10/8 transit excluded)
+WAN_NAT_HOME_CHAIN=""    # "→"-joined home-side hops (192.168/16, 172.16/12)
+WAN_NAT_HOME_COUNT=0
+WAN_NAT_ISP_CHAIN=""     # "→"-joined ISP-transit hops (10/8)
+WAN_NAT_ISP_COUNT=0
 WAN_UPNP_STATE="unknown" # enabled | disabled | unknown
 WAN_UPNP_DEVICE=""
 WAN_UPNP_URL=""

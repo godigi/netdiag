@@ -13,7 +13,13 @@ PREFIX=""
 NO_BREW=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --prefix)  PREFIX="$2"; shift 2 ;;
+    --prefix)
+      # Guard before indexing $2 — under `set -u` a bare --prefix aborts
+      # with "unbound variable" instead of a usable message.
+      if [ $# -lt 2 ]; then
+        printf 'install.sh: --prefix expects a directory\n' >&2; exit 2
+      fi
+      PREFIX="$2"; shift 2 ;;
     --no-brew) NO_BREW=1; shift ;;
     -h|--help)
       cat <<'HELP'

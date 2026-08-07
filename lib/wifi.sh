@@ -61,6 +61,13 @@ wifi_run() {
       WIFI_CHAN="$(printf '%s\n' "$wdutil_out"   | awk -F': ' '/^[[:space:]]*Channel/{print $2; exit}')"
       WIFI_TX="$(printf '%s\n'   "$wdutil_out"   | awk -F': ' '/Tx Rate/{print $2; exit}')"
       WIFI_PHY="$(printf '%s\n'  "$wdutil_out"   | awk -F': ' '/PHY Mode/{print $2; exit}')"
+      # wdutil's label/value layout shifts between macOS releases. If a
+      # scrape lands on the wrong field, `$((rssi - noise))` below raises a
+      # syntax error and the `[ "$rssi" -ge -55 ]` ladder spews "integer
+      # expression expected". Blank anything non-numeric so those blocks
+      # skip cleanly and the section reports "unknown" instead.
+      is_numeric "$rssi"  || rssi=""
+      is_numeric "$noise" || noise=""
       WIFI_RSSI="${rssi:-}"
       WIFI_NOISE="${noise:-}"
       [ -n "$rssi" ]  && info "RSSI: ${rssi} dBm"

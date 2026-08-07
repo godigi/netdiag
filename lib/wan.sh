@@ -77,17 +77,55 @@ wan_double_nat_run() {
   chain="$(printf '%s' "$TRACE_LINES" | _wan_count_rfc1918_chain)"
   local n
   n="$(printf '%s' "$chain" | awk '{print NF}')"
+  # Read cross-file by lib/output.sh (exported as NETDIAG_WAN_DOUBLE_NAT_CHAIN
+  # for the JSON's wan.double_nat.rfc1918_chain); shellcheck can't follow it.
+  # shellcheck disable=SC2034
   WAN_DOUBLE_NAT_CHAIN="$chain"
-  if [ "${n:-0}" -gt 1 ]; then
+  _wan_split_nat_chain "$chain"
+
+  # Only the home-side hops constitute double-NAT. Carriers routinely run
+  # 10/8 between the CPE and their edge; counting those as "double-NAT"
+  # used to light up a warning on the Report card directly above a
+  # diagnosis explaining it wasn't a problem.
+  if [ "$WAN_NAT_HOME_COUNT" -gt 1 ]; then
     WAN_DOUBLE_NAT=1
-    warn "Double-NAT detected: $n consecutive RFC1918 hops before the first public address."
-    info "Chain: $chain"
+    warn "Double-NAT detected: $WAN_NAT_HOME_COUNT chained routers on your side of the link."
+    info "Home chain: $WAN_NAT_HOME_CHAIN"
+    [ -n "$WAN_NAT_ISP_CHAIN" ] && info "ISP transit: $WAN_NAT_ISP_CHAIN"
     info "UPnP / port-forwarding from apps usually fails through double-NAT."
-  elif [ "${n:-0}" -eq 1 ]; then
+  elif [ "$WAN_NAT_ISP_COUNT" -gt 1 ]; then
+    ok "No double-NAT — the $WAN_NAT_ISP_COUNT private hops ($WAN_NAT_ISP_CHAIN) are ISP transit."
+  elif [ "${n:-0}" -ge 1 ]; then
     ok "Single RFC1918 hop ($chain) before public — no double-NAT."
   else
     info "No RFC1918 hops in the traceroute path."
   fi
+}
+
+# Split an RFC1918 chain into the part the user controls (192.168/16 and
+# 172.16/12 — home routers) and ISP-side transit (10/8). The input is
+# guaranteed to be all-RFC1918 by _wan_count_rfc1918_chain, so anything
+# that isn't 10/8 is home-side by elimination — no hop can fall through
+# both arms and vanish from the counts.
+#
+# Writes: WAN_NAT_HOME_CHAIN, WAN_NAT_HOME_COUNT,
+#         WAN_NAT_ISP_CHAIN,  WAN_NAT_ISP_COUNT
+_wan_split_nat_chain() {
+  local h
+  WAN_NAT_HOME_CHAIN=""; WAN_NAT_HOME_COUNT=0
+  WAN_NAT_ISP_CHAIN="";  WAN_NAT_ISP_COUNT=0
+  for h in $1; do
+    case "$h" in
+      10.*)
+        WAN_NAT_ISP_CHAIN="${WAN_NAT_ISP_CHAIN:+$WAN_NAT_ISP_CHAIN → }$h"
+        WAN_NAT_ISP_COUNT=$((WAN_NAT_ISP_COUNT + 1))
+        ;;
+      *)
+        WAN_NAT_HOME_CHAIN="${WAN_NAT_HOME_CHAIN:+$WAN_NAT_HOME_CHAIN → }$h"
+        WAN_NAT_HOME_COUNT=$((WAN_NAT_HOME_COUNT + 1))
+        ;;
+    esac
+  done
 }
 
 # Helper: read "n|ip|rtt" lines on stdin, print the consecutive RFC1918 IPs
@@ -231,33 +269,15 @@ wan_diagnosis_run() {
       add_diag info "You're behind your ISP's shared-address pool — they're handing your traffic different public IPs ($WAN_LB_IPS) each time even though it's all the same ISP ($WAN_LB_ASNS). Common on cellular and budget connections. Apps that geo-locate or need a stable IP may get confused (technical: CGNAT round-robin)."
     fi
   fi
+  # WAN_DOUBLE_NAT now means "home-side double-NAT" — wan_double_nat_run
+  # does the home/ISP split up front (via _wan_split_nat_chain) so the
+  # Report card and this diagnosis can't disagree about it.
   if [ "$WAN_DOUBLE_NAT" -eq 1 ]; then
-    # Split the chain into "home-side" (192.168/16 + 172.16/12) and
-    # "ISP-side transit" (10/8) so the user can see what they actually
-    # control. The 10/8 hops are usually carrier transit and not actionable.
-    local home_chain="" isp_chain="" h
-    for h in $WAN_DOUBLE_NAT_CHAIN; do
-      case "$h" in
-        192.168.*|172.16.*|172.17.*|172.18.*|172.19.*|172.2[0-9].*|172.3[01].*)
-          home_chain="${home_chain:+$home_chain → }$h"
-          ;;
-        10.*)
-          isp_chain="${isp_chain:+$isp_chain → }$h"
-          ;;
-      esac
-    done
-    local home_count isp_count
-    home_count="$(printf '%s' "$home_chain" | awk -F' → ' 'NF{print NF; exit} {print 0}')"
-    isp_count="$(printf '%s'  "$isp_chain"  | awk -F' → ' 'NF{print NF; exit} {print 0}')"
-    if [ "${home_count:-0}" -gt 1 ]; then
-      local _isp_note=""
-      [ -n "$isp_chain" ] && _isp_note=", then your ISP transit ($isp_chain)"
-      add_diag warn "You have ${home_count} routers chained together in your home (${home_chain})${_isp_note}. That breaks games, Plex, Steam in-home streaming, video doorbells, and anything else that needs to \"open a port\" — incoming connections get lost between the routers. Fix: log into the outer router's admin page and set it to \"bridge mode\" or \"access-point mode\" so the inner router does the routing alone."
-    elif [ "${isp_count:-0}" -gt 1 ]; then
-      add_diag info "Your ISP routes you through their internal network (${isp_chain}) before reaching the public internet. That's their normal setup, not a problem on your end; mentioning it because it explains why traceroute shows private-network addresses several hops in."
-    else
-      add_diag warn "You have multiple routers chained in series before your connection reaches a public address ($WAN_DOUBLE_NAT_CHAIN). Games, Plex, Steam, and other apps that need to \"open a port\" will likely fail. If you control any of those routers, put the outer one in bridge / access-point mode."
-    fi
+    local _isp_note=""
+    [ -n "$WAN_NAT_ISP_CHAIN" ] && _isp_note=", then your ISP transit ($WAN_NAT_ISP_CHAIN)"
+    add_diag warn "You have ${WAN_NAT_HOME_COUNT} routers chained together in your home (${WAN_NAT_HOME_CHAIN})${_isp_note}. That breaks games, Plex, Steam in-home streaming, video doorbells, and anything else that needs to \"open a port\" — incoming connections get lost between the routers. Fix: log into the outer router's admin page and set it to \"bridge mode\" or \"access-point mode\" so the inner router does the routing alone."
+  elif [ "$WAN_NAT_ISP_COUNT" -gt 1 ]; then
+    add_diag info "Your ISP routes you through their internal network (${WAN_NAT_ISP_CHAIN}) before reaching the public internet. That's their normal setup, not a problem on your end; mentioning it because it explains why traceroute shows private-network addresses several hops in."
   fi
   # UPnP state is already shown in its own section with a `warn`-styled
   # marker. We deliberately do NOT re-emit it in Diagnosis to avoid

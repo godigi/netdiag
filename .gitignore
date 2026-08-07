@@ -20,3 +20,6 @@ nimbalyst-local/
 # Local sandbox / scratch
 scratch/
 .cache/
+
+# Python bytecode from helpers/
+__pycache__/

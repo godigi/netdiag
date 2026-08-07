@@ -44,8 +44,10 @@ A Homebrew tap and a `curl | bash` one-liner are still on the roadmap.
 
 ```
 netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
-                 [--json] [--quiet] [--log PATH]
+                 [--json] [--quiet] [--expert] [--log PATH]
                  [--baseline | --no-baseline]
+netdiag --mtu-only               # just the path-MTU probe
+netdiag --wifi-only              # just the WiFi checks
 netdiag --watch[=SEC]            # foreground loop, every SEC (default 300)
 netdiag --summary[=HOURS]        # aggregate ~/net-diag/baseline.jsonl
 netdiag --install-watcher        # launchd plist, every 15 min, background
@@ -67,6 +69,8 @@ netdiag --uninstall-watcher
 | `--quiet`            | only the Diagnosis section is printed                  |
 | `--log PATH`         | override the default `~/net-diag/<timestamp>.log`      |
 | `--no-baseline`      | don't compare to history / don't append to history     |
+| `--mtu-only`         | run only the path-MTU probe and its prerequisites      |
+| `--wifi-only`        | run only link quality, neighbourhood scan, disconnects |
 
 Examples:
 
@@ -77,8 +81,21 @@ netdiag github.com           # "why is github specifically slow?"
 netdiag --json | jq .diagnosis
 netdiag --watch=180          # check every 3 min
 netdiag --summary=168        # what's been happening this past week?
+netdiag --wifi-only          # "is it the WiFi?" without the full battery
 sudo netdiag                 # unlocks RSSI/noise/channel + mtr per-hop
 ```
+
+### Exit codes
+
+| Code | Meaning                                                            |
+|------|--------------------------------------------------------------------|
+| `0`  | healthy — no diagnoses                                             |
+| `1`  | warnings only                                                      |
+| `2`  | at least one critical diagnosis                                    |
+| `3`  | script error — bad flag, missing bash 5, or an unexpected abort    |
+
+Usage errors exit `3`, never `2`: a wrapper checking for `2` should be
+paged for a broken network, not for a typo in its own arguments.
 
 ## Sample output
 

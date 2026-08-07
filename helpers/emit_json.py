@@ -52,6 +52,12 @@ def _bool(name: str) -> bool:
     return _env(name) == "1"
 
 
+def _arrow_list(name: str) -> list[str]:
+    """Split an ' → '-joined chain into a list. Empty input yields [], not ['']."""
+    raw = _env(name)
+    return raw.split(" → ") if raw else []
+
+
 def _list_lines(name: str) -> list[str]:
     raw = os.environ.get(f"NETDIAG_{name}", "")
     return [line for line in raw.splitlines() if line.strip()]
@@ -168,9 +174,16 @@ def build_wan() -> dict:
             "distinct_ips": lb_ips,
             "active": _bool("WAN_LB_ACTIVE"),
         },
+        # `detected` counts home-side routers only. ISP-side 10/8 transit is
+        # normal carrier routing and is reported separately so consumers can
+        # tell "you chained two routers" from "your ISP uses private transit".
         "double_nat": {
             "detected": _bool("WAN_DOUBLE_NAT"),
             "rfc1918_chain": double_nat_chain,
+            "home_chain": _arrow_list("WAN_NAT_HOME_CHAIN"),
+            "home_count": _maybe_int("WAN_NAT_HOME_COUNT") or 0,
+            "isp_transit_chain": _arrow_list("WAN_NAT_ISP_CHAIN"),
+            "isp_transit_count": _maybe_int("WAN_NAT_ISP_COUNT") or 0,
         },
         "upnp": {
             "state": _env("WAN_UPNP_STATE"),
@@ -186,7 +199,7 @@ def main() -> None:
     target = _env("TARGET")
 
     data: dict = {
-        "version": _env("VERSION") or "0.4.0",
+        "version": _env("VERSION") or "0.4.1",
         "timestamp": _env("TIMESTAMP"),
         "interface": {
             "name": _env("INTERFACE"),

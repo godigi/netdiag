@@ -5,8 +5,8 @@
 # discovered hops for live monitoring.
 #
 # Usage: netdiag [TARGET] [--quick] [--quiet] [--json] [--no-gping]
-#                [--speed] [--no-speed] [--baseline] [--no-baseline]
-#                [--log PATH] [-h|--help]
+#                [--speed] [--no-speed] [--mtu-only] [--wifi-only]
+#                [--baseline] [--no-baseline] [--log PATH] [-h|--help]
 #
 # This file is the orchestrator. Each section is implemented in lib/*.sh
 # and called via its module function (foo_run). lib/common.sh holds the
@@ -32,6 +32,35 @@ fi
 
 set -u
 
+# ── Exit-code contract ─────────────────────────────────────────────────────
+# 0 healthy · 1 warnings only · 2 ≥ 1 critical diagnosis · 3 script error.
+#
+# A `set -u` abort or any other unplanned exit leaves bash's own status
+# (1 or 127 depending on the failure), which would masquerade as "warnings
+# only" — a wrapper watching for exit 1 can't tell a degraded network from
+# a broken script. Remap anything that didn't reach the end of the run to
+# 3. Deliberate early exits (--help, the mode dispatchers, usage errors)
+# set their own status and pass through untouched.
+#
+# The trap is not inherited by the ( … ) & subshells that launch_parallel
+# and with_timeout fork, so it fires exactly once, in the orchestrator.
+NETDIAG_COMPLETED=0
+# Every line below is reached via `trap … EXIT` — an indirect dispatch that
+# static analysis can't follow, so the body is not dead code.
+# shellcheck disable=SC2317
+_netdiag_on_exit() {
+  local rc=$?
+  [ "$NETDIAG_COMPLETED" -eq 1 ] && exit "$rc"
+  [ "$rc" -eq 0 ] && exit 0
+  [ "$rc" -eq 3 ] && exit 3
+  # 128+N means killed by signal N — Ctrl-C (130) or SIGTERM (143) is the
+  # user stopping the run, not a defect. Same status, no alarming message.
+  [ "$rc" -gt 128 ] && exit 3
+  printf 'netdiag: aborted unexpectedly (status %d)\n' "$rc" >&2
+  exit 3
+}
+trap _netdiag_on_exit EXIT
+
 # Resolve where we live so helpers/*.py and lib/*.sh can be found even when
 # the script is symlinked into /usr/local/bin. macOS doesn't ship readlink -f.
 _resolve_path() {
@@ -50,7 +79,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-NETDIAG_VERSION="0.4.0"
+NETDIAG_VERSION="0.4.1"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
@@ -68,6 +97,10 @@ QUIET=0
 # --expert keeps every detailed section visible (RSSI specifics, DNS
 # per-resolver results, DHCP lease detail, full traceroute, etc.).
 EXPERT=0
+# Focused runs: "" (full battery), "mtu", or "wifi". Runs only the
+# prerequisites for one section, then the Report card + diagnoses over
+# whatever it produced.
+FOCUS=""
 LOG_OVERRIDE=""
 BASELINE=1
 NO_BASELINE=0
@@ -94,6 +127,8 @@ while [ "$#" -gt 0 ]; do
     --json)           JSON_MODE=1 ;;
     --quiet)          QUIET=1 ;;
     --expert)         EXPERT=1 ;;
+    --mtu-only)       FOCUS="mtu" ;;
+    --wifi-only)      FOCUS="wifi" ;;
     --log)            _take_value=1 ;;
     --log=*)          LOG_OVERRIDE="${1#--log=}" ;;
     --baseline)       BASELINE=1 ;;
@@ -114,7 +149,8 @@ English. Optionally launches gping against the discovered hops for live
 monitoring at the end.
 
 Usage: netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
-               [--json] [--quiet] [--log PATH]
+               [--json] [--quiet] [--expert] [--log PATH]
+               [--mtu-only | --wifi-only]
 
 Positional:
   TARGET            hostname/IP to add to ping, DNS, TCP reach, and a second
@@ -138,6 +174,10 @@ Flags:
   --expert          show every detailed measurement section (RSSI, full
                     DNS / TCP / traceroute / DHCP / per-hop loss). Default
                     output is a compact Report card + diagnoses only.
+  --mtu-only        run only the path-MTU probe (plus the interface and
+                    public-reach checks it depends on)
+  --wifi-only       run only the WiFi checks: link quality, neighbourhood
+                    scan, and disconnect history
   --log PATH        write the human-readable log to PATH (default
                     ~/net-diag/<timestamp>.log)
   --baseline        compare this run against medians of the last 10 runs
@@ -155,18 +195,23 @@ Modes (exit after running, don't run the normal check battery):
 HELP
       exit 0 ;;
     -*)
-      printf 'netdiag: unknown flag: %s (see --help)\n' "$1" >&2; exit 2 ;;
+      printf 'netdiag: unknown flag: %s (see --help)\n' "$1" >&2; exit 3 ;;
     *)
       if [ -n "$TARGET" ]; then
         printf 'netdiag: only one TARGET allowed (got: %s and %s)\n' "$TARGET" "$1" >&2
-        exit 2
+        exit 3
       fi
       TARGET="$1" ;;
   esac
   shift
 done
 if [ "$_take_value" -eq 1 ]; then
-  printf 'netdiag: --log expects a path\n' >&2; exit 2
+  printf 'netdiag: --log expects a path\n' >&2; exit 3
+fi
+if [ -n "$FOCUS" ] && [ "$WATCH" -eq 0 ] && [ "$SUMMARY" -eq 0 ]; then
+  case "$FOCUS" in
+    mtu)  [ "$QUICK" -eq 0 ] || { printf 'netdiag: --mtu-only and --quick conflict (--quick skips the MTU probe)\n' >&2; exit 3; } ;;
+  esac
 fi
 
 LOG_DIR="$HOME/net-diag"
@@ -229,6 +274,37 @@ done
 tell "${C_BOLD}netdiag${C_RESET}  ${C_DIM}$STAMP${C_RESET}"
 tell "${C_DIM}log: $LOG${C_RESET}"
 
+# ── Focused runs (--mtu-only / --wifi-only) ────────────────────────────────
+# Run one section plus the checks it depends on, then the Report card and
+# diagnoses over whatever that produced. gping and the baseline diff are
+# both suppressed: a partial run isn't comparable to a full one, and
+# recording it would poison the history the full runs are measured against.
+if [ -n "$FOCUS" ]; then
+  NO_GPING=1
+  NO_BASELINE=1
+  case "$FOCUS" in
+    mtu)
+      iface_run
+      public_run     # mtu_run gates on PUBLIC_OK
+      mtu_run
+      ;;
+    wifi)
+      iface_run
+      wifi_run       # sets IS_WIFI, which the two scans below gate on
+      launch_parallel wifi_scan       wifi_scan_run
+      launch_parallel wifi_disconnect wifi_disconnect_run
+      progress_spin_start "Scanning WiFi neighbourhood"
+      collect_parallel
+      progress_spin_stop
+      ;;
+  esac
+  headline_run
+  diagnosis_run
+  output_run
+  NETDIAG_COMPLETED=1
+  exit "$MAX_SEVERITY"
+fi
+
 iface_run
 vpn_run
 wifi_run
@@ -285,4 +361,7 @@ fi
 gping_run
 
 # Spec exit codes: 0 healthy · 1 warn · 2 critical · 3 script error.
+# NETDIAG_COMPLETED tells the EXIT trap this status is a real verdict and
+# not an abort to be remapped to 3.
+NETDIAG_COMPLETED=1
 exit "$MAX_SEVERITY"

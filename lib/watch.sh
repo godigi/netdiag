@@ -11,7 +11,10 @@ watch_run() {
   printf 'netdiag --watch: every %ds, Ctrl-C to stop.\n' "$WATCH_INTERVAL_S"
   printf 'history appended to %s/baseline.jsonl\n\n' "$LOG_DIR"
   WATCH_ITER=0
-  # shellcheck disable=SC2329 # invoked via the trap below
+  # Invoked via the `trap` below — an indirect dispatch that static
+  # analysis can't follow, so the body reads as both uncalled (SC2329)
+  # and unreachable (SC2317). It is neither.
+  # shellcheck disable=SC2329,SC2317
   watch_stop() {
     printf '\nnetdiag --watch stopped after %d iteration(s).\n' "$WATCH_ITER"
     printf 'See %s/baseline.jsonl or run: netdiag --summary\n' "$LOG_DIR"

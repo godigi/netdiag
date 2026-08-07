@@ -34,7 +34,10 @@ traceroute_run() {
   hdr "Traceroute to 1.1.1.1"
   local trace_out parsed line ip
   trace_out="$(with_timeout 25 traceroute -n -q 1 -w 2 -m 18 1.1.1.1 2>/dev/null)"
-  printf '%s\n' "$trace_out" | log_pipe | sed 's/^/  /'
+  # Indent BEFORE log_pipe: log_pipe is the terminal stage of the pipeline.
+  # With the order reversed the log got un-indented text, and in compact
+  # mode log_pipe swallows stdout entirely so `sed` ran on empty input.
+  printf '%s\n' "$trace_out" | sed 's/^/  /' | log_pipe
   parsed="$(printf '%s\n' "$trace_out" | _parse_trace_lines)"
   while IFS= read -r line; do
     [ -z "$line" ] && continue
@@ -49,7 +52,7 @@ traceroute_run() {
     hdr "Traceroute to $TARGET"
     local tt_out
     tt_out="$(with_timeout 25 traceroute -n -q 1 -w 2 -m 18 "$TARGET" 2>/dev/null)"
-    printf '%s\n' "$tt_out" | log_pipe | sed 's/^/  /'
+    printf '%s\n' "$tt_out" | sed 's/^/  /' | log_pipe
     parsed="$(printf '%s\n' "$tt_out" | _parse_trace_lines)"
     while IFS= read -r line; do
       [ -z "$line" ] && continue

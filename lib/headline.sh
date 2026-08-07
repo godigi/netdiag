@@ -22,11 +22,25 @@ headline_run() {
   # logical grouping in the code (network → router → internet → …) holds.
   local _bad_rows=() _warn_rows=() _ok_rows=() _neutral_rows=()
 
+  # In a focused run (--mtu-only / --wifi-only) most checks never execute,
+  # so their rows would report module defaults — "IPv6 not available",
+  # "Hosts file clean" — that were never actually measured. Emit only the
+  # rows belonging to the focused section.
+  _focus_allows() {
+    [ -n "$FOCUS" ] || return 0
+    case "$FOCUS:$1" in
+      mtu:Network|mtu:Internet|mtu:"Packet size") return 0 ;;
+      wifi:Network|wifi:"WiFi channel")           return 0 ;;
+      *)                                          return 1 ;;
+    esac
+  }
+
   # Each row: icon · dim label (padded) · value. The icon's colour comes
   # from the severity arg. Dim labels keep the value column the visual
   # anchor — your eye lands on the data, not the column header.
   _row() {
     local sev="$1" label="$2" value="$3"
+    _focus_allows "$label" || return 0
     local icon
     case "$sev" in
       ok)   icon="${C_GRN}✓${C_RESET}" ;;
@@ -116,10 +130,15 @@ headline_run() {
   fi
 
   # ── DNS ──────────────────────────────────────────────────────────────
-  if [ "$DNS_OK" -eq 1 ]; then
-    _row ok "DNS" "working"
-  else
-    _row warn "DNS" "some lookups failing"
+  # DNS_OK defaults to 0, so gate on DNS_LINES — proof the check actually
+  # ran. Otherwise a run that skipped DNS (a focused --mtu-only pass)
+  # reports lookups as failing when nothing was ever looked up.
+  if [ -n "$DNS_LINES" ]; then
+    if [ "$DNS_OK" -eq 1 ]; then
+      _row ok "DNS" "working"
+    else
+      _row warn "DNS" "some lookups failing"
+    fi
   fi
 
   # ── IPv6 ─────────────────────────────────────────────────────────────
@@ -175,8 +194,12 @@ headline_run() {
   fi
 
   # ── NAT topology ─────────────────────────────────────────────────────
+  # WAN_DOUBLE_NAT counts home-side routers only; ISP-side 10/8 transit is
+  # normal carrier routing and gets a neutral row, not a warning.
   if [ "$WAN_DOUBLE_NAT" -eq 1 ]; then
-    _row warn "NAT topology" "double-NAT detected"
+    _row warn "NAT topology" "double-NAT · ${WAN_NAT_HOME_COUNT} routers chained"
+  elif [ "$WAN_NAT_ISP_COUNT" -gt 1 ]; then
+    _row "" "NAT topology" "ISP transit via private addresses (normal)"
   fi
 
   # ── UPnP / router config ─────────────────────────────────────────────

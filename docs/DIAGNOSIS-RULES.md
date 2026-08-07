@@ -24,6 +24,24 @@
 The original script emits the rules below. Replacing them with the ranked
 engine is a future step; for now they're listed verbatim for traceability.
 
+### N1 — No network at all
+
+**Fires when:** `GATEWAY` is empty (no default route).
+
+**Severity:** critical.
+
+Every other rule keys off a measurement that only exists once there is a
+link — gateway loss, public reachability, DNS answers. Before this rule
+existed, a Mac with WiFi switched off produced *zero* diagnoses and
+exited 0 with "Nothing obviously wrong — your network looks healthy",
+because each rule's guard (`[ -n "$GW_LOSS" ]` and friends) short-circuited
+on the missing data. N1 is the floor: it fires first, states the obvious,
+and makes the exit code 2.
+
+A second, narrower branch covers focused runs: `--mtu-only` skips the
+gateway section, so `PUBLIC_OK=0` with an empty `GW_LOSS` can't reach P1
+or P2. That branch points the user at a full run rather than guessing.
+
 ### W1 — Weak WiFi signal
 
 - Trigger: `wifi.rssi < -75`

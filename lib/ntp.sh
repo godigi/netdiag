@@ -20,9 +20,20 @@ ntp_run() {
   ntp_out="$(with_timeout 5 sntp -t 3 time.apple.com 2>/dev/null || true)"
   if [ -n "$ntp_out" ]; then
     # sntp prints chatty debug when the first probe times out, then a real
-    # result line like "+0.001234 +/- 0.012345 time.apple.com 17.253.4.13".
-    # Filter to lines containing the +/- token to get just the result.
-    NTP_DRIFT_S="$(printf '%s\n' "$ntp_out" | grep -F '+/-' | tail -1 | awk '{print $1}')"
+    # result line. That line is NOT positionally stable: ntp 4.2.8 (what
+    # macOS ships) normally prefixes the timestamp —
+    #   "2026-08-07 12:00:00.123456 (+0000) +0.001234 +/- 0.012345 host ip"
+    # — while some builds/invocations lead with the offset:
+    #   "+0.001234 +/- 0.012345 time.apple.com 17.253.4.13"
+    # Taking $1 grabs the *date* under the first format, which then sails
+    # through the awk comparisons below as a string and reports a clock
+    # "off by 2026-08-07 seconds". Anchor on the "+/-" token instead and
+    # take the field immediately before it; last match wins, matching the
+    # previous `tail -1` behaviour of skipping retry chatter.
+    NTP_DRIFT_S="$(printf '%s\n' "$ntp_out" \
+      | awk '{ for (i = 1; i < NF; i++) if ($(i+1) == "+/-") d = $i }
+             END { if (d != "") print d }')"
+    is_numeric "$NTP_DRIFT_S" || NTP_DRIFT_S=""
     if [ -n "$NTP_DRIFT_S" ]; then
       # Only surface the number when the clock is actually wrong enough to
       # cause problems. Sub-second drift is round-trip noise, not a real
@@ -36,6 +47,8 @@ ntp_run() {
       else
         ok "Clock is synced."
       fi
+    else
+      info "sntp replied but its output didn't parse — skipping the clock check."
     fi
   else
     warn "sntp returned no result (firewall blocking UDP/123?)."
