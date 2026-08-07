@@ -79,7 +79,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-NETDIAG_VERSION="0.4.1"
+NETDIAG_VERSION="0.5.0"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
@@ -101,6 +101,11 @@ EXPERT=0
 # prerequisites for one section, then the Report card + diagnoses over
 # whatever it produced.
 FOCUS=""
+# --redact masks the values that identify a person or a place (public IP,
+# SSID, BSSID, IPv6 prefix, gateway MAC, city) on stdout and in --json,
+# so a report can be pasted into a forum or ticket. The local log keeps
+# full detail.
+REDACT=0
 LOG_OVERRIDE=""
 BASELINE=1
 NO_BASELINE=0
@@ -127,6 +132,7 @@ while [ "$#" -gt 0 ]; do
     --json)           JSON_MODE=1 ;;
     --quiet)          QUIET=1 ;;
     --expert)         EXPERT=1 ;;
+    --redact)         REDACT=1 ;;
     --mtu-only)       FOCUS="mtu" ;;
     --wifi-only)      FOCUS="wifi" ;;
     --log)            _take_value=1 ;;
@@ -174,6 +180,11 @@ Flags:
   --expert          show every detailed measurement section (RSSI, full
                     DNS / TCP / traceroute / DHCP / per-hop loss). Default
                     output is a compact Report card + diagnoses only.
+  --redact          mask identifying values (public IP, SSID, BSSID, IPv6
+                    address, gateway MAC, city) on stdout and in --json so
+                    the report is safe to paste into a forum or ticket.
+                    The log file on disk keeps full detail. Implies
+                    compact output (--expert is ignored).
   --mtu-only        run only the path-MTU probe (plus the interface and
                     public-reach checks it depends on)
   --wifi-only       run only the WiFi checks: link quality, neighbourhood
@@ -207,6 +218,13 @@ HELP
 done
 if [ "$_take_value" -eq 1 ]; then
   printf 'netdiag: --log expects a path\n' >&2; exit 3
+fi
+# Section bodies stream out as each module runs — before later modules have
+# discovered everything that needs masking. Rather than emit a partially
+# redacted transcript (worse than none: it looks safe), --redact forces the
+# compact Report card, which prints after every value is known.
+if [ "$REDACT" -eq 1 ]; then
+  EXPERT=0
 fi
 if [ -n "$FOCUS" ] && [ "$WATCH" -eq 0 ] && [ "$SUMMARY" -eq 0 ]; then
   case "$FOCUS" in
@@ -263,7 +281,7 @@ fi
 . "$LIB_DIR/globals.sh"
 for mod in iface vpn wifi wifi_scan wifi_disconnect dhcp arp gateway public \
            bufferbloat mtu dns ipv6 tcp_reach speedtest ntp traceroute mtr \
-           wan internet_ping hosts headline diagnosis output gping; do
+           wan internet_ping hosts netid headline diagnosis output gping; do
   # shellcheck disable=SC1090
   . "$LIB_DIR/$mod.sh"
 done
@@ -285,12 +303,14 @@ if [ -n "$FOCUS" ]; then
   case "$FOCUS" in
     mtu)
       iface_run
+      netid_run      # best-effort: no GW_MAC here, falls back to gateway IP
       public_run     # mtu_run gates on PUBLIC_OK
       mtu_run
       ;;
     wifi)
       iface_run
       wifi_run       # sets IS_WIFI, which the two scans below gate on
+      netid_run
       launch_parallel wifi_scan       wifi_scan_run
       launch_parallel wifi_disconnect wifi_disconnect_run
       progress_spin_start "Scanning WiFi neighbourhood"
@@ -305,13 +325,17 @@ if [ -n "$FOCUS" ]; then
   exit "$MAX_SEVERITY"
 fi
 
-iface_run
-vpn_run
-wifi_run
-gateway_run
-arp_run     # L2: belongs with the gateway/L2 layer (post-gateway per spec)
-dhcp_run    # L3 control plane — sits between L2 and public reach
-public_run
+# Each phase is wrapped in run_timed so the run can report where its
+# wall-clock actually went — see the `timings` object in --json output and
+# the Timing section under --expert.
+run_timed iface      iface_run
+run_timed vpn        vpn_run
+run_timed wifi       wifi_run
+run_timed gateway    gateway_run
+run_timed arp        arp_run   # L2: belongs with the gateway/L2 layer
+run_timed netid      netid_run # needs GW_MAC from arp_run, SSID from wifi_run
+run_timed dhcp       dhcp_run  # L3 control plane, between L2 and public reach
+run_timed public     public_run
 
 # Parallel batch: lightweight, independent checks. Bounded by the slowest
 # in the batch (DNS or WiFi disconnect, ~3 s) instead of their sum (~15 s).
@@ -326,15 +350,15 @@ launch_parallel wifi_disconnect wifi_disconnect_run
 launch_parallel wan_lb          wan_load_balancing_run
 launch_parallel wan_upnp        wan_upnp_run
 progress_spin_start "Running parallel checks (DNS, IPv6, TCP, NTP, latency, hosts, WiFi, dual-WAN, UPnP)"
-collect_parallel
+run_timed parallel_batch collect_parallel
 progress_spin_stop
 
-bufferbloat_run
-mtu_run
-traceroute_run
-wan_double_nat_run   # pure parse over TRACE_LINES; runs after traceroute
-mtr_run
-speedtest_run
+run_timed bufferbloat bufferbloat_run
+run_timed mtu         mtu_run
+run_timed traceroute  traceroute_run
+run_timed nat         wan_double_nat_run  # pure parse over TRACE_LINES
+run_timed mtr         mtr_run
+run_timed speedtest   speedtest_run
 headline_run     # one-line punchline of everything above
 diagnosis_run
 output_run

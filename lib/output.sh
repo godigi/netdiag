@@ -94,6 +94,9 @@ build_json() {
   NETDIAG_DHCP_TIME_REMAINING_S="${DHCP_TIME_REMAINING_S:-}" \
   NETDIAG_DHCP_DNS_SERVERS="$DHCP_DNS_SERVERS" \
   NETDIAG_ARP_DUPLICATE_IPS="$ARP_DUPLICATE_IPS" \
+  NETDIAG_GW_MAC="$GW_MAC" \
+  NETDIAG_NETWORK_ID="$NETWORK_ID" \
+  NETDIAG_NETWORK_LABEL="$NETWORK_LABEL" \
   NETDIAG_ARP_GW_INCOMPLETE="$ARP_GW_INCOMPLETE" \
   NETDIAG_MTR_FIRST_LOSSY_HOP="$MTR_FIRST_LOSSY_HOP" \
   NETDIAG_TARGET="$TARGET" \
@@ -118,7 +121,58 @@ build_json() {
   NETDIAG_WAN_UPNP_DEVICE="$WAN_UPNP_DEVICE" \
   NETDIAG_WAN_UPNP_URL="$WAN_UPNP_URL" \
   NETDIAG_WAN_UPNP_TESTED_VIA="$WAN_UPNP_TESTED_VIA" \
+  NETDIAG_TIMING_LINES="$TIMING_LINES" \
+  NETDIAG_RUN_ELAPSED_S="$(run_elapsed_s)" \
+  NETDIAG_QUICK="$QUICK" \
+  NETDIAG_REDACT="$REDACT" \
   python3 "$HELPERS_DIR/emit_json.py"
+}
+
+# ── Retention ────────────────────────────────────────────────────────────
+# Nothing bounded ~/net-diag before this. The launchd watcher runs every
+# 15 min — 96 timestamped .log files and 96 appended JSONL records a day,
+# forever — and both baseline.py and summary.py parse the *entire* JSONL
+# on every run, so the cost grows without limit.
+#
+# Both caps are overridable by env var for users who want deeper history:
+#   NETDIAG_KEEP_LOGS=0      → keep every log file
+#   NETDIAG_KEEP_HISTORY=0   → never truncate baseline.jsonl
+# Baseline history is kept much deeper than logs: it's one line per run and
+# the thing regressions are actually computed from.
+NETDIAG_KEEP_LOGS="${NETDIAG_KEEP_LOGS:-200}"
+NETDIAG_KEEP_HISTORY="${NETDIAG_KEEP_HISTORY:-2000}"
+
+prune_history() {
+  local file="$1" keep="$2" lines tmp
+  [ "$keep" -gt 0 ]   || return 0
+  [ -f "$file" ]      || return 0
+  lines="$(wc -l < "$file" 2>/dev/null | tr -d ' ')"
+  is_numeric "$lines" || return 0
+  # Only rewrite when meaningfully over the cap, so the common case is a
+  # single wc(1) and no file churn.
+  [ "$lines" -gt $((keep + keep / 10)) ] || return 0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-hist.XXXXXX")" || return 0
+  if tail -n "$keep" "$file" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$file"
+  else
+    rm -f "$tmp"
+  fi
+}
+
+prune_logs() {
+  local keep="$1" count
+  [ "$keep" -gt 0 ] || return 0
+  [ -d "$LOG_DIR" ] || return 0
+  count="$(find "$LOG_DIR" -maxdepth 1 -name '*.log' -type f 2>/dev/null | wc -l | tr -d ' ')"
+  is_numeric "$count" || return 0
+  [ "$count" -gt "$keep" ] || return 0
+  # Newest-first, drop everything past the cap. Filenames are generated
+  # timestamps (no spaces), and -print0/xargs -0 keeps it safe regardless.
+  find "$LOG_DIR" -maxdepth 1 -name '*.log' -type f -print0 2>/dev/null \
+    | xargs -0 ls -t 2>/dev/null \
+    | tail -n "+$((keep + 1))" \
+    | tr '\n' '\0' \
+    | xargs -0 rm -f 2>/dev/null || true
 }
 
 output_run() {
@@ -161,8 +215,8 @@ for r in d.get('regressions', []):
         if [ -n "$baseline_lines" ]; then
           while IFS= read -r reg; do
             [ -z "$reg" ] && continue
-            add_diag warn "Something changed since your last runs: $reg"
-            DIAGNOSIS_LINES+="warn|Something changed since your last runs: $reg"$'\n'
+            add_diag warn BL-1 "Something changed since your last runs: $reg"
+            DIAGNOSIS_LINES+="warn|BL-1|Something changed since your last runs: $reg"$'\n'
             warn "Something changed since your last runs: $reg"
           done <<<"$baseline_lines"
           # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
@@ -173,6 +227,20 @@ for r in d.get('regressions', []):
     # Append final snapshot to history (one record per run).
     python3 -c "import json; print(json.dumps(json.load(open('$json_tmp'))))" \
       >> "$LOG_DIR/baseline.jsonl" 2>/dev/null || true
+    prune_history "$LOG_DIR/baseline.jsonl" "$NETDIAG_KEEP_HISTORY"
+  fi
+  # Prune logs regardless of the baseline flags — a --no-baseline run still
+  # wrote a log file, and the watcher is the thing that accumulates them.
+  prune_logs "$NETDIAG_KEEP_LOGS"
+
+  # Timing breakdown: only useful to someone already reading the detailed
+  # sections, and it's the evidence for the spec's runtime budget.
+  if [ "$EXPERT" -eq 1 ] && [ "$JSON_MODE" -eq 0 ] && [ -n "$TIMING_LINES" ]; then
+    hdr "Timing"
+    printf '%s' "$TIMING_LINES" \
+      | awk -F'|' '{printf "      %-16s %6.2f s\n", $1, $2}' \
+      | log_pipe
+    info "total: $(run_elapsed_s) s (budget: $([ "$QUICK" -eq 1 ] && echo 8 || echo 30) s)"
   fi
 
   if [ "$JSON_MODE" -eq 1 ]; then

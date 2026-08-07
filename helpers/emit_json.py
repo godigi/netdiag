@@ -97,14 +97,22 @@ def build_dns() -> list[dict]:
 
 
 def build_hops(env_name: str) -> list[dict]:
-    """Parse 'n|ip|rtt_ms' (traceroute) or 'n|ip|loss|avg' (per_hop) lines."""
+    """Parse 'n|ip|rtt_ms' (traceroute) or 'n|ip|loss|avg' (per_hop) lines.
+
+    `n` is the real hop number from traceroute/mtr, so the sequence can have
+    gaps in `ip`: a hop that never answered is emitted with an empty address
+    and surfaces here as ip=null, responded=false. Consumers walking the
+    path must not assume hop N is at index N-1, nor that every entry has an
+    address. mtr spells the same condition "???".
+    """
     out: list[dict] = []
     for line in _list_lines(env_name):
         parts = line.split("|")
         if len(parts) < 2:
             continue
         n = int(parts[0]) if parts[0].isdigit() else parts[0]
-        entry: dict = {"n": n, "ip": parts[1]}
+        ip = parts[1] if parts[1] and parts[1] != "???" else None
+        entry: dict = {"n": n, "ip": ip, "responded": ip is not None}
         if env_name == "PER_HOP_LINES" and len(parts) >= 4:
             try:
                 entry["loss_pct"] = float(parts[2]) if parts[2] else None
@@ -123,14 +131,32 @@ def build_hops(env_name: str) -> list[dict]:
     return out
 
 
+VALID_SEVERITIES = ("critical", "warn", "info")
+
+
 def build_diagnosis() -> list[dict]:
-    """NETDIAG_DIAGNOSIS_LINES is one 'severity|summary' per line."""
+    """NETDIAG_DIAGNOSIS_LINES is one 'severity|rule|summary' per line.
+
+    `rule` names the entry in docs/DIAGNOSIS-RULES.md that fired, so JSON
+    consumers can group or filter by rule instead of string-matching prose
+    that is deliberately rewritten for readability.
+
+    Records written by netdiag < 0.5 have no rule field. Those parse as
+    'severity|summary'; detect that by checking whether the first field is
+    a known severity and the second looks like a rule ID rather than a
+    sentence.
+    """
     out: list[dict] = []
     for line in _list_lines("DIAGNOSIS_LINES"):
-        sev, _, summary = line.partition("|")
-        if not summary:
-            summary, sev = sev, "warn"
-        out.append({"severity": sev, "summary": summary})
+        parts = line.split("|", 2)
+        if len(parts) == 3 and parts[0] in VALID_SEVERITIES:
+            sev, rule, summary = parts
+        elif len(parts) >= 2 and parts[0] in VALID_SEVERITIES:
+            # Legacy two-field form: severity|summary, no rule recorded.
+            sev, rule, summary = parts[0], None, "|".join(parts[1:])
+        else:
+            sev, rule, summary = "warn", None, line
+        out.append({"severity": sev, "rule": rule, "summary": summary})
     return out
 
 
@@ -144,6 +170,8 @@ def build_baseline() -> dict | None:
         return None
     return {
         "compared_runs": parsed.get("compared_runs", 0),
+        "network_id": parsed.get("network_id"),
+        "skipped_other_networks": parsed.get("skipped_other_networks", 0),
         "regressions": parsed.get("regressions", []),
     }
 
@@ -158,6 +186,29 @@ def build_mtr() -> dict:
         "duration_s": 12 if per_hop else None,
         "hops": per_hop,
         "first_lossy_hop": _env("MTR_FIRST_LOSSY_HOP"),
+    }
+
+
+def build_timings() -> dict:
+    """Per-phase wall-clock, plus the spec budget this run was measured against.
+
+    `over_budget` is the checkable form of the spec's "<= 30 s full run,
+    <= 8 s --quick" promise — previously asserted but never measured.
+    """
+    phases: dict[str, float] = {}
+    for line in _list_lines("TIMING_LINES"):
+        name, _, secs = line.partition("|")
+        try:
+            phases[name] = float(secs)
+        except ValueError:
+            continue
+    total = _maybe_float("RUN_ELAPSED_S")
+    budget = 8.0 if _bool("QUICK") else 30.0
+    return {
+        "total_s": total,
+        "budget_s": budget,
+        "over_budget": (total is not None and total > budget),
+        "phases": phases,
     }
 
 
@@ -194,18 +245,70 @@ def build_wan() -> dict:
     }
 
 
+REDACTED = "[redacted]"
+
+# Values that identify a person or a place. ASN and ISP are kept: they
+# name a provider, which is needed to reason about the fault. Country code
+# is kept (2 chars — too short to substring-replace safely). RFC1918
+# addresses are kept: a 192.168.x.y tells a reader nothing about who you
+# are, and blanking them would gut the NAT and ARP sections.
+#
+# NETWORK_ID / NETWORK_LABEL are deliberately absent: they're composites of
+# values already in this list ("wifi:ssid=Home,mac=aa:bb:…"), so the parts
+# that identify anything get masked anyway, leaving the readable structure
+# intact. Listing them here would instead make generic placeholders like
+# "unknown network" into secrets and blank them wherever they appeared.
+_REDACT_ENV = ("PUB_IP", "LOCAL_IP", "WIFI_SSID", "WIFI_BSSID",
+               "IPV6_GLOBAL_ADDR", "GW_MAC", "PUB_CITY")
+
+
+def _scrub(node, secrets: list[str]):
+    """Replace every secret substring anywhere in the structure.
+
+    Field-by-field nulling isn't enough on its own: diagnosis summaries and
+    the baseline's regression descriptions interpolate these values into
+    prose, so the same string has to be caught wherever it ended up.
+    """
+    if isinstance(node, dict):
+        return {k: _scrub(v, secrets) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_scrub(v, secrets) for v in node]
+    if isinstance(node, str):
+        for s in secrets:
+            node = node.replace(s, REDACTED)
+        return node
+    return node
+
+
+def redact(data: dict) -> dict:
+    # Substrings shorter than 3 chars are skipped — replacing them would
+    # corrupt unrelated text rather than protect anything.
+    secrets = sorted(
+        {v for name in _REDACT_ENV if (v := _env(name)) and len(v) >= 3},
+        key=len, reverse=True,   # longest first: mask the SSID before a
+    )                            # shorter value that happens to be inside it
+    return _scrub(data, secrets)
+
+
 def main() -> None:
     is_wifi = _bool("IS_WIFI")
     target = _env("TARGET")
 
     data: dict = {
-        "version": _env("VERSION") or "0.4.1",
+        "version": _env("VERSION") or "0.5.0",
         "timestamp": _env("TIMESTAMP"),
         "interface": {
             "name": _env("INTERFACE"),
             "ip": _env("LOCAL_IP"),
             "gateway": _env("GATEWAY"),
+            "gateway_mac": _env("GW_MAC"),
             "type": "wifi" if is_wifi else "wired",
+        },
+        # Scopes baseline history. Two runs are only comparable when their
+        # network.id matches — see helpers/baseline.py and lib/netid.sh.
+        "network": {
+            "id": _env("NETWORK_ID"),
+            "label": _env("NETWORK_LABEL"),
         },
         "wifi": ({
             "ssid": _env("WIFI_SSID"),
@@ -314,6 +417,7 @@ def main() -> None:
                 if line.strip()
             ],
         },
+        "timings": build_timings(),
         "baseline": build_baseline(),
         "diagnosis": build_diagnosis(),
         "most_likely_root_cause": _env("MOST_LIKELY_ROOT_CAUSE"),
@@ -330,6 +434,9 @@ def main() -> None:
             } if target else None),
         },
     }
+    if _bool("REDACT"):
+        data = redact(data)
+
     json.dump(data, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
 

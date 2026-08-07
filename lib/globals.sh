@@ -124,6 +124,12 @@ DHCP_DNS_SERVERS=""
 # ARP (lib/arp.sh)
 ARP_DUPLICATE_IPS=""
 ARP_GW_INCOMPLETE=0
+GW_MAC=""                # gateway's hardware address; feeds NETWORK_ID
+
+# Network identity (lib/netid.sh) — scopes baseline history so moving
+# between networks doesn't register as a regression.
+NETWORK_ID=""
+NETWORK_LABEL=""
 
 # /etc/hosts (lib/hosts.sh)
 HOSTS_CUSTOM_COUNT=0

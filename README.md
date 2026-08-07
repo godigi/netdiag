@@ -48,6 +48,7 @@ netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
                  [--baseline | --no-baseline]
 netdiag --mtu-only               # just the path-MTU probe
 netdiag --wifi-only              # just the WiFi checks
+netdiag --redact --json          # safe to paste into a ticket
 netdiag --watch[=SEC]            # foreground loop, every SEC (default 300)
 netdiag --summary[=HOURS]        # aggregate ~/net-diag/baseline.jsonl
 netdiag --install-watcher        # launchd plist, every 15 min, background
@@ -69,6 +70,7 @@ netdiag --uninstall-watcher
 | `--quiet`            | only the Diagnosis section is printed                  |
 | `--log PATH`         | override the default `~/net-diag/<timestamp>.log`      |
 | `--no-baseline`      | don't compare to history / don't append to history     |
+| `--redact`           | mask identifying values on stdout / JSON (see below)   |
 | `--mtu-only`         | run only the path-MTU probe and its prerequisites      |
 | `--wifi-only`        | run only link quality, neighbourhood scan, disconnects |
 
@@ -82,8 +84,46 @@ netdiag --json | jq .diagnosis
 netdiag --watch=180          # check every 3 min
 netdiag --summary=168        # what's been happening this past week?
 netdiag --wifi-only          # "is it the WiFi?" without the full battery
+netdiag --redact             # before pasting output into a forum thread
 sudo netdiag                 # unlocks RSSI/noise/channel + mtr per-hop
 ```
+
+### Sharing a report
+
+A netdiag report carries your public IP, SSID, BSSID, IPv6 address,
+gateway MAC and city — all of which end up in a forum thread if you paste
+it unedited. `--redact` masks them:
+
+```sh
+netdiag --redact             # stdout is safe to paste
+netdiag --redact --json      # same, machine-readable
+```
+
+ASN and ISP name are deliberately **kept** — they identify a provider, not
+a person, and they're needed to reason about the fault. Private (RFC1918)
+addresses are kept too: `192.168.1.1` says nothing about you, and blanking
+it would gut the NAT and ARP sections.
+
+The log file written to `~/net-diag/` always keeps full detail. It lives on
+your machine; only what you share gets masked. `--redact` implies compact
+output, because section bodies stream out before every value that needs
+masking has been discovered.
+
+### Retention
+
+`~/net-diag/` is capped: the newest 200 `.log` files and the newest 2000
+`baseline.jsonl` records are kept, pruned at the end of each run. Override
+with `NETDIAG_KEEP_LOGS` / `NETDIAG_KEEP_HISTORY` (`0` disables pruning).
+This matters most with `--install-watcher`, which otherwise adds 96 logs
+and 96 history records a day, forever.
+
+### Baselines are per-network
+
+Regression comparisons are scoped to the network you're on, identified by
+gateway MAC, then SSID, then gateway IP. Without that, a laptop moving
+between home, office and a café reported "gateway RTT x4 spike" and "ISP
+changed" on every move. Runs recorded before v0.5.0 have no network
+identity and are skipped rather than pooled in.
 
 ### Exit codes
 

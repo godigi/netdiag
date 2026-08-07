@@ -19,9 +19,12 @@ Extend a ~300-line bash starter (embedded in `netdiag-prompt.md`) with 14 enhanc
 ## CLI surface
 
 ```
-netdiag [TARGET] [--quick] [--quiet] [--json] [--no-gping]
+netdiag [TARGET] [--quick] [--quiet] [--json] [--expert] [--redact]
+        [--gping] [--no-gping] [--no-bufferbloat]
         [--speed] [--no-speed] [--mtu-only] [--wifi-only]
         [--baseline] [--no-baseline] [--log PATH] [-h|--help]
+netdiag --watch[=SEC] | --summary[=HOURS]
+netdiag --install-watcher | --uninstall-watcher
 ```
 
 ## Output modes
@@ -34,6 +37,8 @@ netdiag [TARGET] [--quick] [--quiet] [--json] [--no-gping]
 ## Exit codes
 
 - `0` healthy · `1` warnings only · `2` ≥ 1 critical diagnosis · `3` script error.
+- Usage errors (bad flag, duplicate TARGET, bare `--log`) exit `3`, not `2` —
+  `2` is reserved for a real diagnosis so wrappers can distinguish the two.
 
 ## The 14 enhancements (implementation order)
 

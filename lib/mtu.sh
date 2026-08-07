@@ -14,9 +14,15 @@ mtu_run() {
   [ "$PUBLIC_OK" -eq 1 ] || return 0
 
   hdr "Path MTU (DF-set probe to 1.1.1.1)"
+  # Three packets per size, not one. ping exits 0 if *any* reply arrives, so
+  # this is a retry: one ordinary dropped packet at 1472 used to report a
+  # clamped MTU, and rule M1 escalates a sub-1400 result to *critical*
+  # ("most websites won't load fully"). A genuinely blocked size still
+  # fails all three. `-t 2` caps each size at 2 s, so this is also faster
+  # in the worst case than three separate 2 s probes would have been.
   local size
   for size in 1472 1452 1432 1412 1392 1372 1352 1300 1200; do
-    if ping -D -c 1 -t 2 -s "$size" 1.1.1.1 >/dev/null 2>&1; then
+    if ping -D -c 3 -i 0.2 -t 2 -s "$size" 1.1.1.1 >/dev/null 2>&1; then
       MTU_PATH_SIZE="$size"
       break
     fi

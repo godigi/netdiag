@@ -36,7 +36,7 @@ setup() {
 
   # Re-run in-process so the accumulator side effects are visible.
   GATEWAY=""
-  DIAG=(); DIAG_SEV=(); MAX_SEVERITY=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
   [ "$MAX_SEVERITY" -eq 2 ]
   [ "${DIAG_SEV[0]}" = "critical" ]
@@ -48,7 +48,7 @@ setup() {
   GATEWAY="192.168.1.1"
   GW_LOSS="0"
   PUBLIC_OK=1
-  DIAG=(); DIAG_SEV=(); MAX_SEVERITY=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
   [ "$MAX_SEVERITY" -eq 0 ]
   [ "${#DIAG[@]}" -eq 0 ]
@@ -168,16 +168,40 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
   [[ "$first_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
-@test "_parse_trace_lines: skips '*' (no-reply) hops and renumbers" {
+@test "_parse_trace_lines: keeps traceroute's own hop numbers across a timeout" {
   input='1  192.168.1.1  3.0 ms
 2  *
 3  10.0.0.1  10.0 ms'
   parsed="$(printf '%s' "$input" | _parse_trace_lines)"
-  # Two output lines (the '*' hop is dropped); they're renumbered 1, 2.
+  # All three hops are emitted; the timeout keeps its slot with an empty ip
+  # so hop 3 is still reported as hop 3, matching what traceroute printed.
   lines="$(printf '%s\n' "$parsed" | grep -c '^[0-9]')"
-  [ "$lines" -eq 2 ]
-  second_n="$(printf '%s\n' "$parsed" | sed -n '2p' | cut -d'|' -f1)"
-  [ "$second_n" = "2" ]
+  [ "$lines" -eq 3 ]
+  [ "$(printf '%s\n' "$parsed" | sed -n '2p')" = "2||" ]
+  [ "$(printf '%s\n' "$parsed" | sed -n '3p' | cut -d'|' -f1)" = "3" ]
+  [ "$(printf '%s\n' "$parsed" | sed -n '3p' | cut -d'|' -f2)" = "10.0.0.1" ]
+}
+
+@test "_parse_trace_lines: real fixture keeps hop 4 numbered 4 after the '*' at 3" {
+  parsed="$(_parse_trace_lines < "$FIX/traceroute.txt")"
+  # Fixture hop 3 is '*'; hop 4 is 10.166.41.210. Under the old
+  # reply-counting scheme that address was reported as hop 3.
+  [ "$(printf '%s\n' "$parsed" | sed -n '3p')" = "3||" ]
+  [ "$(printf '%s\n' "$parsed" | sed -n '4p')" = "4|10.166.41.210|20.071" ]
+  # Last hop of a 10-hop trace is still numbered 10.
+  [ "$(printf '%s\n' "$parsed" | tail -1 | cut -d'|' -f1)" = "10" ]
+}
+
+@test "_wan_count_rfc1918_chain: a timeout between private hops stops the walk" {
+  # Regression guard for the false double-NAT: hop 2 never answered, so
+  # hop 3 must not be treated as chained behind hop 1.
+  input='1|192.168.1.1|3.0
+2||
+3|192.168.2.1|9.0'
+  chain="$(printf '%s' "$input" | _wan_count_rfc1918_chain)"
+  [ "$chain" = "192.168.1.1" ]
+  _wan_split_nat_chain "$chain"
+  [ "$WAN_NAT_HOME_COUNT" -eq 1 ]
 }
 
 @test "_parse_trace_lines: skips banner line ('traceroute to …')" {
@@ -354,4 +378,46 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
   [ "$WAN_NAT_ISP_COUNT" -eq 0 ]
   [ -z "$WAN_NAT_HOME_CHAIN" ]
   [ -z "$WAN_NAT_ISP_CHAIN" ]
+}
+
+# ── --redact: mask identifying values on stdout ──────────────────────────
+# The local log keeps full detail; only what gets shared is masked.
+
+@test "_redact_line: masks public IP, SSID, BSSID and city" {
+  PUB_IP="203.0.113.42"; WIFI_SSID="BrianHomeNet"
+  WIFI_BSSID="aa:bb:cc:dd:ee:01"; PUB_CITY="Sometown"
+  LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC=""
+  result="$(_redact_line "Host BrianHomeNet (203.0.113.42) in Sometown via aa:bb:cc:dd:ee:01")"
+  [[ "$result" != *"203.0.113.42"* ]]
+  [[ "$result" != *"BrianHomeNet"* ]]
+  [[ "$result" != *"Sometown"* ]]
+  [[ "$result" != *"aa:bb:cc:dd:ee:01"* ]]
+  [[ "$result" == *"[redacted]"* ]]
+}
+
+@test "_redact_line: leaves private addresses and ISP name alone" {
+  PUB_IP="203.0.113.42"; WIFI_SSID=""; WIFI_BSSID=""; PUB_CITY=""
+  LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC=""
+  result="$(_redact_line "Gateway 192.168.1.1 via Example ISP")"
+  [ "$result" = "Gateway 192.168.1.1 via Example ISP" ]
+}
+
+@test "_redact_line: empty and very short values never match" {
+  # An empty secret would otherwise match at every position, and a 1-2 char
+  # value would corrupt unrelated text.
+  PUB_IP=""; WIFI_SSID=""; WIFI_BSSID=""; PUB_CITY="US"
+  LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC=""
+  result="$(_redact_line "Bufferbloat grade A/A · US region · all clear")"
+  [ "$result" = "Bufferbloat grade A/A · US region · all clear" ]
+}
+
+@test "say: redacts stdout but writes the raw value to the log" {
+  tmplog="$BATS_TEST_TMPDIR/x.log"
+  LOG="$tmplog"; REDACT=1; JSON_MODE=0; QUIET=0; EXPERT=1; DIAGNOSIS_REACHED=1
+  PUB_IP="203.0.113.42"; WIFI_SSID=""; WIFI_BSSID=""; PUB_CITY=""
+  LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC=""
+  out="$(say "Public IP: 203.0.113.42")"
+  [[ "$out" != *"203.0.113.42"* ]]
+  # The on-disk log is the user's own copy and keeps the real value.
+  grep -q '203.0.113.42' "$tmplog"
 }

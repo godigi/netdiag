@@ -23,6 +23,14 @@ arp_run() {
         ip = $2; gsub(/[()]/, "", ip); print ip, $4
       }' | sort -u)"
   ARP_DUPLICATE_IPS="$(printf '%s\n' "$arp_pairs" | awk '{print $1}' | uniq -d | tr '\n' ' ')"
+  # The gateway's MAC is the most stable identifier a network has: it
+  # survives DHCP re-leases and SSID renames, and differs between two
+  # networks that happen to share a private subnet. lib/netid.sh uses it
+  # to scope baseline history so moving between networks stops looking
+  # like a regression.
+  if [ -n "$GATEWAY" ]; then
+    GW_MAC="$(printf '%s\n' "$arp_pairs" | awk -v gw="$GATEWAY" '$1==gw{print $2; exit}')"
+  fi
   if [ -n "$GATEWAY" ] && printf '%s\n' "$arp_out" | grep -qF "($GATEWAY) at (incomplete)"; then
     ARP_GW_INCOMPLETE=1
     bad "Gateway $GATEWAY is (incomplete) in the ARP table — L2 broken."

@@ -1,11 +1,16 @@
 {
-  "version": "0.4.0",
+  "version": "0.5.0",
   "timestamp": "2026-06-01T08:58:09Z",
   "interface": {
     "name": "en0",
     "ip": "192.168.68.103",
     "gateway": "192.168.68.1",
-    "type": "wifi"
+    "type": "wifi",
+    "gateway_mac": "aa:bb:cc:dd:ee:01"
+  },
+  "network": {
+    "id": "wifi:ssid=Example-5G,mac=aa:bb:cc:dd:ee:01",
+    "label": "Example-5G"
   },
   "wifi": {
     "ssid": "Test-SSID",
@@ -82,57 +87,68 @@
       {
         "n": 1,
         "ip": "192.168.68.1",
-        "rtt_ms": 5.234
+        "rtt_ms": 5.234,
+        "responded": true
       },
       {
         "n": 2,
         "ip": "192.168.58.1",
-        "rtt_ms": 4.272
+        "rtt_ms": 4.272,
+        "responded": true
       },
       {
         "n": 3,
         "ip": "100.81.195.81",
-        "rtt_ms": 4.227
+        "rtt_ms": 4.227,
+        "responded": true
       },
       {
         "n": 4,
         "ip": "100.125.21.122",
-        "rtt_ms": 7.147
+        "rtt_ms": 7.147,
+        "responded": true
       },
       {
         "n": 5,
         "ip": "100.125.34.97",
-        "rtt_ms": 5.976
+        "rtt_ms": 5.976,
+        "responded": true
       },
       {
         "n": 6,
         "ip": "100.125.34.93",
-        "rtt_ms": 5.584
+        "rtt_ms": 5.584,
+        "responded": true
       },
       {
         "n": 7,
         "ip": "100.126.222.113",
-        "rtt_ms": 7.103
+        "rtt_ms": 7.103,
+        "responded": true
       },
       {
         "n": 8,
         "ip": "100.126.222.105",
-        "rtt_ms": 7.199
+        "rtt_ms": 7.199,
+        "responded": true
       },
       {
         "n": 9,
         "ip": "100.126.222.134",
-        "rtt_ms": 5.822
+        "rtt_ms": 5.822,
+        "responded": true
       },
       {
         "n": 10,
         "ip": "100.126.222.133",
-        "rtt_ms": 6.737
+        "rtt_ms": 6.737,
+        "responded": true
       },
       {
         "n": 11,
         "ip": "38.156.228.197",
-        "rtt_ms": 5.256
+        "rtt_ms": 5.256,
+        "responded": true
       }
     ]
   },
@@ -141,67 +157,78 @@
       "n": 1,
       "ip": "192.168.68.1",
       "loss_pct": 0.0,
-      "avg_ms": 5.467
+      "avg_ms": 5.467,
+      "responded": true
     },
     {
       "n": 2,
       "ip": "192.168.58.1",
       "loss_pct": 0.0,
-      "avg_ms": 6.353
+      "avg_ms": 6.353,
+      "responded": true
     },
     {
       "n": 3,
       "ip": "100.81.195.81",
       "loss_pct": 0.0,
-      "avg_ms": 6.583
+      "avg_ms": 6.583,
+      "responded": true
     },
     {
       "n": 4,
       "ip": "100.125.21.122",
       "loss_pct": 0.0,
-      "avg_ms": 6.477
+      "avg_ms": 6.477,
+      "responded": true
     },
     {
       "n": 5,
       "ip": "100.125.34.97",
       "loss_pct": 0.0,
-      "avg_ms": 7.297
+      "avg_ms": 7.297,
+      "responded": true
     },
     {
       "n": 6,
       "ip": "100.125.34.93",
       "loss_pct": 0.0,
-      "avg_ms": 8.666
+      "avg_ms": 8.666,
+      "responded": true
     },
     {
       "n": 7,
       "ip": "100.126.222.113",
       "loss_pct": 100.0,
-      "avg_ms": null
+      "avg_ms": null,
+      "responded": true
     },
     {
       "n": 8,
       "ip": "100.126.222.105",
       "loss_pct": 100.0,
-      "avg_ms": null
+      "avg_ms": null,
+      "responded": true
     },
     {
       "n": 9,
       "ip": "100.126.222.134",
       "loss_pct": 0.0,
-      "avg_ms": 9.857
+      "avg_ms": 9.857,
+      "responded": true
     },
     {
       "n": 10,
       "ip": "100.126.222.133",
       "loss_pct": 0.0,
-      "avg_ms": 10.089
+      "avg_ms": 10.089,
+      "responded": true
     },
     {
       "n": 11,
       "ip": "38.156.228.197",
       "loss_pct": 0.0,
-      "avg_ms": 10.212
+      "avg_ms": 10.212,
+      "responded": true
     }
   ],
   "bufferbloat": {
@@ -296,67 +323,78 @@
         "n": 1,
         "ip": "192.168.68.1",
         "loss_pct": 0.0,
-        "avg_ms": 5.467
+        "avg_ms": 5.467,
+        "responded": true
       },
       {
         "n": 2,
         "ip": "192.168.58.1",
         "loss_pct": 0.0,
-        "avg_ms": 6.353
+        "avg_ms": 6.353,
+        "responded": true
       },
       {
         "n": 3,
         "ip": "100.81.195.81",
         "loss_pct": 0.0,
-        "avg_ms": 6.583
+        "avg_ms": 6.583,
+        "responded": true
       },
       {
         "n": 4,
         "ip": "100.125.21.122",
         "loss_pct": 0.0,
-        "avg_ms": 6.477
+        "avg_ms": 6.477,
+        "responded": true
       },
       {
         "n": 5,
         "ip": "100.125.34.97",
         "loss_pct": 0.0,
-        "avg_ms": 7.297
+        "avg_ms": 7.297,
+        "responded": true
       },
       {
         "n": 6,
         "ip": "100.125.34.93",
         "loss_pct": 0.0,
-        "avg_ms": 8.666
+        "avg_ms": 8.666,
+        "responded": true
       },
       {
         "n": 7,
         "ip": "100.126.222.113",
         "loss_pct": 100.0,
-        "avg_ms": null
+        "avg_ms": null,
+        "responded": true
       },
       {
         "n": 8,
         "ip": "100.126.222.105",
         "loss_pct": 100.0,
-        "avg_ms": null
+        "avg_ms": null,
+        "responded": true
       },
       {
         "n": 9,
         "ip": "100.126.222.134",
         "loss_pct": 0.0,
-        "avg_ms": 9.857
+        "avg_ms": 9.857,
+        "responded": true
       },
       {
         "n": 10,
         "ip": "100.126.222.133",
         "loss_pct": 0.0,
-        "avg_ms": 10.089
+        "avg_ms": 10.089,
+        "responded": true
       },
       {
         "n": 11,
         "ip": "38.156.228.197",
         "loss_pct": 0.0,
-        "avg_ms": 10.212
+        "avg_ms": 10.212,
+        "responded": true
       }
     ],
     "first_lossy_hop": null
@@ -376,7 +414,14 @@
       "rfc1918_chain": [
         "192.168.68.1",
         "192.168.58.1"
-      ]
+      ],
+      "home_chain": [
+        "192.168.68.1",
+        "192.168.58.1"
+      ],
+      "home_count": 2,
+      "isp_transit_chain": [],
+      "isp_transit_count": 0
     },
     "upnp": {
       "state": "enabled",
@@ -389,14 +434,22 @@
     "custom_count": 0,
     "suspicious_redirects": []
   },
+  "timings": {
+    "total_s": null,
+    "budget_s": 30.0,
+    "over_budget": false,
+    "phases": {}
+  },
   "baseline": null,
   "diagnosis": [
     {
       "severity": "warn",
+      "rule": "WS-1",
       "summary": "Your WiFi channel (40) is shared with 4 neighbouring networks \u2014 they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
     },
     {
       "severity": "warn",
+      "rule": "NAT-1",
       "summary": "You have 2 routers chained together in your home (192.168.68.1 \u2192 192.168.58.1). That breaks games, Plex, Steam in-home streaming, video doorbells, and anything else that needs to \"open a port\" \u2014 incoming connections get lost between the routers. Fix: log into the outer router's admin page and set it to \"bridge mode\" or \"access-point mode\" so the inner router does the routing alone."
     }
   ],

@@ -47,9 +47,40 @@ _should_print_stdout() {
   [ "$EXPERT" -eq 1 ] && return 0
   return 1
 }
+# ── Redaction ────────────────────────────────────────────────────────────
+# A netdiag report is something people paste into forum threads and support
+# tickets, and it carries their public IP, SSID, BSSID, city and IPv6
+# prefix. --redact masks those on the way to stdout and in --json.
+#
+# The local log deliberately keeps full detail: it lives on the user's own
+# machine and is the thing they'd want when debugging later. stdout and
+# JSON are what get shared, so that's what gets masked.
+#
+# Substring replacement over the known values, rather than field-by-field
+# rewriting, so a value is masked wherever it appears — including inside a
+# diagnosis sentence that interpolated it. ASN and ISP are deliberately
+# kept: they're needed to reason about the fault and identify a provider,
+# not a person. Country code and private RFC1918 addresses are kept too —
+# the former is too short to replace safely, the latter isn't identifying.
+_redact_line() {
+  local s="$1" v
+  for v in "${PUB_IP:-}" "${LOCAL_IP:-}" "${WIFI_SSID:-}" "${WIFI_BSSID:-}" \
+           "${IPV6_GLOBAL_ADDR:-}" "${GW_MAC:-}" "${PUB_CITY:-}"; do
+    # Skip empties (would match everywhere) and 1-2 char values (too short
+    # to replace without corrupting unrelated text).
+    [ "${#v}" -ge 3 ] || continue
+    s="${s//"$v"/[redacted]}"
+  done
+  printf '%s' "$s"
+}
+
 say() {
   if _should_print_stdout; then
-    printf '%s\n' "$*"
+    if [ "${REDACT:-0}" -eq 1 ]; then
+      printf '%s\n' "$(_redact_line "$*")"
+    else
+      printf '%s\n' "$*"
+    fi
   fi
   printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG"
 }
@@ -58,7 +89,11 @@ say() {
 # output. JSON_MODE still suppresses stdout.
 tell() {
   if [ "$JSON_MODE" -eq 0 ]; then
-    printf '%s\n' "$*"
+    if [ "${REDACT:-0}" -eq 1 ]; then
+      printf '%s\n' "$(_redact_line "$*")"
+    else
+      printf '%s\n' "$*"
+    fi
   fi
   printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG"
 }
@@ -137,9 +172,20 @@ info() { say "  ${C_DIM}·${C_RESET} $*"; }
 
 # Pipeline-target replacement for `tee -a "$LOG"`. Writes to log unconditionally;
 # also writes to stdout iff _should_print_stdout would.
+#
+# Under --redact the stdout copy is filtered line by line, same rule as
+# say(): the log keeps the real values, stdout does not.
 log_pipe() {
   if _should_print_stdout; then
-    tee -a "$LOG"
+    if [ "${REDACT:-0}" -eq 1 ]; then
+      local line
+      while IFS= read -r line; do
+        printf '%s\n' "$line" >> "$LOG"
+        printf '%s\n' "$(_redact_line "$line")"
+      done
+    else
+      tee -a "$LOG"
+    fi
   else
     cat >> "$LOG"
   fi
@@ -148,19 +194,58 @@ log_pipe() {
 # ── Diagnosis accumulator ────────────────────────────────────────────────
 DIAG=()
 DIAG_SEV=()
+DIAG_RULE=()
 MAX_SEVERITY=0  # exit code on a clean run: 0=healthy, 1=warn, 2=critical
 # Severity tiers:
 #   info     — heads-up only, doesn't bump exit code
 #   warn     — exit 1 if nothing more severe was seen
 #   critical — exit 2
+#
+# Usage: add_diag <severity> <rule-id> <message…>
+#
+# The rule ID (W1, NAT-1, BL-1, …) matches a section heading in
+# docs/DIAGNOSIS-RULES.md. It rides along into the JSON so output is
+# greppable and a user can look up why a threshold fired, instead of
+# having to reverse-engineer it from the prose.
 add_diag() {
-  local sev="$1"; shift
+  local sev="$1" rule="$2"; shift 2
   DIAG+=("$*")
   DIAG_SEV+=("$sev")
+  DIAG_RULE+=("$rule")
   case "$sev" in
     critical) [ "$MAX_SEVERITY" -lt 2 ] && MAX_SEVERITY=2 ;;
     warn)     [ "$MAX_SEVERITY" -lt 1 ] && MAX_SEVERITY=1 ;;
   esac
+}
+
+# ── Timing instrumentation ───────────────────────────────────────────────
+# The spec promises ≤ 30 s for a full run and ≤ 8 s for --quick, and until
+# now nothing measured whether that held. Worst-case arithmetic says it
+# doesn't: the MTU walk, traceroute (25 s cap) and mtr (20 s cap) alone can
+# exceed the full-run budget on a bad path. Record per-phase elapsed time
+# so the claim is checkable on real hardware instead of asserted.
+#
+# TIMING_LINES accumulates "phase|seconds" rows; emit_json turns them into
+# the JSON `timings` object and --expert prints them as a closing section.
+TIMING_LINES=""
+RUN_STARTED_AT="$EPOCHREALTIME"
+
+# run_timed <phase-name> <command…> — run it, record wall-clock, preserve
+# the command's exit status so callers see no behavioural difference.
+run_timed() {
+  local name="$1"; shift
+  local t0 rc
+  t0="$EPOCHREALTIME"
+  "$@"
+  rc=$?
+  TIMING_LINES+="${name}|$(awk -v a="$t0" -v b="$EPOCHREALTIME" \
+    'BEGIN{printf "%.2f", b-a}')"$'\n'
+  return "$rc"
+}
+
+# Total wall-clock since the run began, as a decimal string.
+run_elapsed_s() {
+  awk -v a="$RUN_STARTED_AT" -v b="$EPOCHREALTIME" 'BEGIN{printf "%.2f", b-a}'
 }
 
 # ── Numeric guard ────────────────────────────────────────────────────────

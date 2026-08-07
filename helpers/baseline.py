@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """Compare a netdiag JSON snapshot to medians over the last N historical runs.
 
+History is scoped by network identity (`network.id`, see lib/netid.sh).
+Without that scoping the file is one flat stream across every network the
+machine has ever been on, so a laptop moving between home, office, and a
+café tripped "gateway RTT x4 spike", "ISP changed", "WiFi channel changed"
+and "path MTU changed" on essentially every location change — each one an
+add_diag warn that bumped the exit code to 1. Comparing a run only
+against prior runs on the same network makes these regressions mean what
+they claim to mean.
+
+Records written before network identity existed have no `network.id`.
+They're skipped rather than pooled, so old history ages out of relevance
+instead of silently polluting the comparison.
+
 Inputs:
   --history PATH   Path to a JSONL file with one snapshot per line.
   --current PATH   Path to the current snapshot JSON (separate file).
@@ -9,6 +22,8 @@ Inputs:
 Output (stdout): a JSON object
   {
     "compared_runs": N,
+    "network_id": "wifi:ssid=Home,mac=aa:bb:cc:dd:ee:01",
+    "skipped_other_networks": 12,
     "regressions": [
       {"metric": "gateway.rtt_avg_ms", "current": 12.3, "median": 3.5,
        "label": "gateway RTT", "kind": "spike|drop|drift"}
@@ -145,17 +160,37 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=10)
     args = ap.parse_args()
 
-    history_all = load_jsonl(args.history)
-    history = history_all[-args.n:] if history_all else []
-
     try:
         current = json.loads(args.current.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(json.dumps({"error": f"cannot read current: {e}"}), file=sys.stderr)
         sys.exit(1)
 
+    history_all = load_jsonl(args.history)
+
+    # Scope to the same network before taking the last N. Filtering first
+    # matters: taking the tail first would leave a laptop with almost no
+    # same-network history right after a batch of runs somewhere else.
+    network_id = get_nested(current, "network.id")
+    if network_id:
+        same_network = [r for r in history_all
+                        if get_nested(r, "network.id") == network_id]
+    else:
+        # No identity for the current run (no gateway MAC, no SSID, no
+        # gateway). Comparing against an arbitrary mix would be worse than
+        # not comparing, so don't.
+        same_network = []
+    skipped = len(history_all) - len(same_network)
+
+    history = same_network[-args.n:] if same_network else []
+
     regressions = evaluate(current, history) if len(history) >= 3 else []
-    out = {"compared_runs": len(history), "regressions": regressions}
+    out = {
+        "compared_runs": len(history),
+        "network_id": network_id,
+        "skipped_other_networks": skipped,
+        "regressions": regressions,
+    }
     json.dump(out, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
 

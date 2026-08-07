@@ -13,6 +13,14 @@
 > maintainers; grep the bash sources for the literal `add_diag` calls
 > if you need the exact user text.
 
+## Rule IDs
+
+Every rule has an ID (`W1`, `NAT-1`, `BL-1`, …) matching a heading below.
+`add_diag` records it, `--expert` prefixes each diagnosis with `[ID]`, and
+the JSON carries it as `diagnosis[].rule`. Filter on the ID rather than on
+the prose — the wording is deliberately rewritten for readability and will
+keep changing; the ID won't.
+
 ## Severity
 
 - `critical` — the network is unusable or about to be.

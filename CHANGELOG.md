@@ -6,6 +6,89 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Known
+
+- `.github/workflows/shellcheck.yml` still carries a stale
+  `nimbalyst-local` entry in `ignore_paths`, left over from another
+  project, and CI has no smoke test that runs netdiag end to end. Neither
+  is fixed here because pushing workflow files needs a token scope this
+  branch doesn't have — both are one-file changes for a maintainer.
+
+## [0.5.0] - 2026-08-07
+
+Second correctness pass, plus the instrumentation needed to check the
+spec's runtime budget. Clears the remaining known bugs from the v0.4.1
+review.
+
+### Fixed
+
+- **Baseline history is now scoped per network.** `baseline.jsonl` was one
+  flat stream across every network the machine had ever been on, so a
+  laptop moving between home, office and a café tripped "gateway RTT ×4
+  spike", "ISP changed", "WiFi channel changed" and "path MTU changed" on
+  essentially every location change — each an `add_diag warn` that bumped
+  the exit code to 1. Runs are now compared only against prior runs on the
+  same network, identified by gateway MAC → SSID → gateway IP (see
+  `lib/netid.sh`). Filtering happens *before* the last-N window, so a batch
+  of runs elsewhere can't push a network's own history out of range.
+  Pre-0.5.0 records have no identity and are skipped rather than pooled in.
+- **`~/net-diag/` is bounded.** Nothing pruned it before: the launchd
+  watcher adds 96 log files and 96 JSONL records a day, forever, and both
+  Python helpers parsed the entire JSONL on every run. Now capped at the
+  newest 200 logs and 2000 history records, overridable via
+  `NETDIAG_KEEP_LOGS` / `NETDIAG_KEEP_HISTORY` (`0` disables).
+- **Traceroute hop numbers are traceroute's own again.** The parser
+  counted replies, so every hop after a `* * *` timeout was renumbered and
+  the JSON disagreed with what the user sees running traceroute by hand.
+  Worse, closing the gap made two private hops separated by a timeout look
+  adjacent, which could fake a double-NAT. Non-responding hops now keep
+  their slot and surface as `ip: null, responded: false`.
+- **The PMTU probe retries.** One probe per size meant a single dropped
+  packet at 1472 reported a clamped MTU — and rule M1 escalates a sub-1400
+  result to *critical*. Now three packets per size (`ping` exits 0 on any
+  reply), which is also faster in the worst case than the old single-probe
+  walk down the whole ladder.
+
+### Added
+
+- **`--redact`** masks public IP, SSID, BSSID, IPv6 address, gateway MAC
+  and city on stdout and in `--json`, so a report can be pasted into a
+  forum or ticket. ASN and ISP are kept (they name a provider, not a
+  person); RFC1918 addresses are kept (blanking them would gut the NAT and
+  ARP sections). Masking is substring-based, so a value is caught even
+  where a diagnosis sentence interpolated it. The on-disk log keeps full
+  detail — it's local, and only what you share gets masked. Implies
+  compact output: section bodies stream out before every value that needs
+  masking has been discovered, and a partially redacted transcript is
+  worse than none because it looks safe.
+- **Timing instrumentation.** The spec's "≤ 30 s full, ≤ 8 s `--quick`"
+  was asserted but never measured. Every phase is now wrapped in
+  `run_timed`; the JSON gains a `timings` object (`total_s`, `budget_s`,
+  `over_budget`, per-phase breakdown) and `--expert` prints a Timing
+  section.
+- **Rule IDs on every diagnosis.** `add_diag` now takes the rule ID (`W1`,
+  `NAT-1`, `BL-1`, …) matching a heading in `docs/DIAGNOSIS-RULES.md`. It
+  rides into the JSON as `diagnosis[].rule` so output is greppable and
+  groupable instead of string-matched against prose that gets rewritten
+  for readability. `--expert` prefixes each diagnosis with `[RULE]`;
+  default output stays prose-only.
+- `network` (`id`, `label`) and `interface.gateway_mac` in the JSON;
+  `baseline.network_id` and `baseline.skipped_other_networks`.
+- **39 tests, including the first coverage of `helpers/*.py`** —
+  `emit_json.py` is the widest interface in the project and had none, so a
+  renamed global silently produced `null` and nothing noticed. Covers the
+  JSON's top-level shape, rule-ID parsing (with the pre-0.5 fallback and a
+  summary containing `|`), hop gaps, the NAT split, timings, redaction,
+  and every branch of the baseline network scoping.
+
+### Changed
+
+- JSON shape (additive except as noted): `diagnosis[]` entries gain
+  `rule`; hop entries gain `responded` and report `ip: null` instead of an
+  empty string for a non-responding hop; new `network` and `timings`
+  objects.
+- `_print_diagnosis_paragraph` takes a rule ID as its second argument.
+
 ## [0.4.1] - 2026-08-07
 
 Correctness pass. No new checks — this fixes cases where netdiag reported
@@ -76,14 +159,6 @@ something confidently wrong, and closes three gaps against the spec in
   `SC2317` findings (trap handlers and the parallel-subshell function
   overrides, all reached by indirect dispatch) now carry justified
   disables, so the CI job reflects real problems.
-
-### Known
-
-- `.github/workflows/shellcheck.yml` still carries a stale
-  `nimbalyst-local` entry in `ignore_paths`, left over from another
-  project. Harmless, but it should be dropped — the change isn't in this
-  release because pushing workflow files needs a token scope this branch
-  didn't have.
 
 ## [0.4.0] - 2026-06-01
 

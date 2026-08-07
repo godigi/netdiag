@@ -142,6 +142,10 @@ _wan_count_rfc1918_chain() {
       return 0
     }
     {
+      # A non-responding hop arrives as an empty ip and fails is_rfc1918,
+      # which stops the walk. That is deliberate: an unknown hop must not
+      # be treated as private, or two private hops with a timeout between
+      # them would read as a chained pair and fake a double-NAT.
       ip = $2
       if (is_rfc1918(ip)) {
         chain = chain (chain ? " " : "") ip
@@ -260,13 +264,13 @@ _wan_upnp_persist() {
 # NAT-1 / UP-1 rules per docs/DIAGNOSIS-RULES.md.
 wan_diagnosis_run() {
   if [ "$WAN_LB_ACTIVE" -eq 1 ]; then
-    add_diag warn "Your outgoing connections are landing on multiple internet providers ($WAN_LB_ASNS). This is usually intentional (multi-WAN router) but explains some odd behaviour: services may complain that your IP keeps changing, and some apps may behave inconsistently. Nothing to fix if you set this up on purpose."
+    add_diag warn WAN-1 "Your outgoing connections are landing on multiple internet providers ($WAN_LB_ASNS). This is usually intentional (multi-WAN router) but explains some odd behaviour: services may complain that your IP keeps changing, and some apps may behave inconsistently. Nothing to fix if you set this up on purpose."
   elif [ -n "$WAN_LB_ASNS" ]; then
     # Single ASN but multiple IPs — info-only nudge.
     local n_ip
     n_ip="$(printf '%s' "$WAN_LB_IPS" | awk '{print NF}')"
     if [ "${n_ip:-0}" -gt 1 ]; then
-      add_diag info "You're behind your ISP's shared-address pool — they're handing your traffic different public IPs ($WAN_LB_IPS) each time even though it's all the same ISP ($WAN_LB_ASNS). Common on cellular and budget connections. Apps that geo-locate or need a stable IP may get confused (technical: CGNAT round-robin)."
+      add_diag info WAN-1b "You're behind your ISP's shared-address pool — they're handing your traffic different public IPs ($WAN_LB_IPS) each time even though it's all the same ISP ($WAN_LB_ASNS). Common on cellular and budget connections. Apps that geo-locate or need a stable IP may get confused (technical: CGNAT round-robin)."
     fi
   fi
   # WAN_DOUBLE_NAT now means "home-side double-NAT" — wan_double_nat_run
@@ -275,9 +279,9 @@ wan_diagnosis_run() {
   if [ "$WAN_DOUBLE_NAT" -eq 1 ]; then
     local _isp_note=""
     [ -n "$WAN_NAT_ISP_CHAIN" ] && _isp_note=", then your ISP transit ($WAN_NAT_ISP_CHAIN)"
-    add_diag warn "You have ${WAN_NAT_HOME_COUNT} routers chained together in your home (${WAN_NAT_HOME_CHAIN})${_isp_note}. That breaks games, Plex, Steam in-home streaming, video doorbells, and anything else that needs to \"open a port\" — incoming connections get lost between the routers. Fix: log into the outer router's admin page and set it to \"bridge mode\" or \"access-point mode\" so the inner router does the routing alone."
+    add_diag warn NAT-1 "You have ${WAN_NAT_HOME_COUNT} routers chained together in your home (${WAN_NAT_HOME_CHAIN})${_isp_note}. That breaks games, Plex, Steam in-home streaming, video doorbells, and anything else that needs to \"open a port\" — incoming connections get lost between the routers. Fix: log into the outer router's admin page and set it to \"bridge mode\" or \"access-point mode\" so the inner router does the routing alone."
   elif [ "$WAN_NAT_ISP_COUNT" -gt 1 ]; then
-    add_diag info "Your ISP routes you through their internal network (${WAN_NAT_ISP_CHAIN}) before reaching the public internet. That's their normal setup, not a problem on your end; mentioning it because it explains why traceroute shows private-network addresses several hops in."
+    add_diag info NAT-1b "Your ISP routes you through their internal network (${WAN_NAT_ISP_CHAIN}) before reaching the public internet. That's their normal setup, not a problem on your end; mentioning it because it explains why traceroute shows private-network addresses several hops in."
   fi
   # UPnP state is already shown in its own section with a `warn`-styled
   # marker. We deliberately do NOT re-emit it in Diagnosis to avoid

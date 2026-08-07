@@ -7,22 +7,33 @@
 # Entry:  traceroute_run
 
 _parse_trace_lines() {
-  # Reads traceroute -n output on stdin, prints "n|ip|rtt_ms" per resolved hop.
+  # Reads traceroute -n output on stdin, prints "n|ip|rtt_ms" per hop.
+  #
+  # `n` is traceroute's OWN hop number, not a running count of replies.
+  # Counting replies renumbered every hop after a `* * *` timeout, so the
+  # JSON disagreed with what the user sees running traceroute by hand —
+  # and, worse, it closed the gap in the hop list, which made two private
+  # hops separated by a timeout look adjacent and could trip the
+  # double-NAT walker on an unknown hop.
+  #
+  # Non-responding hops are emitted with an empty ip ("7||") so the
+  # sequence stays honest about where the gaps are. Callers must skip
+  # empty-ip rows when they need a pingable address.
+  #
   # macOS traceroute writes the "traceroute to ...," banner to stderr, so
   # when stderr is redirected (the common case) the banner doesn't appear
   # here. Skip it defensively anyway in case stderr is left attached.
   awk '
     $1 == "traceroute" { next }
-    {
+    $1 ~ /^[0-9]+$/ {
       ip = ""; rtt = ""
-      for (i = 1; i <= NF; i++) {
+      # Start at field 2: field 1 is the hop number and must never be
+      # mistaken for an address or a timing.
+      for (i = 2; i <= NF; i++) {
         if (ip == "" && $i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) ip = $i
-        else if (rtt == "" && $i ~ /^[0-9]+\.[0-9]+$/) rtt = $i
+        else if (ip != "" && rtt == "" && $i ~ /^[0-9]+\.[0-9]+$/) rtt = $i
       }
-      if (ip != "") {
-        n++
-        print n "|" ip "|" rtt
-      }
+      print $1 "|" ip "|" rtt
     }'
 }
 
@@ -42,7 +53,9 @@ traceroute_run() {
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     ip="${line#*|}"; ip="${ip%%|*}"
-    HOPS+=("$ip")
+    # TRACE_LINES keeps every hop including the timeouts; HOPS is the
+    # pingable subset (mtr fallback and gping both need real addresses).
+    [ -n "$ip" ] && HOPS+=("$ip")
     TRACE_LINES+="${line}"$'\n'
   done <<<"$parsed"
 
