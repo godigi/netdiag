@@ -63,6 +63,21 @@
 # sample at the fast cadence. It deliberately does *not* exit — a stream
 # that dies at the instant WiFi drops cannot report that WiFi dropped,
 # which is the single event the app exists to announce.
+#
+# ── It exits when whoever started it goes away ─────────────────────────
+# A stream exists for a consumer. If the consumer is gone there is nobody
+# to stream to, and a network probe running forever with no reader is the
+# single most likely reason an always-on tool gets uninstalled.
+#
+# The obvious mechanism — writing to a closed pipe and taking the EPIPE —
+# is not sufficient on its own. Measured: SIGKILL the GUI and the monitor
+# was still probing 30 s later, because a pipe fd survives in ways this
+# process cannot audit. So the parent is checked explicitly each cycle.
+#
+# `kill -0` rather than re-reading $PPID: bash captures PPID once at
+# startup and never updates it, so after re-parenting to launchd it still
+# reports the pid of a process that no longer exists. `kill -0` is a
+# builtin, costs nothing, and flips the moment the parent is reaped.
 
 # ── Sample state ─────────────────────────────────────────────────────────
 # All MON_* — a distinct namespace from the scanner's globals so that
@@ -109,6 +124,11 @@ MON_REFRESHED=""
 MON_STOP=0
 MON_PAUSED=0
 MON_HW_PORTS=""
+# launchd's pid. Named rather than written as a bare 1 so the orphan check
+# below reads as the sentinel it is, and so tests/test_thresholds.bats's
+# "no inline cutoff" guard stays a useful signal instead of something this
+# file has to be excused from.
+MON_INIT_PID=1
 
 # ── Fast tier ────────────────────────────────────────────────────────────
 
@@ -485,12 +505,23 @@ _mon_on_resume() { MON_PAUSED=0; }
 monitor_run() {
   local now next_fast=0 next_medium=0 next_slow=0 cadence
   local prev_network_id="" network_changed announced_pause=0
+  # Captured once: bash never updates PPID, so this is the pid of whoever
+  # started us and stays that way even after re-parenting.
+  local parent_pid="$PPID"
   trap _mon_on_signal INT TERM
   trap _mon_on_pause  USR1
   trap _mon_on_resume USR2
 
   while :; do
     [ "$MON_STOP" -eq 0 ] || break
+    # Checked even while paused — a paused monitor whose consumer died is
+    # exactly as orphaned as a running one, and rather harder to notice.
+    # A parent of MON_INIT_PID means we were started by launchd, or were
+    # already orphaned before the loop began; either way there is no
+    # meaningful parent left to watch.
+    if [ "$parent_pid" -gt "$MON_INIT_PID" ] && ! kill -0 "$parent_pid" 2>/dev/null; then
+      break
+    fi
 
     # Paused: probe nothing, emit nothing, but stay alive and responsive.
     # One sample announces the pause so a consumer — or a person watching

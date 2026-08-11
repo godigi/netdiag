@@ -225,6 +225,18 @@ kills it. Measured under a GUI parent: the monitor died 2.1 s into every
 pause, exactly one ping probe. It never reproduced from a terminal,
 because a controlling terminal keeps the group non-orphaned.
 
+## Lifetime
+
+`--monitor` **exits when the process that started it goes away.** A stream
+exists for a consumer; a network probe still running with no reader is
+invisible and unbounded. Taking `EPIPE` on a closed stdout is not
+sufficient on its own — measured, `SIGKILL` of the GUI left the monitor
+probing 30 s later — so the parent is checked explicitly each cycle with
+`kill -0`. Shutdown lands within one cadence.
+
+If you want a detached recorder, use `--install-watcher`, which is what it
+is for.
+
 ## `--monitor` vs `--watch`
 
 They are not two of the same thing:

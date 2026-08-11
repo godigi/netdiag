@@ -104,6 +104,16 @@ writes no diagnosis prose. Everything it says comes from the CLI.
   existed to protect*. It never reproduced from a terminal, because a
   controlling terminal keeps the group non-orphaned, which is precisely
   how it would have shipped.
+- **`--monitor` exits when the process that started it goes away.** Found
+  the same way: `SIGKILL` the app and the monitor was still probing 30 s
+  later, re-parented to launchd with nobody reading it. Relying on `EPIPE`
+  from a closed stdout is not enough, because a pipe fd survives in ways
+  the child cannot audit, so the parent is now checked each cycle with
+  `kill -0` — a builtin, and the only thing that works, since bash
+  captures `$PPID` once at startup and still reports a dead pid after
+  re-parenting. An unbounded network probe with no reader is the single
+  most likely reason an always-on tool gets uninstalled, and it is
+  invisible: nothing in the UI can show a process the app has forgotten.
 
 ## [0.6.1] - 2026-08-11
 

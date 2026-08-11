@@ -501,3 +501,46 @@ samples() { wc -l < "$BATS_TEST_TMPDIR/stream.jsonl" | tr -d ' '; }
   run grep -c 'SIGUSR1' "$gui"
   [ "$output" -ge 1 ]
 }
+
+# ── Orphan cleanup ───────────────────────────────────────────────────────
+# A stream exists for a consumer. A network probe still running with no
+# reader is the single most likely reason an always-on tool gets
+# uninstalled, and it is invisible — nothing in the UI can show a process
+# the app no longer knows about.
+#
+# Taking EPIPE on a closed stdout is not enough on its own: measured,
+# SIGKILL of the GUI left the monitor probing 30 s later, because a pipe fd
+# survives in ways the child cannot audit. So the parent is checked
+# explicitly, with `kill -0` rather than $PPID — bash captures PPID once at
+# startup and still reports a dead pid after re-parenting to launchd.
+
+@test "the monitor exits when the process that started it dies" {
+  # An intermediate shell stands in for the app: it spawns the monitor,
+  # then is killed outright, exactly as a force-quit or a crash would be.
+  local out="$BATS_TEST_TMPDIR/pid"
+  bash -c "'$REPO/bin/netdiag' --monitor --monitor-fast-interval 2 \
+             >/dev/null 2>&1 & echo \$! > '$out'; sleep 60" &
+  local shell_pid=$!
+  sleep 4
+  local mon_pid; mon_pid="$(cat "$out")"
+  ps -o stat= -p "$mon_pid" >/dev/null 2>&1 || { echo "monitor never started"; return 1; }
+
+  kill -9 "$shell_pid" 2>/dev/null
+  # One cadence plus one in-flight probe is the honest bound.
+  local i
+  for i in $(seq 1 20); do
+    ps -o stat= -p "$mon_pid" >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+  kill -9 "$mon_pid" 2>/dev/null
+  echo "orphaned monitor was still running 20 s after its parent died"
+  return 1
+}
+
+@test "the parent check uses kill -0, not a re-read of PPID" {
+  # bash sets PPID once at startup and never updates it, so comparing it
+  # against itself would silently never fire — the guard would look
+  # present and do nothing.
+  run grep -cE 'kill -0 "\$parent_pid"' "$REPO/lib/monitor.sh"
+  [ "$output" -eq 1 ]
+}
