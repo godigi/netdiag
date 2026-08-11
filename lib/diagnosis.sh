@@ -133,9 +133,12 @@ diagnosis_run() {
     add_diag warn DH-1 "Your Mac's network-address lease from the router expires in $((DHCP_TIME_REMAINING_S / 60)) minutes. Normally it renews automatically, but if your router is rebooting or out of addresses at that moment, you'll suddenly lose the network with no warning. Keep an eye out."
   fi
 
-  # DH-2 — DHCP vs system DNS mismatch.
-  if [ -n "$DHCP_DNS_SERVERS" ] && [ -n "$SYS_RES" ] && ! printf '%s' "$DHCP_DNS_SERVERS" | grep -qF "$SYS_RES"; then
-    add_diag info DH-2 "Your router suggested $DHCP_DNS_SERVERS for name lookups, but your Mac is using $SYS_RES instead — somebody manually overrode it. Fine if you did it on purpose (1.1.1.1 and 8.8.8.8 are common choices); surprising if you didn't."
+  # DH-2 — DHCP vs system DNS mismatch. The comparison is deliberately
+  # narrow: see dns_is_manual_override in lib/common.sh for why matching
+  # only nameserver[0], and matching it as a substring, accused users of an
+  # override they hadn't made on any network with IPv6 router adverts.
+  if dns_is_manual_override "$DHCP_DNS_SERVERS" "$SYS_RES_ALL"; then
+    add_diag info DH-2 "Your router suggested $DHCP_DNS_SERVERS for name lookups, but your Mac is using $(dns_routable_resolvers "$SYS_RES_ALL") instead — somebody manually overrode it. Fine if you did it on purpose (1.1.1.1 and 8.8.8.8 are common choices); surprising if you didn't."
   fi
 
   # WAN-1 / WAN-1b / NAT-1 / UP-1 live in lib/wan.sh's diagnosis hook so

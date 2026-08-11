@@ -4,6 +4,57 @@ All notable changes to `netdiag` are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-08-11
+
+Fixes found by running netdiag against a live dual-stack network. All three
+share a shape: a measurement silently failed, and the failure was rendered
+as a confident statement about the user's network instead of as missing
+data. Two of them told the user something untrue about their own setup.
+
+### Fixed
+
+- **The progress line no longer flickers between two captions.**
+  `_progress_spinner_pid` holds exactly one pid, so starting a spinner
+  while one was already running overwrote the only handle on the old one.
+  It was never killed and kept repainting its own label every 100 ms, so
+  the terminal alternated between "Public reachability" and the live
+  section at 10 Hz for the rest of the run. `hdr` stopped the previous
+  spinner, but the two direct `progress_spin_start` callers in
+  `bin/netdiag` did not. `progress_spin_start` is now idempotent.
+- **A finished run no longer strands a spinner on your terminal.** Because
+  nothing tracked the orphan, it outlived the orchestrator and went on
+  writing over the shell prompt; three such processes were found still
+  running from earlier sessions. `progress_spin_stop` now also runs from
+  the `EXIT` trap, so Ctrl-C and early aborts clean up too.
+- **DH-2 no longer accuses you of a DNS override you never made.** On any
+  network with IPv6 router adverts, macOS puts the router's link-local at
+  `nameserver[0]` and the DHCP-handed IPv4 server at `nameserver[1]`. The
+  check compared only `nameserver[0]`, and compared it against DHCPv4
+  option 6, which cannot carry IPv6 addresses — so it reported "somebody
+  manually overrode it" while the router's own DNS was in use the whole
+  time. It now compares the full resolver list, ignores link-local entries
+  (which are router-advertised and cannot be set by hand), and matches
+  whole addresses: `grep -F` also meant a system resolver of
+  `192.168.15.1` "matched" a DHCP list of `192.168.15.10`, hiding a real
+  override. Same fix in the `DNS` section warning.
+- **IPv6 is no longer reported as broken on every machine that has it.**
+  macOS `ping6`'s `-W` is a boolean in the `[-DdfHmnNoqrRtvwW]` cluster —
+  it selects the old 03-draft node-information format, it is not a
+  timeout. `-W 2000` made `ping6` read `2000` as the hostname, so it
+  exited with "nodename nor servname provided" before sending a packet;
+  `2>/dev/null` hid the message and the empty result was defaulted to
+  100% loss. Every IPv6-capable run therefore raised V6-1 and a warning
+  Report row, with the self-contradicting evidence "loss 100%, AAAA OK,
+  TCP6 OK". `with_timeout` now supplies the bound, and an unparseable
+  result is recorded as unknown rather than as total loss.
+
+### Added
+
+- `tests/test_regressions.bats` — 19 guards covering all three bugs,
+  including the spinner-lifecycle invariant, whole-address override
+  matching, and a `ping6` flag check that runs against loopback so it
+  needs no network.
+
 ## [Unreleased]
 
 ### Known

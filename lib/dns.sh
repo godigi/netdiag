@@ -23,11 +23,17 @@ dns_run() {
     DNS_LINES+="${r}|${n}||FAIL"$'\n'
     return 1
   }
-  SYS_RES="$(scutil --dns 2>/dev/null | awk '/nameserver\[0\]/{print $3; exit}')"
-  [ -n "$SYS_RES" ] && info "System resolver: $SYS_RES"
-  if [ -n "$DHCP_DNS_SERVERS" ] && [ -n "$SYS_RES" ] \
-     && ! printf '%s' "$DHCP_DNS_SERVERS" | grep -qF "$SYS_RES"; then
-    warn "DHCP handed out '$DHCP_DNS_SERVERS' but the system resolver is $SYS_RES — manual DNS override?"
+  # scutil prints one resolver block per scope, so the same nameserver shows
+  # up several times — dedupe but keep configured order. SYS_RES stays the
+  # first entry (the one dig is aimed at, scope suffix and all); SYS_RES_ALL
+  # is what the DHCP comparison needs, because on a dual-stack network the
+  # DHCP-handed server sits at index 1 behind the router's link-local.
+  SYS_RES_ALL="$(scutil --dns 2>/dev/null \
+    | awk '/nameserver\[[0-9]+\]/ && !seen[$3]++ { printf "%s%s", (n++ ? " " : ""), $3 }')"
+  SYS_RES="${SYS_RES_ALL%% *}"
+  [ -n "$SYS_RES_ALL" ] && info "System resolvers: $SYS_RES_ALL"
+  if dns_is_manual_override "$DHCP_DNS_SERVERS" "$SYS_RES_ALL"; then
+    warn "DHCP handed out '$DHCP_DNS_SERVERS' but the system is using $(dns_routable_resolvers "$SYS_RES_ALL") — manual DNS override?"
   fi
   dns_names=( apple.com cloudflare.com )
   [ -n "$TARGET" ] && dns_names+=( "$TARGET" )
@@ -47,5 +53,6 @@ dns_run() {
     setvar DNS_OK "$DNS_OK"
     setvar DNS_LINES "$DNS_LINES"
     setvar SYS_RES "$SYS_RES"
+    setvar SYS_RES_ALL "$SYS_RES_ALL"
   fi
 }

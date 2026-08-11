@@ -8,6 +8,15 @@
 #
 # Safe to run in parallel — doesn't contend on the WAN link materially.
 
+# Pull the loss percentage out of a ping6 summary. Returns empty — never a
+# number — when there is no statistics line to read, so callers can tell
+# "the probe failed" apart from "the probe measured total loss".
+ipv6_parse_ping_loss() {
+  printf '%s\n' "$1" \
+    | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' \
+    | head -1
+}
+
 ipv6_run() {
   hdr "IPv6"
   if [ -n "$INTERFACE" ]; then
@@ -23,11 +32,22 @@ ipv6_run() {
     [ -n "$IPV6_GATEWAY" ] && info "v6 default route: $IPV6_GATEWAY"
 
     local ping6_out aaaa
-    ping6_out="$(ping6 -c 5 -i 0.2 -W 2000 2606:4700:4700::1111 2>/dev/null || true)"
-    IPV6_PING_LOSS="$(printf '%s\n' "$ping6_out" \
-      | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
-    IPV6_PING_LOSS="${IPV6_PING_LOSS:-100}"
-    if [ "${IPV6_PING_LOSS%.*}" -eq 0 ]; then
+    # No -W here. Unlike ping(8) and Linux's ping, macOS ping6's -W is a
+    # *boolean* — it sits in the [-DdfHmnNoqrRtvwW] cluster and selects the
+    # old 03-draft node-information packet format. Passing "-W 2000" made
+    # ping6 read 2000 as the hostname, so it exited with "nodename nor
+    # servname provided" before sending a single packet. 2>/dev/null hid the
+    # message and the empty result was defaulted to 100% loss, so every
+    # IPv6-capable machine reported a permanently broken IPv6 stack.
+    # with_timeout supplies the wall-clock bound -W was meant to provide.
+    ping6_out="$(with_timeout 6 ping6 -c 5 -i 0.2 2606:4700:4700::1111 2>/dev/null || true)"
+    IPV6_PING_LOSS="$(ipv6_parse_ping_loss "$ping6_out")"
+    if [ -z "$IPV6_PING_LOSS" ]; then
+      # Empty means the measurement itself failed, which is not evidence
+      # that IPv6 is down. Report it as unknown and let the AAAA and TCP6
+      # probes speak: V6-1 and the Report card both treat "" as no data.
+      warn "ping6 to 2606:4700:4700::1111 returned no statistics — IPv6 loss unknown."
+    elif [ "${IPV6_PING_LOSS%.*}" -eq 0 ]; then
       ok "ping6 2606:4700:4700::1111: 0% loss"
     else
       bad "ping6 2606:4700:4700::1111: ${IPV6_PING_LOSS}% loss"

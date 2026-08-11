@@ -50,6 +50,12 @@ NETDIAG_COMPLETED=0
 # shellcheck disable=SC2317,SC2329
 _netdiag_on_exit() {
   local rc=$?
+  # Reap the progress spinner before anything else. It's a background
+  # process, so on Ctrl-C or an early abort it would otherwise survive the
+  # orchestrator and keep repainting a stale caption over the user's shell
+  # prompt. Guarded because the trap is installed before lib/common.sh is
+  # sourced, so an early failure can reach here with the function undefined.
+  command -v progress_spin_stop >/dev/null 2>&1 && progress_spin_stop
   [ "$NETDIAG_COMPLETED" -eq 1 ] && exit "$rc"
   [ "$rc" -eq 0 ] && exit 0
   [ "$rc" -eq 3 ] && exit 3
@@ -79,7 +85,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-NETDIAG_VERSION="0.5.1"
+NETDIAG_VERSION="0.5.2"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping

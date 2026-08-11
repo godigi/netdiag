@@ -149,6 +149,15 @@ progress_clear() {
 _progress_spinner_pid=""
 progress_spin_start() {
   _progress_active || return 0
+  # Idempotent by design. _progress_spinner_pid holds exactly one pid, so
+  # starting a spinner while another is running used to overwrite the only
+  # handle we had on the old one: it was never killed, kept repainting its
+  # own label every 100 ms, and the terminal flickered between two captions
+  # at 10 Hz. Because nothing else tracked it, the orphan also outlived the
+  # run and went on writing to the user's shell after netdiag had exited.
+  # hdr() already stops the previous spinner; the direct callers in
+  # bin/netdiag (the parallel batch, --wifi-only) did not.
+  progress_spin_stop
   local label="$1"
   (
     local frames=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
@@ -173,6 +182,60 @@ ok()   { say "  ${C_GRN}✓${C_RESET} $*"; }
 warn() { say "  ${C_YEL}⚠${C_RESET} $*"; }
 bad()  { say "  ${C_RED}✗${C_RESET} $*"; }
 info() { say "  ${C_DIM}·${C_RESET} $*"; }
+
+# ── DHCP-vs-system DNS comparison ────────────────────────────────────────
+# Lives here rather than in lib/dns.sh because lib/diagnosis.sh needs the
+# same predicate and must not depend on the DNS module being sourced.
+#
+# A link-local resolver is always the router's own RA/RDNSS advertisement:
+# macOS won't accept a scoped fe80::…%en0 address typed into System
+# Settings, so such an entry can never be a user override. Strip them
+# before reporting or comparing.
+dns_routable_resolvers() {
+  local s out=""
+  local -a sys_arr=()
+  read -r -a sys_arr <<<"${1//,/ }"
+  for s in "${sys_arr[@]:-}"; do
+    case "$s" in
+      ""|fe80:*|FE80:*) continue ;;
+    esac
+    out+="${out:+ }$s"
+  done
+  printf '%s' "$out"
+}
+
+# True (exit 0) only when the system resolver list is a genuine *manual*
+# replacement of what DHCP handed out — i.e. not one of the DHCP-supplied
+# servers is actually in use. Three ways the original test (is nameserver[0]
+# a substring of the DHCP list?) got this wrong on an ordinary dual-stack
+# home network:
+#   - macOS configures several resolvers. Where the router sends IPv6 RAs,
+#     its link-local lands at nameserver[0] and the DHCP-handed v4 server
+#     at nameserver[1], so reading only [0] reported an override that had
+#     never happened — the router's own DNS was in use the whole time.
+#   - DHCPv4 option 6 cannot carry IPv6 addresses, so a v6 resolver can
+#     never match it. Comparing the two families is a category error.
+#   - grep -F matches substrings: a system resolver of 192.168.15.1
+#     "matched" a DHCP list of 192.168.15.10 and hid a real override.
+# Args: $1 = DHCP-handed server list, $2 = full system resolver list.
+#       Either may be space- and/or comma-separated.
+dns_is_manual_override() {
+  local s d routable
+  local -a dhcp_arr=() sys_arr=()
+  read -r -a dhcp_arr <<<"${1//,/ }"
+  routable="$(dns_routable_resolvers "$2")"
+  read -r -a sys_arr <<<"$routable"
+  # No DHCP offer or no routable resolver means no evidence either way.
+  # Silence beats a confident guess about the user's own configuration.
+  [ "${#dhcp_arr[@]}" -gt 0 ] && [ -n "${dhcp_arr[0]:-}" ] || return 1
+  [ "${#sys_arr[@]}" -gt 0 ] || return 1
+  for s in "${sys_arr[@]}"; do
+    for d in "${dhcp_arr[@]}"; do
+      [ "$s" = "$d" ] && return 1
+    done
+  done
+  return 0
+}
 
 # Pipeline-target replacement for `tee -a "$LOG"`. Writes to log unconditionally;
 # also writes to stdout iff _should_print_stdout would.

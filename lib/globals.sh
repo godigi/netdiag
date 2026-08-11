@@ -86,7 +86,8 @@ MTU_EFFECTIVE=""
 
 # DNS (lib/dns.sh)
 DNS_OK=0
-SYS_RES=""
+SYS_RES=""               # first configured nameserver — what dig is aimed at
+SYS_RES_ALL=""           # every configured nameserver, deduped, in order
 DNS_LINES=""             # one "resolver|name|answer|OK|FAIL" per line
 
 # IPv6 (lib/ipv6.sh)
