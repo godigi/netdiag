@@ -1,21 +1,22 @@
-netdiag  2026-08-11-100551
-log: /Users/bfreeman/net-diag/2026-08-11-100551.log
+netdiag  2026-08-11-105923
+log: /Users/bfreeman/net-diag/2026-08-11-105923.log
 
 ── Report ──
-  ⚠  IPv6                available but broken — see below
   ⚠  Packet size         1480 bytes · below standard · some sites may hang
-  ⚠  WiFi channel        crowded · 6 neighbouring networks
+  ⚠  WiFi channel        crowded · 4 neighbouring networks
 
   ✓  Network             en0 · WiFi 5GHz ch52
-  ✓  Router              192.168.15.1 · 0% loss · 3.9 ms · ±0.8 ms jitter
+  ✓  Router              192.168.15.1 · 0% loss · 5.9 ms · ±10.4 ms jitter
   ✓  Internet            TELEFONICA BRASIL S.A ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 57 ms · ±1.3 ms jitter
+  ✓  Latency             1.1.1.1 · 58 ms · ±7.0 ms jitter
+  ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
   ✓  DNS                 working
+  ✓  IPv6                working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Router config       UPnP disabled (safer default)
   ✓  Hosts file          clean (only macOS defaults)
   ·  VPN                 not active
-  ·  Speed               not tested (run with --speed)
+  ·  Speed               measuring now — result prints below (~1 min)
 
 ── What we found ──
   ⚠ Some websites load fine and others hang forever loading — your network
@@ -24,24 +25,15 @@ log: /Users/bfreeman/net-diag/2026-08-11-100551.log
     if it persists, ask your ISP or check your router's WAN-MTU /
     MSS-clamping setting.
 
-  ⚠ Big sites (Google, YouTube, Cloudflare-hosted apps) feel sluggish for
-    the first second of every page load — your network has a half-working
-    modern-internet (IPv6) setup. Your Mac tries the new way, waits ~250
-    ms for it to fail, then falls back to the old way. Reboot the router;
-    if it persists, ask your ISP whether IPv6 is actually enabled
-    (technical: loss 20.0%, AAAA OK, TCP6 OK — Happy Eyeballs is masking
-    the failure).
-
-  ⚠ Your WiFi channel (52) is shared with 6 neighbouring networks — they
+  ⚠ Your WiFi channel (52) is shared with 4 neighbouring networks — they
     all interfere with each other. Switch to a less-crowded channel in
     your router's WiFi settings (good 5 GHz choices most routers don't
     pick automatically: 149, 153, 157, 161).
 
-  ⚠ Your outgoing connections are landing on multiple internet providers
-    (AS18881 AS10429). This is usually intentional (multi-WAN router) but
-    explains some odd behaviour: services may complain that your IP keeps
-    changing, and some apps may behave inconsistently. Nothing to fix if
-    you set this up on purpose.
+── Speed test ──
+  · Running speedtest-cli...
+  ✓ Down 119.8 Mbps · Up 96.9 Mbps · 101.454 ms
+  · Server: st-cabanorte-slo1.cablevisionfibertel.com.ar:8080
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-11-100551.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-11-105923.log

@@ -51,10 +51,52 @@ GW_LOSS=""
 GW_LATENCY=""
 GW_JITTER=""           # stddev from ping summary, ms
 
+# ── Packet-loss thresholds ───────────────────────────────────────────────
+# Shared by the gateway rules (G1/G2/G3) and the internet-side rules
+# (L1/L2) so the Report card and the diagnoses can never disagree about
+# what counts as lossy.
+#
+# Both floors are expressed in whole dropped packets out of the 20 each
+# probe sends, so each threshold lands on a value the probe can actually
+# report: the quantum is 5%, warn is two drops, critical is four.
+#
+#   warn (L2, G3):        2+ drops of 20  → 10%
+#   critical (L1, G1/G2): 4+ drops of 20  → 20%
+#
+# Why warn is two drops and not one: this is a judgement call, not a
+# measurement. A clean link here reports 0.0% on both targets in every
+# trial, so a 5% floor would not fire falsely on *this* network — but a
+# single transient drop in twenty is an ordinary event on real links, and
+# warning on it across the whole user base would be noise. Two drops is a
+# firmer signal and still well clear of the 20% critical.
+#
+# (An earlier revision justified this floor with a measured 5% "noise
+# level" at 0.1 s spacing. That reading was an artefact of ping's -t flag
+# truncating the probe before the last reply arrived — see the header of
+# lib/internet_ping.sh. With -t removed the noise level is 0.0%, and the
+# thresholds now rest on the judgement above rather than on that number.)
+LOSS_WARN_PCT=10
+LOSS_CRIT_PCT=20
+
+# 20 packets × 0.2 s ≈ 4 s per probe. The two internet targets are probed
+# concurrently, so the wall-clock cost is one probe's worth. Both counts
+# assume the caller passes no -t: on macOS that flag is a deadline for the
+# whole run and silently truncates the probe to whatever fits.
+LOSS_PROBE_COUNT=20
+LOSS_PROBE_INTERVAL=0.2
+
 # Internet-side ping (lib/internet_ping.sh)
 INET_RTT_AVG=""
 INET_RTT_JITTER=""
 INET_LOSS=""
+# A second, independent anycast resolver. Cloudflare and Google rate-limit
+# ICMP under load, so a single lossy target is as likely to be the target's
+# policy as the user's network. L1 escalates to critical only when both
+# agree; one lossy and one clean is a warning at most.
+INET_TARGET="1.1.1.1"
+INET_TARGET_ALT="8.8.8.8"
+INET_LOSS_ALT=""
+INET_RTT_AVG_ALT=""
 
 # Public reach / target ping (lib/public.sh)
 PUBLIC_OK=0

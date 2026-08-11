@@ -486,3 +486,53 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
   [[ "$result" != *"fe91:2f00"* ]]
   [[ "$result" == *"[redacted]"* ]]
 }
+
+# ── VPN-1 ────────────────────────────────────────────────────────────────
+# docs/DIAGNOSIS-RULES.md has specified VPN-1 since v0.1.0 and the README
+# lists it, but lib/vpn.sh only ever printed a section line — no add_diag
+# call existed, so an active VPN never reached the Diagnosis section.
+
+@test "diagnosis: VPN-1 fires when a VPN carries the default route" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.2.0.1"
+  VPN_ACTIVE=1; VPN_TYPE="tailscale"; VPN_NAME="tailscale (macbook)"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]:-} " == *" VPN-1 "* ]]
+}
+
+@test "diagnosis: VPN-1 is info severity, so it cannot change the exit code" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.2.0.1"
+  VPN_ACTIVE=1; VPN_TYPE="managed"; VPN_NAME="Work VPN"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  local i
+  for i in "${!DIAG_RULE[@]}"; do
+    if [ "${DIAG_RULE[$i]}" = "VPN-1" ]; then
+      [ "${DIAG_SEV[$i]}" = "info" ]
+    fi
+  done
+  [ "$MAX_SEVERITY" -eq 0 ]
+}
+
+@test "diagnosis: VPN-1 names the VPN so the user knows which one" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.2.0.1"
+  VPN_ACTIVE=1; VPN_TYPE="tailscale"; VPN_NAME="tailscale (macbook)"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  run diagnosis_run
+  [[ "$output" == *"tailscale (macbook)"* ]]
+}
+
+@test "diagnosis: VPN-1 stays quiet with no VPN" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="192.168.1.1"; VPN_ACTIVE=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]:-} " != *" VPN-1 "* ]]
+}

@@ -85,7 +85,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-NETDIAG_VERSION="0.5.2"
+NETDIAG_VERSION="0.6.0"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
@@ -95,7 +95,16 @@ NO_GPING=1
 GPING_DECISION="unset"   # unset | opted_in | opted_out
 QUICK=0
 NO_BUFFERBLOAT=0
-SPEED=0
+# The speed test runs by default from v0.6.0. "Is my internet slow?" is the
+# single most common reason anyone runs this tool, and answering it with
+# "not tested (run with --speed)" made the default report useless for the
+# question it was opened to settle. --no-speed opts out; --quick skips it.
+#
+# SPEED_EXPLICIT records that the user actually typed --speed, which is the
+# only way to keep the test under --quick. Without the distinction, "on by
+# default" and "--quick skips it" contradict each other.
+SPEED=1
+SPEED_EXPLICIT=0
 NO_SPEED=0
 JSON_MODE=0
 QUIET=0
@@ -133,7 +142,7 @@ while [ "$#" -gt 0 ]; do
     --no-gping)       NO_GPING=1; GPING_DECISION="opted_out" ;;
     --quick)          QUICK=1 ;;
     --no-bufferbloat) NO_BUFFERBLOAT=1 ;;
-    --speed)          SPEED=1 ;;
+    --speed)          SPEED=1; SPEED_EXPLICIT=1 ;;
     --no-speed)       NO_SPEED=1 ;;
     --json)           JSON_MODE=1 ;;
     --quiet)          QUIET=1 ;;
@@ -170,7 +179,7 @@ Positional:
 
 Flags:
   --quick           skip slow checks (bufferbloat, per-hop loss, speed test,
-                    WiFi scan)
+                    internet packet-loss probe, WiFi scan)
   --gping           after the report, launch a live ping monitor on the
                     discovered hops (gping must be installed). Without
                     this flag you'll be prompted; default is no.
@@ -178,8 +187,10 @@ Flags:
                     watchers; equivalent to answering "no" upfront)
   --no-bufferbloat  skip the 100 MB / 10 s bufferbloat probe (saves data on
                     metered links)
-  --speed           run a speedtest (down/up/latency/jitter); ~30 s and ~50 MB
-  --no-speed        forbid the speedtest even if --speed was passed
+  --speed           run the speedtest even under --quick (it is already on
+                    by default in a normal run; ~30 s and ~50 MB)
+  --no-speed        skip the speedtest — use on metered or slow links, and
+                    to bring a full run back under ~30 s
   --json            emit one JSON object on stdout; no human-readable output
                     unless --log PATH is also passed
   --quiet           print only the diagnoses; suppress the Report card too
@@ -349,14 +360,24 @@ launch_parallel dns             dns_run
 launch_parallel ipv6            ipv6_run
 launch_parallel tcp_reach       tcp_reach_run
 launch_parallel ntp             ntp_run
-launch_parallel internet_ping   internet_ping_run
 launch_parallel hosts           hosts_run
 launch_parallel wifi_scan       wifi_scan_run
 launch_parallel wifi_disconnect wifi_disconnect_run
 launch_parallel wan_lb          wan_load_balancing_run
 launch_parallel wan_upnp        wan_upnp_run
-progress_spin_start "Running parallel checks (DNS, IPv6, TCP, NTP, latency, hosts, WiFi, dual-WAN, UPnP)"
+progress_spin_start "Running parallel checks (DNS, IPv6, TCP, NTP, hosts, WiFi, dual-WAN, UPnP)"
 run_timed parallel_batch collect_parallel
+progress_spin_stop
+
+# Internet-side loss/latency runs serially, on a deliberately quiet link.
+# It was in the batch above until v0.6.0, where it began feeding the L1
+# critical: measured while DNS, TCP, NTP, the WiFi scan and two WAN probes
+# all competed for the same interface, it reported 30% loss on a link that
+# an isolated probe showed to be clean. A number that decides a critical
+# diagnosis has to be measured without the tool's own traffic in the way.
+# Placed before bufferbloat, which saturates the link on purpose.
+progress_spin_start "Measuring internet latency and packet loss"
+run_timed internet_ping internet_ping_run
 progress_spin_stop
 
 run_timed bufferbloat bufferbloat_run
@@ -364,9 +385,26 @@ run_timed mtu         mtu_run
 run_timed traceroute  traceroute_run
 run_timed nat         wan_double_nat_run  # pure parse over TRACE_LINES
 run_timed mtr         mtr_run
-run_timed speedtest   speedtest_run
+
 headline_run     # one-line punchline of everything above
 diagnosis_run
+
+# The speed test runs LAST, after the Report card and the diagnoses have
+# already been printed. It is by far the most expensive phase (~58 s of a
+# ~95 s run with speedtest-cli), and every check that matters for a
+# diagnosis has completed by now — nothing in diagnosis_run reads
+# SPEEDTEST_*, only the JSON emitter does. Running it before the report
+# meant the user stared at a spinner for a minute before learning anything
+# about their network, including in the case where the answer was "your
+# router is dropping packets" and they'd have acted on it immediately.
+#
+# It still cannot be parallelised: it deliberately saturates the link, so
+# it would corrupt every latency, loss, and bufferbloat number if it
+# overlapped them. Last is the only safe place for it.
+run_timed speedtest   speedtest_run
+
+# output_run comes after, so --json and the log still carry the speed
+# figures — only the human-readable ordering changed.
 output_run
 
 # gping prompt: if the user didn't pass --gping or --no-gping and we're

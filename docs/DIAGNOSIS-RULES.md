@@ -74,17 +74,134 @@ or P2. That branch points the user at a full run rather than guessing.
 - Severity: `critical`
 - Recommendation: router itself is misbehaving — reboot it.
 
+### G3 — Gateway loss below the critical floor
+
+- Trigger: `LOSS_WARN_PCT <= gateway.loss_pct < 20` (i.e. 10–19%)
+- Severity: `warn`
+- Evidence: gateway loss%.
+- Recommendation: on WiFi, signal or interference; on ethernet, the cable
+  or the port.
+- Rationale: G1/G2 start at 20%, and until v0.6.0 nothing covered the band
+  beneath them. The Report card coloured its Router row yellow from 1%
+  upward, but colour is not a diagnosis: `ok()`/`warn()`/`bad()` are pure
+  printers and only `add_diag` moves `MAX_SEVERITY`. So 15% loss to the
+  user's own router printed a yellow row directly above "Nothing obviously
+  wrong — your network looks healthy" and exited 0. At that rate every
+  page load stalls on a retransmit and calls break up.
+
 ### P1 — DNS down, public unreachable
 
-- Trigger: `public.ok == false AND gateway.loss_pct == 0 AND dns.ok == false`
+- Trigger: `public.ok == false AND gateway.loss_pct < 20 AND dns.ok == false`
 - Severity: `critical`
 - Recommendation: DNS or upstream ISP outage.
 
 ### P2 — Public unreachable, DNS up
 
-- Trigger: `public.ok == false AND gateway.loss_pct == 0 AND dns.ok == true`
+- Trigger: `public.ok == false AND gateway.loss_pct < 20 AND dns.ok == true`
 - Severity: `critical`
 - Recommendation: ISP-side outage.
+
+> **Threshold amendment (v0.6.0).** Both guards were `gateway.loss_pct == 0`
+> exactly. Adding G3 exposed the hole that created: an outage measured
+> alongside, say, 8% gateway loss matched neither P1/P2 (loss was not zero)
+> nor G1/G2 (loss was under 20), so a total loss of internet produced no
+> diagnosis at all. The guard now means "the router is not the problem",
+> not "the router is flawless". It is `loss_below`, not `! loss_at_least`,
+> so a gateway that was never measured does not read as clean.
+
+### L1 — Severe internet-side packet loss
+
+- Trigger: `inet.loss_pct >= 20 AND inet.loss_pct_alt >= 20 AND
+  gateway.loss_pct < 10 AND NOT ICMP-1`
+- Severity: `critical`
+- Evidence: loss% to both public targets, gateway loss% for contrast.
+- Recommendation: the fault is past the user's own router — the line, the
+  modem, or the ISP. Reboot the modem once, then report the loss figures.
+- Rationale: this is the gap that motivated the whole v0.6.0 rule set.
+  `INET_LOSS` had been measured, written to JSON, and used to colour a
+  Report-card row since v0.4.0, but **no rule ever read it**. P1/P2 could
+  not cover the case because they require `public.ok == false`, and under
+  heavy-but-partial loss curl still succeeds — TCP simply retransmits its
+  way through. The result: 40% loss upstream of a clean router printed a
+  red "Latency" row immediately above "Nothing obviously wrong" and exited
+  0. That is precisely the state a user describes as "the internet is
+  down" — everything technically works, nothing finishes.
+- Why two targets: 1.1.1.1 and 8.8.8.8 are probed independently and both
+  must exceed the threshold. One lossy target and one clean one is far
+  more likely to be that anycast operator rate-limiting ICMP than a fault
+  on the user's line, and caps out at L2.
+
+### L2 — Moderate internet-side packet loss
+
+- Trigger: `(inet.loss_pct >= 10 OR inet.loss_pct_alt >= 10) AND
+  gateway.loss_pct < 10 AND NOT L1 AND NOT ICMP-1`
+- Severity: `warn`
+- Evidence: loss% to both public targets.
+- Recommendation: re-run when it feels worst; report if it persists. Often
+  time-of-day congestion on the ISP's local segment.
+
+### ICMP-1 — Ping filtered upstream, real traffic fine
+
+- Trigger: `inet.loss_pct == 100 AND inet.loss_pct_alt == 100 AND
+  public.ok == true AND tcp_reach.any_ok == true`
+- Severity: `info`
+- Evidence: both targets at 100%, contrasted with working curl and TCP.
+- Recommendation: none — the connection is fine, the latency numbers just
+  can't be measured.
+- Rationale: total loss to both public targets *while curl fetched a page
+  and TCP/443 connected* is not an outage; real 100% loss would have taken
+  both of those with it. It is an ISP or middlebox dropping ICMP wholesale,
+  which is common. Without this guard L1 would announce an ISP fault on a
+  perfectly good link — the same false-critical shape as the ping6 bug
+  fixed in v0.5.2. ICMP-1 is checked first and suppresses L1 and L2.
+  TCP-1 covers the analogous case one hop earlier, at the gateway.
+
+### Loss thresholds and how the probe is measured
+
+`LOSS_WARN_PCT` (10) and `LOSS_CRIT_PCT` (20) are defined in
+`lib/globals.sh` and shared by every rule above *and* by the Report card,
+so a coloured row always has a matching diagnosis beneath it.
+
+Each probe sends 20 packets at 0.2 s spacing, which puts the reportable
+quantum at 5%. Both thresholds land on a whole number of dropped packets —
+warn at two, critical at four — and a bats test enforces that, because the
+original 8-packet probe made every threshold below 12.5% unexpressible.
+
+Warn sits at two drops rather than one as a **judgement call**: a clean
+link reports 0.0% on both targets in every trial, so a 5% floor would not
+misfire here, but a single transient drop in twenty is an ordinary event
+on real links and warning on it across the user base would be noise.
+
+#### ping's `-t` flag corrupted every loss measurement
+
+Worth recording, because it invalidated an earlier version of this very
+section. On macOS, `ping -t` is a deadline for the **whole run** — not a
+per-packet TTL, which is what `-c 8 -t 2` looks like it means. Measured:
+
+| Command | Result |
+|---|---|
+| `ping -c 20 -i 0.2 -t 2` | **10** packets transmitted — half the probe silently discarded |
+| `ping -c 20 -i 0.1 -t 2` | 20 sent, 19 received, **"5.0% loss"** — the last reply lands after the deadline |
+| `ping -c 20 -i 0.1` | 20/20, **0.0%**, every trial, both targets |
+| `ping -c 20 -i 0.2` | 20/20, **0.0%**, every trial, both targets |
+
+So a healthy link reported a permanent 5% loss floor, and a probe asked
+for 20 packets sent 10. An earlier draft of this document explained that
+5% as ICMP rate-limiting by the anycast operators and set the warn floor
+above it on that basis — the explanation was wrong, and the evidence for
+it was the bug. `-t` is now absent from both loss probes; `with_timeout`
+supplies the outer bound instead, since it cannot corrupt the measurement.
+A regression test greps for the flag's return.
+
+#### The probe runs serially
+
+`internet_ping_run` was moved out of the parallel batch in v0.6.0.
+Measuring loss while DNS, TCP, NTP, the WiFi scan and two WAN checks
+compete for the same interface measures the tool, not the network. The
+first full run with the probe in the batch reported 30% loss on a link an
+isolated probe showed to be clean; most of that was the `-t` truncation
+above, but the methodology is wrong regardless, and this number now
+decides a critical diagnosis. It costs ~4 s.
 
 ### D1 — Partial DNS, internet reachable
 
@@ -159,11 +276,12 @@ All of the below are implemented and can fire.
 - Recommendation: the "gateway" line is the VPN endpoint, not your LAN
   router. RTT, loss, and traceroute reflect the tunnel — for a true
   picture of the local link, disconnect the VPN and run netdiag again.
-- **Status: specified but not yet emitted.** `lib/vpn.sh` prints a section
-  line and stops there — no `add_diag` call exists, so an active VPN does
-  not currently reach the Diagnosis section even though this file and the
-  README have both promised it since v0.1.0. The implementation is written
-  and tested and lands with the next release; this note goes away with it.
+- Trigger: `vpn.active == true`. Severity: `info`, so it never changes the
+  exit code — an intentional VPN is not a fault.
+- Emitted since v0.6.0. Between v0.1.0 and v0.5.2 this file and the README
+  both promised the rule while `lib/vpn.sh` only printed a section line and
+  no `add_diag` call existed anywhere, so an active VPN never reached the
+  Diagnosis section at all.
 - Rationale: users blame the router when the VPN is the actual
   bottleneck. Surfacing this up-front saves the support volley.
 ### TCP-1 — TCP works, ICMP is filtered

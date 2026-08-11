@@ -95,9 +95,14 @@ headline_run() {
 
   # ── Router (gateway) — loss / latency / jitter ────────────────────────
   if [ -n "$GATEWAY" ] && [ -n "$GW_LOSS" ] && [ -n "$GW_LATENCY" ]; then
+    # Thresholds are the shared LOSS_* constants, so a coloured row always
+    # has a matching diagnosis below it. They used to diverge: the row went
+    # yellow at 1% while the lowest gateway rule fired at 20%, so the band
+    # between produced a warning-coloured card over the words "Nothing
+    # obviously wrong" and an exit code of 0.
     local sev=ok
-    [ "${GW_LOSS%.*}" -ge 1 ]  && sev=warn
-    [ "${GW_LOSS%.*}" -ge 20 ] && sev=bad
+    loss_at_least "$GW_LOSS" "$LOSS_WARN_PCT" && sev=warn
+    loss_at_least "$GW_LOSS" "$LOSS_CRIT_PCT" && sev=bad
     local rline
     rline="$GATEWAY · ${GW_LOSS%.*}% loss · $(printf '%.1f' "$GW_LATENCY" 2>/dev/null || printf '%s' "$GW_LATENCY") ms"
     [ -n "$GW_JITTER" ] && rline="$rline · ±$(printf '%.1f' "$GW_JITTER" 2>/dev/null || printf '%s' "$GW_JITTER") ms jitter"
@@ -116,19 +121,39 @@ headline_run() {
   # ── Internet latency / jitter (always-on probe to 1.1.1.1) ────────────
   if [ -n "$INET_RTT_AVG" ]; then
     local sev=ok
-    [ -n "$INET_LOSS" ] && [ "${INET_LOSS%.*}" -ge 1 ] && sev=warn
-    [ -n "$INET_LOSS" ] && [ "${INET_LOSS%.*}" -ge 20 ] && sev=bad
+    loss_at_least "$INET_LOSS" "$LOSS_WARN_PCT" && sev=warn
+    # bad only when both targets agree, matching L1's critical guard —
+    # one lossy anycast target is that operator rate-limiting ICMP.
+    loss_at_least "$INET_LOSS"     "$LOSS_CRIT_PCT" \
+      && loss_at_least "$INET_LOSS_ALT" "$LOSS_CRIT_PCT" && sev=bad
     # High jitter (> 30 ms stddev) marks an unstable connection even at low loss.
     if [ -n "$INET_RTT_JITTER" ] && awk -v j="$INET_RTT_JITTER" 'BEGIN{exit !(j > 30)}'; then
       [ "$sev" = ok ] && sev=warn
     fi
     local iline
-    iline="1.1.1.1 · $(printf '%.0f' "$INET_RTT_AVG" 2>/dev/null || printf '%s' "$INET_RTT_AVG") ms"
+    iline="${INET_TARGET} · $(printf '%.0f' "$INET_RTT_AVG" 2>/dev/null || printf '%s' "$INET_RTT_AVG") ms"
     [ -n "$INET_RTT_JITTER" ] && iline="$iline · ±$(printf '%.1f' "$INET_RTT_JITTER" 2>/dev/null || printf '%s' "$INET_RTT_JITTER") ms jitter"
     [ -n "$INET_LOSS" ] && [ "${INET_LOSS%.*}" -gt 0 ] && iline="$iline · ${INET_LOSS}% loss"
     _row "$sev" "Latency" "$iline"
   elif [ "$QUICK" -eq 1 ]; then
     _row "" "Latency" "skipped (--quick)"
+  fi
+
+  # ── Packet loss (both public targets, side by side) ──────────────────
+  # Its own row rather than a suffix on Latency: loss and latency are
+  # different faults with different fixes, and loss is the one users
+  # experience as "the internet is down".
+  if loss_measured "$INET_LOSS" || loss_measured "$INET_LOSS_ALT"; then
+    local lsev=ok lline
+    loss_at_least "$INET_LOSS" "$LOSS_WARN_PCT" && lsev=warn
+    loss_at_least "$INET_LOSS_ALT" "$LOSS_WARN_PCT" && lsev=warn
+    loss_at_least "$INET_LOSS"     "$LOSS_CRIT_PCT" \
+      && loss_at_least "$INET_LOSS_ALT" "$LOSS_CRIT_PCT" && lsev=bad
+    lline="${INET_LOSS:-?}% to ${INET_TARGET} · ${INET_LOSS_ALT:-?}% to ${INET_TARGET_ALT}"
+    [ "$lsev" = ok ] && lline="$lline · clean"
+    _row "$lsev" "Packet loss" "$lline"
+  elif [ "$QUICK" -eq 1 ]; then
+    _row "" "Packet loss" "skipped (--quick)"
   fi
 
   # ── DNS ──────────────────────────────────────────────────────────────
@@ -159,14 +184,28 @@ headline_run() {
   fi
 
   # ── Speed test (only if --speed was passed and got a result) ──────────
+  # Ordering matters: SPEED defaults to 1 from v0.6.0, so the old "elif
+  # SPEED -eq 1 → test ran but returned no result" branch would have
+  # claimed a failed test on every machine that simply skipped it. Each
+  # reason for having no number is now checked before that fallback.
   if [ -n "$SPEEDTEST_DOWN_MBPS" ]; then
     _row ok "Speed" "${SPEEDTEST_DOWN_MBPS} Mbps down · ${SPEEDTEST_UP_MBPS} Mbps up · ${SPEEDTEST_LATENCY_MS} ms"
-  elif [ "$SPEED" -eq 1 ]; then
-    _row warn "Speed" "test ran but returned no result"
-  elif [ "$QUICK" -eq 1 ]; then
+  elif speedtest_will_run; then
+    # The card is printed before the test now, so there is no result to
+    # show yet. Promise it rather than claiming it wasn't measured.
+    _row "" "Speed" "measuring now — result prints below (~1 min)"
+  elif [ "$NO_SPEED" -eq 1 ]; then
+    _row "" "Speed" "skipped (--no-speed)"
+  elif [ "$QUICK" -eq 1 ] && [ "${SPEED_EXPLICIT:-0}" -eq 0 ]; then
     _row "" "Speed" "skipped (--quick)"
+  elif [ "$PUBLIC_OK" -eq 0 ]; then
+    _row "" "Speed" "not measured (no internet to test against)"
+  elif [ "$(speedtest_flavor)" = "none:" ]; then
+    _row "" "Speed" "not measured · brew install speedtest"
+  elif ! command -v jq >/dev/null 2>&1; then
+    _row "" "Speed" "not measured · brew install jq"
   else
-    _row "" "Speed" "not tested (run with --speed)"
+    _row warn "Speed" "test ran but returned no result"
   fi
 
   # ── Bufferbloat ──────────────────────────────────────────────────────

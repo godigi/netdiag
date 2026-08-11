@@ -107,14 +107,18 @@ netdiag --uninstall-watcher
 | Flag                 | Effect                                                 |
 |----------------------|--------------------------------------------------------|
 | `TARGET`             | host added to ping, DNS, TCP, and a 2nd traceroute     |
-| `--quick`            | skip bufferbloat, mtr, speed test, WiFi scan           |
+| `--quick`            | skip bufferbloat, mtr, speed test, packet-loss probe,  |
+|                      | WiFi scan                                              |
 | `--expert`           | show every detailed measurement section (RSSI, full    |
 |                      | DNS / TCP / traceroute / DHCP / per-hop loss). Default |
 |                      | is a compact Report card + diagnoses only.             |
 | `--gping`            | launch live ping monitor on the discovered hops at end |
 | `--no-gping`         | skip the gping prompt (scripts / watchers)             |
 | `--no-bufferbloat`   | skip the 100 MB / 10 s probe (metered link)            |
-| `--speed`            | run a speedtest (~30 s, ~50 MB)                        |
+| `--speed`            | run the speedtest even under `--quick` (it is already  |
+|                      | on by default in a normal run)                         |
+| `--no-speed`         | skip the speedtest — metered links, or to bring a full |
+|                      | run back under ~35 s                                   |
 | `--json`             | emit schema-conformant JSON on stdout                  |
 | `--quiet`            | only the Diagnosis section is printed                  |
 | `--log PATH`         | override the default `~/net-diag/<timestamp>.log`      |
@@ -202,12 +206,13 @@ a real `netdiag --redact` run:
   ✓  Router              192.168.15.1 · 0% loss · 3.9 ms · ±0.8 ms jitter
   ✓  Internet            TELEFONICA BRASIL S.A ([redacted], Brazil)
   ✓  Latency             1.1.1.1 · 57 ms · ±1.3 ms jitter
+  ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
+  ✓  Speed               155.4 Mbps down · 113.4 Mbps up · 123.5 ms
   ✓  DNS                 working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Router config       UPnP disabled (safer default)
   ✓  Hosts file          clean (only macOS defaults)
   ·  VPN                 not active
-  ·  Speed               not tested (run with --speed)
 
 ── What we found ──
   ⚠ Some websites load fine and others hang forever loading — your network

@@ -1,428 +1,397 @@
 {
-    "version": "0.5.2",
-    "timestamp": "2026-08-11T14:06:26Z",
-    "interface": {
-        "name": "en0",
-        "ip": "[redacted]",
-        "gateway": "192.168.15.1",
-        "gateway_mac": "[redacted]",
-        "type": "wifi"
+  "version": "0.6.0",
+  "timestamp": "2026-08-11T15:01:36Z",
+  "interface": {
+    "name": "en0",
+    "ip": "[redacted]",
+    "gateway": "192.168.15.1",
+    "gateway_mac": "[redacted]",
+    "type": "wifi"
+  },
+  "network": {
+    "id": "wifi:mac=[redacted]",
+    "label": "WiFi (SSID hidden by macOS)"
+  },
+  "wifi": {
+    "ssid": "[redacted]",
+    "bssid": "[redacted]",
+    "security": "WPA2_PSK",
+    "rssi": null,
+    "noise": null,
+    "snr": null,
+    "channel": null,
+    "phy": null,
+    "tx_rate": null
+  },
+  "gateway": {
+    "ip": "192.168.15.1",
+    "loss_pct": 0.0,
+    "rtt_avg_ms": 6.118,
+    "rtt_jitter_ms": 6.221
+  },
+  "internet_latency": {
+    "target": "1.1.1.1",
+    "rtt_avg_ms": 56.404,
+    "rtt_jitter_ms": 3.426,
+    "loss_pct": 0.0,
+    "target_alt": "8.8.8.8",
+    "rtt_avg_ms_alt": 73.77,
+    "loss_pct_alt": 0.0
+  },
+  "public": {
+    "ip": "[redacted]",
+    "asn": "AS10429",
+    "isp": "TELEFONICA BRASIL S.A",
+    "city": "[redacted]",
+    "country": "Brazil",
+    "captive_portal": false
+  },
+  "dns": [
+    {
+      "resolver": "[redacted]",
+      "name": "apple.com",
+      "answer": "17.253.144.10",
+      "ok": true
     },
-    "network": {
-        "id": "wifi:mac=[redacted]",
-        "label": "WiFi (SSID hidden by macOS)"
+    {
+      "resolver": "1.1.1.1",
+      "name": "apple.com",
+      "answer": "17.253.144.10",
+      "ok": true
     },
-    "wifi": {
-        "ssid": "[redacted]",
-        "bssid": "[redacted]",
-        "security": "WPA2_PSK",
-        "rssi": null,
-        "noise": null,
-        "snr": null,
-        "channel": null,
-        "phy": null,
-        "tx_rate": null
+    {
+      "resolver": "8.8.8.8",
+      "name": "apple.com",
+      "answer": "17.253.144.10",
+      "ok": true
     },
-    "gateway": {
-        "ip": "192.168.15.1",
-        "loss_pct": 0.0,
-        "rtt_avg_ms": 3.953,
-        "rtt_jitter_ms": 0.463
+    {
+      "resolver": "[redacted]",
+      "name": "cloudflare.com",
+      "answer": "104.16.132.229",
+      "ok": true
     },
-    "internet_latency": {
-        "target": "1.1.1.1",
-        "rtt_avg_ms": 59.392,
-        "rtt_jitter_ms": 5.66,
-        "loss_pct": 0.0
+    {
+      "resolver": "1.1.1.1",
+      "name": "cloudflare.com",
+      "answer": "104.16.133.229",
+      "ok": true
     },
-    "public": {
-        "ip": "[redacted]",
-        "asn": "AS10429",
-        "isp": "TELEFONICA BRASIL S.A",
-        "city": "[redacted]",
-        "country": "Brazil",
-        "captive_portal": false
-    },
-    "dns": [
-        {
-            "resolver": "[redacted]",
-            "name": "apple.com",
-            "answer": "17.253.144.10",
-            "ok": true
-        },
-        {
-            "resolver": "1.1.1.1",
-            "name": "apple.com",
-            "answer": "17.253.144.10",
-            "ok": true
-        },
-        {
-            "resolver": "8.8.8.8",
-            "name": "apple.com",
-            "answer": "17.253.144.10",
-            "ok": true
-        },
-        {
-            "resolver": "[redacted]",
-            "name": "cloudflare.com",
-            "answer": "104.16.132.229",
-            "ok": true
-        },
-        {
-            "resolver": "1.1.1.1",
-            "name": "cloudflare.com",
-            "answer": ";; connection timed out; no servers could be reached",
-            "ok": true
-        },
-        {
-            "resolver": "8.8.8.8",
-            "name": "cloudflare.com",
-            "answer": "104.16.132.229",
-            "ok": true
-        }
-    ],
-    "traceroute": {
-        "target": "1.1.1.1",
-        "hops": [
-            {
-                "n": 1,
-                "ip": "192.168.15.1",
-                "responded": true,
-                "rtt_ms": 4.171
-            },
-            {
-                "n": 2,
-                "ip": null,
-                "responded": false,
-                "rtt_ms": null
-            },
-            {
-                "n": 3,
-                "ip": "201.1.228.62",
-                "responded": true,
-                "rtt_ms": 5.044
-            },
-            {
-                "n": 4,
-                "ip": "152.255.135.153",
-                "responded": true,
-                "rtt_ms": 59.543
-            },
-            {
-                "n": 5,
-                "ip": null,
-                "responded": false,
-                "rtt_ms": null
-            },
-            {
-                "n": 6,
-                "ip": "152.255.135.212",
-                "responded": true,
-                "rtt_ms": 58.641
-            },
-            {
-                "n": 7,
-                "ip": "152.255.213.6",
-                "responded": true,
-                "rtt_ms": 60.091
-            },
-            {
-                "n": 8,
-                "ip": "187.100.57.100",
-                "responded": true,
-                "rtt_ms": 59.429
-            },
-            {
-                "n": 9,
-                "ip": null,
-                "responded": false,
-                "rtt_ms": null
-            },
-            {
-                "n": 10,
-                "ip": null,
-                "responded": false,
-                "rtt_ms": null
-            },
-            {
-                "n": 11,
-                "ip": "1.1.1.1",
-                "responded": true,
-                "rtt_ms": 58.769
-            }
-        ]
-    },
-    "per_hop": [
-        {
-            "n": 1,
-            "ip": "192.168.15.1",
-            "responded": true,
-            "loss_pct": 0.0,
-            "avg_ms": 3.977
-        },
-        {
-            "n": 2,
-            "ip": "201.1.228.62",
-            "responded": true,
-            "loss_pct": 100.0,
-            "avg_ms": null
-        },
-        {
-            "n": 3,
-            "ip": "152.255.135.153",
-            "responded": true,
-            "loss_pct": 100.0,
-            "avg_ms": null
-        },
-        {
-            "n": 4,
-            "ip": "152.255.135.212",
-            "responded": true,
-            "loss_pct": 100.0,
-            "avg_ms": null
-        },
-        {
-            "n": 5,
-            "ip": "152.255.213.6",
-            "responded": true,
-            "loss_pct": 100.0,
-            "avg_ms": null
-        },
-        {
-            "n": 6,
-            "ip": "187.100.57.100",
-            "responded": true,
-            "loss_pct": 100.0,
-            "avg_ms": null
-        },
-        {
-            "n": 7,
-            "ip": "1.1.1.1",
-            "responded": true,
-            "loss_pct": 0.0,
-            "avg_ms": 56.838
-        }
-    ],
-    "bufferbloat": {
-        "idle_gw_rtt_ms": 3.953,
-        "loaded_gw_rtt_ms": 3.864,
-        "idle_inet_rtt_ms": 61.744,
-        "loaded_inet_rtt_ms": 56.6,
-        "gw_delta_ms": -0.1,
-        "inet_delta_ms": -5.1,
-        "gw_grade": "A",
-        "inet_grade": "A"
-    },
-    "mtu": {
-        "effective": 1480,
-        "path_size": 1452
-    },
-    "ipv6": {
-        "available": true,
-        "global_addr": "[redacted]",
-        "gateway": "[redacted]",
-        "ping_loss_pct": 0.0,
-        "aaaa_ok": true,
-        "trace_hops": 11,
-        "tcp_v6_ok": true
-    },
-    "vpn": {
-        "active": false,
-        "type": null,
-        "name": null
-    },
-    "tcp_reach": [
-        {
-            "host": "1.1.1.1",
-            "port": 443,
-            "ok": true,
-            "elapsed_ms": 98.0
-        },
-        {
-            "host": "1.1.1.1",
-            "port": 53,
-            "ok": true,
-            "elapsed_ms": 101.0
-        },
-        {
-            "host": "8.8.8.8",
-            "port": 443,
-            "ok": true,
-            "elapsed_ms": 115.0
-        },
-        {
-            "host": "github.com",
-            "port": 443,
-            "ok": true,
-            "elapsed_ms": 102.0
-        },
-        {
-            "host": "apple.com",
-            "port": 443,
-            "ok": true,
-            "elapsed_ms": 112.0
-        }
-    ],
-    "wifi_scan": {
-        "current_channel": "52",
-        "current_band": "5GHz",
-        "neighbour_count": 65,
-        "current_channel_neighbours": 6
-    },
-    "wifi_disconnects": {
-        "window_hours": 1,
-        "count": 0
-    },
-    "speedtest": null,
-    "ntp": {
-        "drift_seconds": 0.07563,
-        "using_network_time": null,
-        "server": null
-    },
-    "duplicate_ips": [],
-    "dhcp": {
-        "server": "192.168.15.1",
-        "lease_start": "08/11/2026 08:31:55",
-        "lease_end": "08/11/2026 12:31:55",
-        "time_remaining_s": 8727,
-        "dns_servers": "192.168.15.1"
-    },
-    "mtr": {
-        "target": "1.1.1.1",
-        "duration_s": 12,
-        "hops": [
-            {
-                "n": 1,
-                "ip": "192.168.15.1",
-                "responded": true,
-                "loss_pct": 0.0,
-                "avg_ms": 3.977
-            },
-            {
-                "n": 2,
-                "ip": "201.1.228.62",
-                "responded": true,
-                "loss_pct": 100.0,
-                "avg_ms": null
-            },
-            {
-                "n": 3,
-                "ip": "152.255.135.153",
-                "responded": true,
-                "loss_pct": 100.0,
-                "avg_ms": null
-            },
-            {
-                "n": 4,
-                "ip": "152.255.135.212",
-                "responded": true,
-                "loss_pct": 100.0,
-                "avg_ms": null
-            },
-            {
-                "n": 5,
-                "ip": "152.255.213.6",
-                "responded": true,
-                "loss_pct": 100.0,
-                "avg_ms": null
-            },
-            {
-                "n": 6,
-                "ip": "187.100.57.100",
-                "responded": true,
-                "loss_pct": 100.0,
-                "avg_ms": null
-            },
-            {
-                "n": 7,
-                "ip": "1.1.1.1",
-                "responded": true,
-                "loss_pct": 0.0,
-                "avg_ms": 56.838
-            }
-        ],
-        "first_lossy_hop": null
-    },
-    "wan": {
-        "load_balancing": {
-            "distinct_asns": [
-                "AS10429",
-                "AS18881"
-            ],
-            "distinct_ips": [
-                "[redacted]",
-                "177.207.121.190"
-            ],
-            "active": true
-        },
-        "double_nat": {
-            "detected": false,
-            "rfc1918_chain": [
-                "192.168.15.1"
-            ],
-            "home_chain": [
-                "192.168.15.1"
-            ],
-            "home_count": 1,
-            "isp_transit_chain": [],
-            "isp_transit_count": 0
-        },
-        "upnp": {
-            "state": "disabled",
-            "device": null,
-            "url": null,
-            "tested_via": "ssdp"
-        }
-    },
-    "hosts_file": {
-        "custom_count": 0,
-        "suspicious_redirects": []
-    },
-    "timings": {
-        "total_s": 33.19,
-        "budget_s": 30.0,
-        "over_budget": true,
-        "phases": {
-            "iface": 0.02,
-            "vpn": 0.03,
-            "wifi": 0.05,
-            "gateway": 1.86,
-            "arp": 0.02,
-            "netid": 0.0,
-            "dhcp": 0.03,
-            "public": 0.67,
-            "parallel_batch": 13.24,
-            "bufferbloat": 4.1,
-            "mtu": 2.49,
-            "traceroute": 8.35,
-            "nat": 0.01,
-            "mtr": 2.16,
-            "speedtest": 0.0
-        }
-    },
-    "baseline": null,
-    "diagnosis": [
-        {
-            "severity": "warn",
-            "rule": "M1",
-            "summary": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting."
-        },
-        {
-            "severity": "warn",
-            "rule": "WS-1",
-            "summary": "Your WiFi channel (52) is shared with 6 neighbouring networks \u2014 they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
-        },
-        {
-            "severity": "warn",
-            "rule": "WAN-1",
-            "summary": "Your outgoing connections are landing on multiple internet providers (AS10429 AS18881). This is usually intentional (multi-WAN router) but explains some odd behaviour: services may complain that your IP keeps changing, and some apps may behave inconsistently. Nothing to fix if you set this up on purpose."
-        }
-    ],
-    "most_likely_root_cause": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting.",
-    "netdiag_extras": {
-        "arp_gw_incomplete": false,
-        "target": null,
-        "target_ping": null,
-        "target_traceroute": null
+    {
+      "resolver": "8.8.8.8",
+      "name": "cloudflare.com",
+      "answer": "104.16.133.229",
+      "ok": true
     }
+  ],
+  "traceroute": {
+    "target": "1.1.1.1",
+    "hops": [
+      {
+        "n": 1,
+        "ip": "192.168.15.1",
+        "responded": true,
+        "rtt_ms": 4.245
+      },
+      {
+        "n": 2,
+        "ip": null,
+        "responded": false,
+        "rtt_ms": null
+      },
+      {
+        "n": 3,
+        "ip": "201.1.224.115",
+        "responded": true,
+        "rtt_ms": 6.208
+      },
+      {
+        "n": 4,
+        "ip": "152.255.135.145",
+        "responded": true,
+        "rtt_ms": 49.67
+      },
+      {
+        "n": 5,
+        "ip": null,
+        "responded": false,
+        "rtt_ms": null
+      },
+      {
+        "n": 6,
+        "ip": "152.255.206.22",
+        "responded": true,
+        "rtt_ms": 57.297
+      },
+      {
+        "n": 7,
+        "ip": null,
+        "responded": false,
+        "rtt_ms": null
+      },
+      {
+        "n": 8,
+        "ip": null,
+        "responded": false,
+        "rtt_ms": null
+      },
+      {
+        "n": 9,
+        "ip": null,
+        "responded": false,
+        "rtt_ms": null
+      },
+      {
+        "n": 10,
+        "ip": "1.1.1.1",
+        "responded": true,
+        "rtt_ms": 53.357
+      }
+    ]
+  },
+  "per_hop": [
+    {
+      "n": 1,
+      "ip": "192.168.15.1",
+      "responded": true,
+      "loss_pct": 0.0,
+      "avg_ms": 6.472
+    },
+    {
+      "n": 2,
+      "ip": "201.1.224.115",
+      "responded": true,
+      "loss_pct": 100.0,
+      "avg_ms": null
+    },
+    {
+      "n": 3,
+      "ip": "152.255.135.145",
+      "responded": true,
+      "loss_pct": 100.0,
+      "avg_ms": null
+    },
+    {
+      "n": 4,
+      "ip": "152.255.206.22",
+      "responded": true,
+      "loss_pct": 100.0,
+      "avg_ms": null
+    },
+    {
+      "n": 5,
+      "ip": "1.1.1.1",
+      "responded": true,
+      "loss_pct": 0.0,
+      "avg_ms": 56.128
+    }
+  ],
+  "bufferbloat": {
+    "idle_gw_rtt_ms": 6.118,
+    "loaded_gw_rtt_ms": 3.87,
+    "idle_inet_rtt_ms": 56.933,
+    "loaded_inet_rtt_ms": 55.357,
+    "gw_delta_ms": -2.2,
+    "inet_delta_ms": -1.6,
+    "gw_grade": "A",
+    "inet_grade": "A"
+  },
+  "mtu": {
+    "effective": 1480,
+    "path_size": 1452
+  },
+  "ipv6": {
+    "available": true,
+    "global_addr": "[redacted]",
+    "gateway": "[redacted]",
+    "ping_loss_pct": 0.0,
+    "aaaa_ok": true,
+    "trace_hops": 10,
+    "tcp_v6_ok": true
+  },
+  "vpn": {
+    "active": false,
+    "type": null,
+    "name": null
+  },
+  "tcp_reach": [
+    {
+      "host": "1.1.1.1",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 95.0
+    },
+    {
+      "host": "1.1.1.1",
+      "port": 53,
+      "ok": true,
+      "elapsed_ms": 86.0
+    },
+    {
+      "host": "8.8.8.8",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 105.0
+    },
+    {
+      "host": "github.com",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 102.0
+    },
+    {
+      "host": "apple.com",
+      "port": 443,
+      "ok": true,
+      "elapsed_ms": 96.0
+    }
+  ],
+  "wifi_scan": {
+    "current_channel": "52",
+    "current_band": "5GHz",
+    "neighbour_count": 53,
+    "current_channel_neighbours": 5
+  },
+  "wifi_disconnects": {
+    "window_hours": 1,
+    "count": 0
+  },
+  "speedtest": {
+    "down_mbps": 106.9,
+    "up_mbps": 104.2,
+    "latency_ms": 99.493,
+    "jitter_ms": null,
+    "server": "st-cabanorte-slo1.cablevisionfibertel.com.ar:8080"
+  },
+  "ntp": {
+    "drift_seconds": 0.012951,
+    "using_network_time": null,
+    "server": null
+  },
+  "duplicate_ips": [],
+  "dhcp": {
+    "server": "192.168.15.1",
+    "lease_start": "08/11/2026 10:31:55",
+    "lease_end": "08/11/2026 14:31:55",
+    "time_remaining_s": 12615,
+    "dns_servers": "192.168.15.1"
+  },
+  "mtr": {
+    "target": "1.1.1.1",
+    "duration_s": 12,
+    "hops": [
+      {
+        "n": 1,
+        "ip": "192.168.15.1",
+        "responded": true,
+        "loss_pct": 0.0,
+        "avg_ms": 6.472
+      },
+      {
+        "n": 2,
+        "ip": "201.1.224.115",
+        "responded": true,
+        "loss_pct": 100.0,
+        "avg_ms": null
+      },
+      {
+        "n": 3,
+        "ip": "152.255.135.145",
+        "responded": true,
+        "loss_pct": 100.0,
+        "avg_ms": null
+      },
+      {
+        "n": 4,
+        "ip": "152.255.206.22",
+        "responded": true,
+        "loss_pct": 100.0,
+        "avg_ms": null
+      },
+      {
+        "n": 5,
+        "ip": "1.1.1.1",
+        "responded": true,
+        "loss_pct": 0.0,
+        "avg_ms": 56.128
+      }
+    ],
+    "first_lossy_hop": null
+  },
+  "wan": {
+    "load_balancing": {
+      "distinct_asns": [
+        "AS10429"
+      ],
+      "distinct_ips": [
+        "[redacted]"
+      ],
+      "active": false
+    },
+    "double_nat": {
+      "detected": false,
+      "rfc1918_chain": [
+        "192.168.15.1"
+      ],
+      "home_chain": [
+        "192.168.15.1"
+      ],
+      "home_count": 1,
+      "isp_transit_chain": [],
+      "isp_transit_count": 0
+    },
+    "upnp": {
+      "state": "disabled",
+      "device": null,
+      "url": null,
+      "tested_via": "ssdp"
+    }
+  },
+  "hosts_file": {
+    "custom_count": 0,
+    "suspicious_redirects": []
+  },
+  "timings": {
+    "total_s": 134.37,
+    "budget_s": 30.0,
+    "over_budget": true,
+    "phases": {
+      "iface": 0.02,
+      "vpn": 0.03,
+      "wifi": 0.08,
+      "gateway": 3.92,
+      "arp": 0.02,
+      "netid": 0.0,
+      "dhcp": 0.03,
+      "public": 0.66,
+      "parallel_batch": 13.16,
+      "internet_ping": 3.98,
+      "bufferbloat": 4.07,
+      "mtu": 2.49,
+      "traceroute": 10.21,
+      "nat": 0.01,
+      "mtr": 2.16,
+      "speedtest": 93.24
+    }
+  },
+  "baseline": null,
+  "diagnosis": [
+    {
+      "severity": "warn",
+      "rule": "M1",
+      "summary": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting."
+    },
+    {
+      "severity": "warn",
+      "rule": "WS-1",
+      "summary": "Your WiFi channel (52) is shared with 5 neighbouring networks \u2014 they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
+    }
+  ],
+  "most_likely_root_cause": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting.",
+  "netdiag_extras": {
+    "arp_gw_incomplete": false,
+    "target": null,
+    "target_ping": null,
+    "target_traceroute": null
+  }
 }

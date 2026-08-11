@@ -283,6 +283,47 @@ add_diag() {
     critical) [ "$MAX_SEVERITY" -lt 2 ] && MAX_SEVERITY=2 ;;
     warn)     [ "$MAX_SEVERITY" -lt 1 ] && MAX_SEVERITY=1 ;;
   esac
+  # The case arms above are `[ … ] && assign`, which evaluates false — and
+  # so returns 1 — whenever the severity is already at or above the new
+  # one. Adding a second critical therefore made add_diag report failure.
+  # Nothing noticed because bin/netdiag runs under `set -u` alone, but any
+  # caller with `set -e` (the bats suite, for one) aborted mid-rule-set and
+  # silently truncated the diagnosis list. Recording a diagnosis always
+  # succeeds; say so explicitly.
+  return 0
+}
+
+# ── Loss-percentage predicates ───────────────────────────────────────────
+# ping reports loss as a decimal ("12.5% packet loss"), so the obvious
+# [ "$loss" -ge 20 ] is a syntax error on exactly the values that matter.
+# The existing rules dodged that with ${loss%.*} truncation, which silently
+# rounds 19.9 down to 19 — fine for a 20% floor, wrong for a 5% one where
+# 5.0 is a legitimate single-packet reading. These compare as floats.
+#
+# Both predicates treat an unmeasured value (empty, or non-numeric because
+# the probe failed) as "no". That distinction is the whole substance of the
+# ping6 bug fixed in v0.5.2: a failed measurement rendered as 100% loss is
+# a confident false statement about the user's network.
+
+# True when $1 is a number we actually measured.
+loss_measured() {
+  [ -n "${1:-}" ] || return 1
+  awk -v v="$1" 'BEGIN{exit !(v ~ /^[0-9]+(\.[0-9]+)?$/)}'
+}
+
+# True when $1 was measured AND is >= $2.
+loss_at_least() {
+  loss_measured "${1:-}" || return 1
+  awk -v v="$1" -v t="$2" 'BEGIN{exit !(v + 0 >= t + 0)}'
+}
+
+# True when $1 was measured AND is < $2. Distinct from ! loss_at_least,
+# which is also true for an unmeasured value — a rule that needs "the
+# gateway is provably clean" must not fire when the gateway was never
+# pinged at all.
+loss_below() {
+  loss_measured "${1:-}" || return 1
+  awk -v v="$1" -v t="$2" 'BEGIN{exit !(v + 0 < t + 0)}'
 }
 
 # ── Timing instrumentation ───────────────────────────────────────────────

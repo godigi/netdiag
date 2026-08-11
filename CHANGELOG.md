@@ -4,6 +4,113 @@ All notable changes to `netdiag` are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-11
+
+netdiag could measure internet-side packet loss but could not diagnose it.
+`INET_LOSS` had been recorded, written to JSON, and used to colour a
+Report-card row since v0.4.0 — and no rule ever read it. Because
+`ok()`/`warn()`/`bad()` are pure printers and only `add_diag` moves
+`MAX_SEVERITY`, a connection dropping 40% of its packets printed a red
+"Latency" row directly above the words "Nothing obviously wrong — your
+network looks healthy" and exited 0.
+
+That is the exact failure users describe as "the internet is down":
+everything technically works, nothing finishes. `P1`/`P2` could not cover
+it, because they require the public reach check to have *failed*, and
+under heavy-but-partial loss `curl` still succeeds — TCP simply
+retransmits its way through.
+
+### Added
+
+- **`L1` — severe internet-side packet loss is now a critical.** Fires
+  when both public targets exceed 20% loss while the gateway is clean,
+  pointing past the user's own equipment to the line, modem, or ISP.
+- **`L2` — moderate internet-side loss (10–19%) is a warning.**
+- **`G3` — gateway loss of 10–19% is a warning.** `G1`/`G2` start at 20%,
+  and nothing covered the band beneath them, so 15% loss to the user's own
+  router also exited 0.
+- **`ICMP-1` — total loss to both targets while TCP and curl work** is
+  reported as upstream ping filtering, not an outage, and suppresses
+  `L1`/`L2`. Real 100% loss would have taken curl with it.
+- **A second, independent loss target (8.8.8.8).** `L1` escalates to
+  critical only when both it and 1.1.1.1 agree; one lossy target and one
+  clean one is far more likely to be that anycast operator's ICMP policy
+  than a fault on the line. JSON gains `internet_latency.target_alt`,
+  `.rtt_avg_ms_alt`, and `.loss_pct_alt`.
+- **A "Packet loss" row on the Report card**, showing both targets.
+- **`VPN-1` now actually fires.** `docs/DIAGNOSIS-RULES.md` and the README
+  had both promised the rule since v0.1.0 while `lib/vpn.sh` only printed
+  a section line — no `add_diag` call existed anywhere, so an active VPN
+  never reached the Diagnosis section. It is `info` severity, so it cannot
+  change the exit code; the point is to stop users blaming their router
+  for the tunnel's latency.
+
+### Changed
+
+- **The speed test runs by default.** "Is my internet slow?" is the
+  question most runs are opened to settle, and answering it with "not
+  tested (run with `--speed`)" made the default report useless for it.
+  `--no-speed` opts out; `--quick` skips it; an explicit `--speed` still
+  forces it under `--quick`.
+  - This makes a default run substantially slower — measured at ~95 s on
+    this machine, of which the speed test alone is ~58 s. Use `--no-speed`
+    (~35 s) when the run needs to be quick. `CLAUDE.md`'s stated budget has
+    been updated to match rather than left as an aspiration.
+- **The speed test now runs last, after the Report card and the diagnoses
+  have already printed.** It is the most expensive phase by a wide margin,
+  and nothing in the diagnosis stage reads its result — only the JSON
+  emitter does, and that still runs afterwards, so `--json` and the log
+  are unchanged. Previously the user watched a spinner for a minute before
+  seeing anything at all, including when the answer was "your router is
+  dropping packets" and they could have acted on it immediately. The
+  Report card's Speed row says "measuring now — result prints below" while
+  it is pending. The test still cannot be parallelised: it saturates the
+  link deliberately and would corrupt every latency, loss, and bufferbloat
+  number it overlapped, so last is the only safe place for it.
+- **Loss probes send 20 packets instead of 8**, putting the reportable
+  quantum at 5% so the new thresholds land on a whole number of dropped
+  packets. At 8 packets one drop was 12.5% and no threshold below that
+  was expressible at all.
+- **`internet_ping_run` no longer runs in the parallel batch.** Measuring
+  loss while DNS, TCP, NTP, the WiFi scan and two WAN probes compete for
+  the same interface measures the tool, not the network. It now runs
+  serially on a quiet link, before the bufferbloat probe saturates it.
+- **Loss thresholds are shared constants** (`LOSS_WARN_PCT`,
+  `LOSS_CRIT_PCT`) used by both the rules and the Report card, so a
+  coloured row always has a matching diagnosis beneath it. The Router row
+  previously went yellow at 1% while the lowest gateway rule fired at 20%.
+
+### Fixed
+
+- **`ping -t` was corrupting every loss measurement.** On macOS, `-t` is a
+  deadline for the *whole run*, not a per-packet TTL — which is what
+  `-c 8 -t 2` looks like it means. `ping -c 20 -i 0.2 -t 2` transmitted
+  **10** packets, silently discarding half the probe; `ping -c 20 -i 0.1
+  -t 2` reported a permanent **5.0% loss** because the final reply landed
+  after the deadline. Removing the flag gives 20/20 and 0.0% on both
+  targets in every trial. Both loss probes now bound themselves with
+  `with_timeout`, which cannot corrupt the measurement, and a test greps
+  for the flag's return.
+- **The speed test never ran on machines with only `speedtest-cli`.** The
+  Python package installs a `speedtest` shim alongside `speedtest-cli`, and
+  the code took `command -v speedtest` to mean Ookla's CLI, handing it
+  `--format=json --accept-license --accept-gdpr`, which it rejects. The
+  fallback sat in an `elif` on that same test, so it was unreachable:
+  those machines reported "test ran but returned no result" every time.
+  Detection now reads the `--version` banner instead of trusting the
+  filename. Latent while the test was opt-in; a guaranteed failure on
+  every run once it wasn't.
+- **`add_diag` reported failure when adding a second diagnosis of the same
+  severity.** Its `case` arms are `[ … ] && assign`, so the guard
+  evaluating false became the function's exit status. Harmless under
+  `bin/netdiag`'s `set -u`, but any `set -e` caller aborted mid-rule-set
+  and silently truncated the diagnosis list.
+- **`P1`/`P2` required the gateway to show *exactly* zero loss.** An
+  outage measured alongside, say, 8% gateway loss matched neither them nor
+  `G1`/`G2`, so a total loss of internet produced no diagnosis at all. The
+  guard is now "the router is not the problem" rather than "the router is
+  flawless", and distinguishes a clean gateway from an unmeasured one.
+
 ## [0.5.2] - 2026-08-11
 
 Fixes found by running netdiag against a live dual-stack network. All three

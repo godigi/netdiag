@@ -38,16 +38,30 @@ diagnosis_run() {
   if [ -n "$WIFI_SNR" ] && [ "$WIFI_SNR" -lt 20 ]; then
     add_diag warn W2 "Other electronics or nearby WiFi networks are interfering with yours (signal-to-noise ratio ${WIFI_SNR} dB — below 20 dB is noisy). Try switching to a less crowded channel in your router settings."
   fi
-  if [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge 20 ]; then
+  if loss_at_least "$GW_LOSS" 20; then
     if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt -70 ]; then
       add_diag critical G1 "You're losing packets between your Mac and your router, and your WiFi signal is weak — the WiFi link is the bottleneck, not the router or the ISP. Move closer to the router or switch WiFi channel."
     else
       add_diag critical G2 "You're losing packets between your Mac and your router even though the WiFi signal is strong — the router itself is misbehaving. Try rebooting it (unplug for 30 seconds, plug back in)."
     fi
+  elif loss_at_least "$GW_LOSS" "$LOSS_WARN_PCT"; then
+    # G3 — the band under G1/G2's critical floor. Previously this coloured
+    # the Report card's Router row yellow and did nothing else: because
+    # ok()/warn()/bad() are pure printers and only add_diag moves
+    # MAX_SEVERITY, 15% loss to your own router exited 0 under the headline
+    # "Nothing obviously wrong". At that rate every page load stalls on a
+    # retransmit and video calls break up, which is precisely the state a
+    # user describes as "the internet is down".
+    add_diag warn G3 "Your Mac is losing about ${GW_LOSS}% of the packets it sends to your own router — not enough to break the connection outright, but enough that web pages stall for a second or two and video calls break up. On WiFi this is usually signal or interference: move closer, or switch channel. On ethernet, suspect the cable or the port."
   fi
 
-  # P1/P2 — public unreachable.
-  if [ "$PUBLIC_OK" -eq 0 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -eq 0 ]; then
+  # P1/P2 — public unreachable. The gateway guard was `== 0` exactly until
+  # G3 landed, which left a hole: an outage measured alongside 8% gateway
+  # loss matched neither P1/P2 (loss was not 0) nor G1/G2 (loss was under
+  # 20), so a total loss of internet produced no diagnosis at all. The
+  # guard now means "the router is not the problem", not "the router is
+  # flawless".
+  if [ "$PUBLIC_OK" -eq 0 ] && loss_below "$GW_LOSS" 20; then
     if [ "$DNS_OK" -eq 0 ]; then
       add_diag critical P1 "Your local network is working but the wider internet is unreachable, and name lookups are also failing — likely a DNS or upstream-ISP outage. Try opening http://1.1.1.1 in a browser: if it loads, the problem is DNS; if not, it's the ISP."
     else
@@ -96,9 +110,52 @@ diagnosis_run() {
     fi
   fi
 
+  # VPN-1 — a VPN is carrying the default route. info, never a fault: the
+  # point is that every measurement below describes the tunnel rather than
+  # the local link, so the user doesn't blame their router for the VPN.
+  if [ "$VPN_ACTIVE" -eq 1 ]; then
+    add_diag info VPN-1 "A VPN is carrying your traffic right now (${VPN_NAME:-$VPN_TYPE}). Everything measured above — router, latency, traceroute, speed — describes the tunnel and the VPN's exit server, not your own network. If something looks slow here, the VPN is as likely a cause as your ISP. Disconnect it and run netdiag again to see the underlying connection."
+  fi
+
   # TCP-1 — TCP works, ICMP is filtered.
   if [ "$TCP_REACH_ANY_OK" -eq 1 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge 50 ]; then
     add_diag info TCP-1 "Actual connections work fine, only the \"ping\" tests fail (${GW_LOSS}% loss to the gateway) — something on the path is blocking pings but not real traffic. Common on hotel WiFi, corporate networks, and some ISPs. The network is up; don't worry about the ping numbers above."
+  fi
+
+  # ── L1 / L2 — internet-side packet loss ────────────────────────────────
+  # The gap these close: INET_LOSS was measured, written to JSON, and used
+  # to colour a Report-card row, but no rule ever read it. Only add_diag
+  # moves MAX_SEVERITY, so 40% loss upstream of a clean router printed a
+  # red "Latency" row directly above "Nothing obviously wrong — your
+  # network looks healthy" and exited 0.
+  #
+  # P1/P2 cannot cover this: they require public.ok == false, and under
+  # heavy-but-partial loss curl still succeeds — TCP just retransmits its
+  # way through. That is exactly the state a user calls "the internet is
+  # down": everything technically works, nothing finishes.
+
+  # ICMP-1 first. Total loss to *both* public targets while curl and TCP
+  # both succeed is not an outage — real 100% loss would take curl with
+  # it. It is an ISP or middlebox dropping ICMP wholesale. Without this
+  # guard L1 would tell those users their ISP is down on a working link,
+  # which is the same false-critical shape as the ping6 bug in v0.5.2.
+  local _icmp_filtered=0
+  if [ "$PUBLIC_OK" -eq 1 ] && [ "$TCP_REACH_ANY_OK" -eq 1 ] \
+     && loss_at_least "$INET_LOSS" 100 && loss_at_least "$INET_LOSS_ALT" 100; then
+    _icmp_filtered=1
+    add_diag info ICMP-1 "Ping to the outside world fails completely (${INET_TARGET} and ${INET_TARGET_ALT} both at 100%), but real connections — websites, DNS, TCP — all work. Something upstream is blocking ping specifically, which some ISPs and most corporate or hotel networks do on purpose. Your internet is fine; the latency numbers above just can't be measured."
+  fi
+
+  # loss_below rather than ! loss_at_least: a gateway that was never
+  # measured must not read as "the router is clean, blame the ISP".
+  if [ "$_icmp_filtered" -eq 0 ] && loss_below "$GW_LOSS" "$LOSS_WARN_PCT"; then
+    if loss_at_least "$INET_LOSS" "$LOSS_CRIT_PCT" \
+       && loss_at_least "$INET_LOSS_ALT" "$LOSS_CRIT_PCT"; then
+      add_diag critical L1 "Your internet connection is dropping a large share of the traffic you send over it — ${INET_LOSS}% to ${INET_TARGET} and ${INET_LOSS_ALT}% to ${INET_TARGET_ALT} — while your own router is answering cleanly. Expect pages that hang half-loaded, video calls that freeze and drop, and downloads that crawl or stall. Because the router is fine and both independent test targets agree, the fault is past your front door: the line into your home, the modem, or your ISP. Reboot the modem once; if it comes back, report the loss figures to your ISP — that is the number that gets an engineer sent out."
+    elif loss_at_least "$INET_LOSS" "$LOSS_WARN_PCT" \
+         || loss_at_least "$INET_LOSS_ALT" "$LOSS_WARN_PCT"; then
+      add_diag warn L2 "Your connection is losing some traffic on the way to the internet (${INET_LOSS:-?}% to ${INET_TARGET}, ${INET_LOSS_ALT:-?}% to ${INET_TARGET_ALT}) even though your router itself is clean. You'll notice it as calls that glitch for a second, pages that occasionally stall before loading, and stuttering video. It is not bad enough to break the connection, and it may come and go with the time of day if your ISP's local segment is congested. Worth re-running netdiag when it feels worst, and worth reporting if it persists."
+    fi
   fi
 
   # WS-1 — congested WiFi channel.

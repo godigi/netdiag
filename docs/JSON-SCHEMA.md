@@ -31,7 +31,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `network` | object | `id` + human `label` identifying which network this is — scopes the baseline |
 | `wifi` | object | SSID, BSSID, security; `rssi`/`noise`/`snr`/`channel`/`phy`/`tx_rate` are `null` without `sudo` |
 | `gateway` | object | `ip`, `loss_pct`, `rtt_avg_ms`, `rtt_jitter_ms` |
-| `internet_latency` | object | same shape against `1.1.1.1` |
+| `internet_latency` | object | `target`, `rtt_avg_ms`, `rtt_jitter_ms`, `loss_pct` against the primary public target, plus `target_alt`, `rtt_avg_ms_alt`, `loss_pct_alt` for the second, independent one. The L1 packet-loss rule escalates to critical only when **both** targets exceed the threshold, so a consumer reproducing the diagnosis needs both numbers. Any field is `null` when that probe didn't run (`--quick`) or returned no summary — never `0`, and never `100`. |
 | `public` | object | `ip`, `asn`, `isp`, `city`, `country`, `captive_portal` |
 | `dns` | array | one entry per resolver × name: `resolver`, `name`, `answer`, `ok` |
 | `traceroute` | object | `target` + `hops[]` (`n`, `ip`, `responded`, `rtt_ms`) |

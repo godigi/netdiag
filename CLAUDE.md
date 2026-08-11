@@ -12,7 +12,8 @@ Grown from a ~300-line bash starter into a modular `lib/*.sh` CLI with 14 diagno
 - **Shell:** must work under both zsh (default) and Homebrew bash 5+. Declare bash in the shebang if needed.
 - **Dependencies:** prefer macOS built-ins (`ipconfig`, `networksetup`, `route`, `scutil`, `wdutil`, `dig`, `traceroute`, `ping`, `nc`, `arp`, `log`, `sntp`, `system_profiler`, `curl`). Acceptable Homebrew extras: `mtr`, `gping`, `speedtest` (or `speedtest-cli`), `jq`. Detect missing deps → skip with hint, never hard-fail.
 - **Permissions:** default run is sudo-free. sudo-only checks must try `sudo -n` first, degrade gracefully, never prompt mid-run.
-- **Parallelism:** run independent checks concurrently via background jobs + `wait`. Target ≤ 30s full run, ≤ 8s `--quick` run.
+- **Parallelism:** run independent checks concurrently via background jobs + `wait`. Target ≤ 35s for `--no-speed`, ≤ 8s `--quick`. A default run now includes the speed test and is bound by whichever speedtest CLI is installed — measured at ~115s with `speedtest-cli` and ~65s with Ookla's `speedtest`, which is why the installer prefers Ookla. `--no-speed` is the flag to reach for when the run needs to be fast.
+  - Two checks must **not** be parallelised, because both measure a property of a quiet link: `internet_ping_run` (packet loss / latency) and `bufferbloat_run` (which saturates the link deliberately). Running the loss probe inside the parallel batch made it report 30% loss on a healthy network.
 - **Read-only:** never modify routing, DNS, WiFi, or ARP state.
 - **shellcheck-clean** at default severity. `# shellcheck disable=...` only with justification.
 
@@ -32,7 +33,7 @@ netdiag --install-watcher | --uninstall-watcher
 - **Default:** colored human-readable stdout + ANSI-stripped log to `~/net-diag/<timestamp>.log`.
 - **`--json`:** single JSON object to stdout matching [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md). No colors, no log unless `--log` also passed.
 - **`--quiet`:** only the Diagnosis section to stdout (full log still written).
-- **`--quick`:** skip bufferbloat, mtr, speed test, baseline diff, WiFi scan.
+- **`--quick`:** skip bufferbloat, mtr, speed test, internet packet-loss probe, baseline diff, WiFi scan. An explicit `--speed` overrides the speed-test skip.
 
 ## Exit codes
 
