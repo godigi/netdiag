@@ -349,6 +349,11 @@ def main() -> None:
             "isp": _env("PUB_ISP"),
             "city": _env("PUB_CITY"),
             "country": _env("PUB_CC"),
+            # ISO-3166 alpha-2. Distinct from `country`, which is the full
+            # name: a consumer rendering a flag or picking a locale needs
+            # the code, and deriving it would mean shipping a country
+            # table in every consumer.
+            "country_iso": _env("PUB_CC_ISO"),
             "captive_portal": _bool("CAPTIVE_PORTAL"),
         },
         "dns": build_dns(),

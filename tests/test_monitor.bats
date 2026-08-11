@@ -1,0 +1,398 @@
+#!/usr/bin/env bats
+#
+# `netdiag --monitor` — the stream the menu-bar app consumes.
+#
+# The load-bearing test in this file is the parity block: for the same
+# network state, lib/monitor.sh and lib/diagnosis.sh must name the same
+# rule IDs. If they drift, the app shows a green dot over a red report and
+# the user has no way to tell which one lied. That is checked here against
+# synthetic state rather than by blocking ICMP with a firewall rule, which
+# would test one condition once on one machine — this tests every condition
+# on every push.
+#
+# Network-free by construction: every test drives the pure functions
+# (_mon_rules, monitor_sample.py) or exercises argument validation, which
+# exits before any probe runs.
+
+setup() {
+  REPO="${BATS_TEST_DIRNAME}/.."
+  HELPERS="$REPO/helpers"
+  JSON_MODE=0 QUIET=0 QUICK=0 EXPERT=0 REDACT=0 LOG=/dev/null
+  NETDIAG_VERSION="test"
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  # shellcheck source=../lib/globals.sh
+  . "$REPO/lib/globals.sh"
+  # shellcheck source=../lib/netid.sh
+  . "$REPO/lib/netid.sh"
+  # shellcheck source=../lib/monitor.sh
+  . "$REPO/lib/monitor.sh"
+}
+
+# Reset both rule engines to a healthy baseline, then let each test perturb
+# exactly the field under study.
+reset_state() {
+  # monitor side
+  MON_LINK_UP=1 MON_IFACE_TYPE=wifi MON_GATEWAY=192.168.1.1
+  MON_GW_LOSS=0 MON_GW_RTT=3 MON_WIFI_RSSI="" MON_WIFI_SNR=""
+  MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
+  MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
+  # scanner side
+  GATEWAY=192.168.1.1 IS_WIFI=1 GW_LOSS=0 WIFI_RSSI="" WIFI_SNR=""
+  DNS_OK=1 DNS_LINES="x|y|z|OK" PUBLIC_OK=1 PUBLIC_CHECKED=1
+  TCP_REACH_ANY_OK=1 VPN_ACTIVE=0 CAPTIVE_PORTAL=0
+  IPV6_AVAILABLE=0 MTU_EFFECTIVE="" MTR_FIRST_LOSSY_HOP=""
+  INET_LOSS="" INET_LOSS_ALT="" NTP_DRIFT_S="" DHCP_TIME_REMAINING_S=""
+  ARP_GW_INCOMPLETE=0 ARP_DUPLICATE_IPS="" DHCP_DNS_SERVERS="" SYS_RES_ALL=""
+  WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS=0 WIFI_DISCONNECT_COUNT=0
+  BUFFERBLOAT_GW_GRADE="" BUFFERBLOAT_INET_GRADE=""
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+}
+
+monitor_rules() {
+  _mon_rules
+  printf '%s' "$MON_RULES" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '
+}
+
+# The scanner's rules, narrowed to the vocabulary a between-scans probe can
+# reach. Everything the monitor cannot measure (NT-1, DI-*, DH-1, BL-1,
+# M1, MT1, V6-1, B1/B2, WS-1, WD-1) is scan-only by design and must not be
+# claimed by the stream.
+MONITOR_VOCABULARY='^(N1|G1|G2|G3|P1|P2|D1|W1|W2|TCP-1|VPN-1)$'
+
+scanner_rules() {
+  . "$REPO/lib/diagnosis.sh"
+  diagnosis_run >/dev/null
+  printf '%s\n' "${DIAG_RULE[@]:-}" | grep -E "$MONITOR_VOCABULARY" | sort | tr '\n' ' '
+}
+
+# ── Rule parity: the monitor and the scanner agree ───────────────────────
+
+@test "parity: a healthy network produces no rules on either side" {
+  reset_state
+  [ "$(monitor_rules)" = "$(scanner_rules)" ]
+  reset_state
+  [ -z "$(monitor_rules)" ]
+}
+
+@test "parity: heavy gateway loss on a strong signal blames the router (G2)" {
+  reset_state; MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-60 WIFI_RSSI=-60
+  local m s; m="$(monitor_rules)"; reset_state
+  MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-60 WIFI_RSSI=-60; s="$(scanner_rules)"
+  [ "$m" = "$s" ]
+  [[ "$m" == *"G2"* ]]
+}
+
+@test "parity: the same loss on a weak signal blames the radio (G1)" {
+  reset_state; MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-72 WIFI_RSSI=-72
+  local m; m="$(monitor_rules)"; reset_state
+  MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-72 WIFI_RSSI=-72
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"G1"* ]]
+}
+
+@test "parity: loss in the warn band produces G3 on both" {
+  reset_state; MON_GW_LOSS=15 GW_LOSS=15
+  local m; m="$(monitor_rules)"; reset_state; MON_GW_LOSS=15 GW_LOSS=15
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"G3"* ]]
+}
+
+@test "parity: on an ICMP-filtering network both name TCP-1 alongside the loss rule" {
+  # The monitor must not quietly withhold G2 here. Suppression is the alert
+  # engine's job; withholding the rule would make the stream disagree with
+  # a scan taken one second later on the same link.
+  reset_state; MON_GW_LOSS=100 GW_LOSS=100 MON_WIFI_RSSI=-50 WIFI_RSSI=-50
+  local m; m="$(monitor_rules)"; reset_state
+  MON_GW_LOSS=100 GW_LOSS=100 MON_WIFI_RSSI=-50 WIFI_RSSI=-50
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"TCP-1"* ]]
+  [[ "$m" == *"G2"* ]]
+}
+
+@test "the icmp_filtered flag is set so the alert engine can suppress" {
+  reset_state; MON_GW_LOSS=100
+  _mon_rules
+  [ "$MON_ICMP_FILTERED" -eq 1 ]
+}
+
+@test "parity: internet down with DNS also failing is P1 on both" {
+  reset_state; MON_PUBLIC_OK=0 PUBLIC_OK=0 MON_DNS_OK=0 DNS_OK=0
+  local m; m="$(monitor_rules)"; reset_state
+  MON_PUBLIC_OK=0 PUBLIC_OK=0 MON_DNS_OK=0 DNS_OK=0
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"P1"* ]]
+}
+
+@test "parity: internet down with DNS working is P2 on both" {
+  reset_state; MON_PUBLIC_OK=0 PUBLIC_OK=0
+  local m; m="$(monitor_rules)"; reset_state; MON_PUBLIC_OK=0 PUBLIC_OK=0
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"P2"* ]]
+}
+
+@test "parity: DNS failing while the internet is reachable is D1 on both" {
+  reset_state; MON_DNS_OK=0 DNS_OK=0
+  local m; m="$(monitor_rules)"; reset_state; MON_DNS_OK=0 DNS_OK=0
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"D1"* ]]
+}
+
+@test "parity: a weak signal is W1 on both" {
+  reset_state; MON_WIFI_RSSI=-80 WIFI_RSSI=-80
+  local m; m="$(monitor_rules)"; reset_state; MON_WIFI_RSSI=-80 WIFI_RSSI=-80
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"W1"* ]]
+}
+
+@test "parity: a noisy channel is W2 on both" {
+  reset_state; MON_WIFI_SNR=10 WIFI_SNR=10
+  local m; m="$(monitor_rules)"; reset_state; MON_WIFI_SNR=10 WIFI_SNR=10
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"W2"* ]]
+}
+
+@test "parity: an active VPN is VPN-1 on both" {
+  reset_state; MON_VPN_ACTIVE=1 VPN_ACTIVE=1
+  local m; m="$(monitor_rules)"; reset_state; MON_VPN_ACTIVE=1 VPN_ACTIVE=1
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"VPN-1"* ]]
+}
+
+@test "parity: no default route is N1 on both" {
+  reset_state; MON_LINK_UP=0 GATEWAY=""
+  local m; m="$(monitor_rules)"; reset_state; MON_LINK_UP=0 GATEWAY=""
+  [ "$m" = "$(scanner_rules)" ]
+  [ "$m" = "N1 " ]
+}
+
+@test "the monitor claims no rule the scanner cannot also produce" {
+  # Guards against the stream inventing a verdict. Every rule id the
+  # monitor can emit must exist in lib/diagnosis.sh.
+  local rule
+  for rule in $(grep -oE '_mon_add_rule (critical|warn|info) [A-Za-z0-9-]+' "$REPO/lib/monitor.sh" \
+                | awk '{print $3}' | sort -u); do
+    case "$rule" in
+      CP-1) continue ;;  # captive portal: a public.captive_portal fact, not a diagnosis rule
+    esac
+    grep -qE "add_diag [a-z]+ ${rule} " "$REPO/lib/diagnosis.sh" \
+      || { echo "monitor emits '$rule', which lib/diagnosis.sh never does"; return 1; }
+  done
+}
+
+@test "no rule in lib/monitor.sh carries an inline numeric cutoff" {
+  run grep -nE '(loss_at_least|loss_below) "\$[A-Z_]+" [0-9]+|-lt -?[1-9][0-9]* \]|-ge -?[1-9][0-9]* \]|-gt -?[1-9][0-9]* \]' \
+    "$REPO/lib/monitor.sh"
+  [ "$status" -ne 0 ] || { echo "inline cutoff in monitor.sh:"; echo "$output"; return 1; }
+}
+
+# ── Severity and cadence ─────────────────────────────────────────────────
+
+@test "severity is the worst rule that fired" {
+  reset_state; MON_GW_LOSS=25 MON_VPN_ACTIVE=1
+  _mon_rules
+  [ "$MON_SEVERITY" = "critical" ]
+}
+
+@test "an info-only rule does not escalate severity or halve the cadence" {
+  # A VPN notice is not a reason to probe twice as often for the rest of
+  # the session.
+  reset_state; MON_VPN_ACTIVE=1
+  _mon_rules
+  [ "$MON_SEVERITY" = "info" ]
+  [ "$MON_DEGRADED" -eq 0 ]
+}
+
+@test "a fault switches the monitor to its degraded cadence" {
+  reset_state; MON_GW_LOSS=15
+  _mon_rules
+  [ "$MON_DEGRADED" -eq 1 ]
+}
+
+@test "a dead link is degraded and reports nothing it did not measure" {
+  reset_state; MON_LINK_UP=0
+  _mon_rules
+  [ "$MON_DEGRADED" -eq 1 ]
+  [ "$MON_RULES" = "N1 " ]
+}
+
+# ── Unmeasured is not zero ───────────────────────────────────────────────
+
+@test "an unmeasured public reach does not read as an outage" {
+  # The slow tier has not run yet on the first sample. Treating its empty
+  # value as false would announce "your ISP is down" one second after
+  # launch, on a working connection.
+  reset_state; MON_PUBLIC_OK="" MON_DNS_OK=""
+  _mon_rules
+  [[ "$MON_RULES" != *"P1"* ]]
+  [[ "$MON_RULES" != *"P2"* ]]
+  [[ "$MON_RULES" != *"D1"* ]]
+}
+
+@test "an unmeasured gateway loss does not fire a loss rule" {
+  reset_state; MON_GW_LOSS=""
+  _mon_rules
+  [[ "$MON_RULES" != *"G1"* ]]
+  [[ "$MON_RULES" != *"G2"* ]]
+  [[ "$MON_RULES" != *"G3"* ]]
+}
+
+@test "an unmeasured RSSI does not fire W1" {
+  reset_state; MON_WIFI_RSSI=""
+  _mon_rules
+  [[ "$MON_RULES" != *"W1"* ]]
+}
+
+# ── Sample shape ─────────────────────────────────────────────────────────
+
+emit() {
+  env -i PATH="$PATH" "$@" python3 "$HELPERS/monitor_sample.py"
+}
+
+@test "monitor_sample: an empty environment still emits one valid object" {
+  run emit
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c 'import json,sys; json.load(sys.stdin)'
+}
+
+@test "monitor_sample: emits exactly one line" {
+  run emit NETDIAG_MON_SEQ=1
+  [ "${#lines[@]}" -eq 1 ]
+}
+
+@test "monitor_sample: every documented top-level key is present" {
+  run emit
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+for k in ('schema','version','ts','seq','refreshed','link','network','vpn',
+          'gateway','wifi','dns','tcp','public','status'):
+    assert k in d, k
+"
+}
+
+@test "monitor_sample: an unmeasured probe is null, never false" {
+  # dns.ok unset must be null. False would mean "we asked and it failed".
+  run emit NETDIAG_MON_LINK_UP=1
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+assert d['dns']['ok'] is None, d['dns']
+assert d['public']['ok'] is None, d['public']
+assert d['tcp']['any_ok'] is None, d['tcp']
+assert d['public']['captive_portal'] is None
+"
+}
+
+@test "monitor_sample: a measured negative is false, not null" {
+  run emit NETDIAG_MON_DNS_OK=0 NETDIAG_MON_PUBLIC_OK=0 NETDIAG_MON_CAPTIVE=0
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+assert d['dns']['ok'] is False
+assert d['public']['ok'] is False
+assert d['public']['captive_portal'] is False
+"
+}
+
+@test "monitor_sample: wifi is null on a wired link rather than an object of nulls" {
+  run emit NETDIAG_MON_IFACE_TYPE=wired
+  printf '%s' "$output" | python3 -c 'import json,sys; assert json.load(sys.stdin)["wifi"] is None'
+}
+
+@test "monitor_sample: an SSID containing quotes and backslashes round-trips" {
+  # The reason this goes through python instead of printf. A stream the app
+  # parses forever will eventually meet one of these.
+  run emit NETDIAG_MON_IFACE_TYPE=wifi 'NETDIAG_MON_SSID=say "hi"\back'
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert json.load(sys.stdin)['link']['ssid'] == 'say \"hi\"\\\\back'
+"
+}
+
+@test "monitor_sample: rules and severity ride through to status" {
+  run emit NETDIAG_MON_RULES='G2 TCP-1 ' NETDIAG_MON_SEVERITY=critical \
+           NETDIAG_MON_ICMP_FILTERED=1 NETDIAG_MON_DEGRADED=1 NETDIAG_MON_CADENCE_S=5
+  printf '%s' "$output" | python3 -c "
+import json,sys
+s = json.load(sys.stdin)['status']
+assert s['rules'] == ['G2','TCP-1'], s
+assert s['severity'] == 'critical'
+assert s['icmp_filtered'] is True
+assert s['degraded'] is True
+assert s['cadence_s'] == 5
+"
+}
+
+@test "monitor_sample: TCP targets parse into structured entries" {
+  run emit 'NETDIAG_MON_TCP_LINES=1.1.1.1|443|1|30
+8.8.8.8|443|0|'
+  printf '%s' "$output" | python3 -c "
+import json,sys
+t = json.load(sys.stdin)['tcp']['targets']
+assert t == [{'host':'1.1.1.1','port':443,'ok':True,'elapsed_ms':30.0},
+             {'host':'8.8.8.8','port':443,'ok':False,'elapsed_ms':None}], t
+"
+}
+
+@test "monitor_sample: refreshed lists the tiers that actually ran" {
+  run emit 'NETDIAG_MON_REFRESHED=fast medium '
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert json.load(sys.stdin)['refreshed'] == ['fast','medium']
+"
+}
+
+# ── Flags and exit codes ─────────────────────────────────────────────────
+# These exit during argument validation, before any probe runs.
+
+@test "--monitor with a non-numeric interval exits 3, not 2" {
+  run "$REPO/bin/netdiag" --monitor --monitor-fast-interval abc
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"whole number of seconds"* ]]
+}
+
+@test "--monitor with a zero interval exits 3" {
+  run "$REPO/bin/netdiag" --monitor --monitor-medium-interval 0
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"at least 1 second"* ]]
+}
+
+@test "a monitor interval flag with no value exits 3" {
+  run "$REPO/bin/netdiag" --monitor --monitor-slow-interval
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"expects a value"* ]]
+}
+
+@test "the --monitor-*=VALUE form is accepted" {
+  run "$REPO/bin/netdiag" --monitor --monitor-fast-interval=nope
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"whole number of seconds"* ]]
+}
+
+@test "--monitor-count is validated too" {
+  run "$REPO/bin/netdiag" --monitor --monitor-count -1
+  [ "$status" -eq 3 ]
+}
+
+@test "--monitor and its interval flags are documented in --help" {
+  run "$REPO/bin/netdiag" --help
+  [ "$status" -eq 0 ]
+  for flag in --monitor --monitor-fast-interval --monitor-medium-interval \
+              --monitor-slow-interval --monitor-count; do
+    [[ "$output" == *"$flag"* ]] || { echo "missing from --help: $flag"; return 1; }
+  done
+}
+
+@test "--monitor writes nothing under the log directory" {
+  # It runs for days. Anything it accumulates, it accumulates forever.
+  run grep -n 'LOG=/dev/null' "$REPO/bin/netdiag"
+  [ "$status" -eq 0 ]
+  # Code lines only — the header comment names baseline.jsonl precisely to
+  # say it is never written.
+  run grep -cE '^[^#]*(baseline\.jsonl|LOG_DIR|>>[[:space:]]*"\$LOG)' "$REPO/lib/monitor.sh"
+  [ "$output" -eq 0 ]
+}

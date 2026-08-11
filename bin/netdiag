@@ -133,14 +133,37 @@ SUMMARY_WINDOW_HOURS=24
 # recent window. HISTORY_LIMIT caps it to the N most recent runs.
 HISTORY=0
 HISTORY_LIMIT=0
+# --monitor: the machine-readable sibling of --watch. Streams one compact
+# JSON object per line until stopped. Three cadence tiers, each overridable
+# so the GUI's Settings sliders have something to drive.
+MONITOR=0
+MONITOR_FAST_INTERVAL=10
+MONITOR_DEGRADED_INTERVAL=5
+MONITOR_MEDIUM_INTERVAL=60
+MONITOR_SLOW_INTERVAL=300
+MONITOR_COUNT=0          # >0: emit N samples then exit (tests, one-shots)
 INSTALL_WATCHER=0
 UNINSTALL_WATCHER=0
 WATCH_CHILD=0
 TARGET=""
 _take_value=0
+# Which --monitor-*-interval is awaiting its value, if any. A separate
+# state from _take_value so `--log --monitor-count 5` can't silently
+# consume the wrong argument.
+_take_monitor=""
 while [ "$#" -gt 0 ]; do
   if [ "$_take_value" -eq 1 ]; then
     LOG_OVERRIDE="$1"; _take_value=0; shift; continue
+  fi
+  if [ -n "$_take_monitor" ]; then
+    case "$_take_monitor" in
+      FAST)     MONITOR_FAST_INTERVAL="$1" ;;
+      DEGRADED) MONITOR_DEGRADED_INTERVAL="$1" ;;
+      MEDIUM)   MONITOR_MEDIUM_INTERVAL="$1" ;;
+      SLOW)     MONITOR_SLOW_INTERVAL="$1" ;;
+      COUNT)    MONITOR_COUNT="$1" ;;
+    esac
+    _take_monitor=""; shift; continue
   fi
   case "$1" in
     --gping)          NO_GPING=0; GPING_DECISION="opted_in"  ;;
@@ -165,6 +188,17 @@ while [ "$#" -gt 0 ]; do
     --summary=*)      SUMMARY=1; SUMMARY_WINDOW_HOURS="${1#--summary=}" ;;
     --history)        HISTORY=1 ;;
     --history=*)      HISTORY=1; HISTORY_LIMIT="${1#--history=}" ;;
+    --monitor)        MONITOR=1 ;;
+    --monitor-fast-interval)      _take_monitor=FAST ;;
+    --monitor-fast-interval=*)    MONITOR_FAST_INTERVAL="${1#*=}" ;;
+    --monitor-degraded-interval)  _take_monitor=DEGRADED ;;
+    --monitor-degraded-interval=*) MONITOR_DEGRADED_INTERVAL="${1#*=}" ;;
+    --monitor-medium-interval)    _take_monitor=MEDIUM ;;
+    --monitor-medium-interval=*)  MONITOR_MEDIUM_INTERVAL="${1#*=}" ;;
+    --monitor-slow-interval)      _take_monitor=SLOW ;;
+    --monitor-slow-interval=*)    MONITOR_SLOW_INTERVAL="${1#*=}" ;;
+    --monitor-count)              _take_monitor=COUNT ;;
+    --monitor-count=*)            MONITOR_COUNT="${1#*=}" ;;
     --install-watcher)   INSTALL_WATCHER=1 ;;
     --uninstall-watcher) UNINSTALL_WATCHER=1 ;;
     --watch-child)       WATCH_CHILD=1 ;;
@@ -228,6 +262,15 @@ Modes (exit after running, don't run the normal check battery):
                            object — networks grouped by identity, one
                            compact row per run — for charting. N caps it to
                            the N most recent runs. Reads the archive too.
+  --monitor                stream one compact JSON object per line, one per
+                           sample, until stopped. The machine-readable
+                           sibling of --watch (which re-runs --quick and
+                           prints prose). Writes no log and no history.
+                             --monitor-fast-interval SEC      (default 10)
+                             --monitor-degraded-interval SEC  (default 5)
+                             --monitor-medium-interval SEC    (default 60)
+                             --monitor-slow-interval SEC      (default 300)
+                             --monitor-count N   emit N samples then exit
   --install-watcher        install a launchd plist that runs netdiag
                            every 15 min in the background.
   --uninstall-watcher      remove the launchd plist.
@@ -246,6 +289,9 @@ HELP
 done
 if [ "$_take_value" -eq 1 ]; then
   printf 'netdiag: --log expects a path\n' >&2; exit 3
+fi
+if [ -n "$_take_monitor" ]; then
+  printf 'netdiag: --monitor interval flag expects a value\n' >&2; exit 3
 fi
 # Section bodies stream out as each module runs — before later modules have
 # discovered everything that needs masking. Rather than emit a partially
@@ -295,6 +341,44 @@ if [ "$WATCH" -eq 1 ]; then
   # shellcheck source=lib/watch.sh
   . "$LIB_DIR/watch.sh"
   watch_run
+fi
+if [ "$MONITOR" -eq 1 ]; then
+  # Every interval is a whole number of seconds; anything else would reach
+  # $(( )) as a syntax error mid-stream, hours into a run. Fail at startup.
+  for _iv in MONITOR_FAST_INTERVAL MONITOR_DEGRADED_INTERVAL \
+             MONITOR_MEDIUM_INTERVAL MONITOR_SLOW_INTERVAL MONITOR_COUNT; do
+    case "${!_iv}" in
+      ''|*[!0-9]*)
+        printf 'netdiag: %s expects a whole number of seconds (got: %s)\n' \
+          "$_iv" "${!_iv}" >&2; exit 3 ;;
+    esac
+  done
+  for _iv in MONITOR_FAST_INTERVAL MONITOR_DEGRADED_INTERVAL \
+             MONITOR_MEDIUM_INTERVAL MONITOR_SLOW_INTERVAL; do
+    if [ "${!_iv}" -lt 1 ]; then
+      printf 'netdiag: %s must be at least 1 second\n' "$_iv" >&2; exit 3
+    fi
+  done
+  # The monitor writes only to stdout: no log file, no baseline append,
+  # nothing under ~/net-diag. It is a read-only observer, and a process
+  # that runs for days must not accumulate anything.
+  LOG=/dev/null
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  # shellcheck source=lib/common.sh
+  . "$LIB_DIR/common.sh"
+  # shellcheck source=lib/globals.sh
+  . "$LIB_DIR/globals.sh"
+  # netid.sh so identity is computed by the same code a scan uses — a live
+  # sample and a stored run have to agree on network.id or the app cannot
+  # join one to the other.
+  # shellcheck source=lib/netid.sh
+  . "$LIB_DIR/netid.sh"
+  # shellcheck source=lib/monitor.sh
+  . "$LIB_DIR/monitor.sh"
+  monitor_run
+  NETDIAG_COMPLETED=1
+  exit 0
 fi
 
 # ── Log file setup ─────────────────────────────────────────────────────────

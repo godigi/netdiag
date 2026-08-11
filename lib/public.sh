@@ -22,7 +22,13 @@ public_run() {
     PUB_ASN="$(printf '%s' "$pub_out"  | sed -n 's/.*"asn": *"\([^"]*\)".*/\1/p')"
     PUB_CITY="$(printf '%s' "$pub_out" | sed -n 's/.*"city": *"\([^"]*\)".*/\1/p')"
     PUB_CC="$(printf '%s' "$pub_out"   | sed -n 's/.*"country": *"\([^"]*\)".*/\1/p')"
-    ok "Public IP: $PUB_IP  ($PUB_ISP, $PUB_CITY $PUB_CC)"
+    # ifconfig.co's "country" is the full name ("Brazil"); the ISO-3166
+    # alpha-2 lives in a separate key. Both are kept because they answer
+    # different questions: the name is what a report should read, the code
+    # is what a consumer maps to a flag or a locale. Deriving one from the
+    # other would mean shipping a country table in every consumer.
+    PUB_CC_ISO="$(printf '%s' "$pub_out" | sed -n 's/.*"country_iso": *"\([^"]*\)".*/\1/p')"
+    ok "Public IP: $PUB_IP  ($PUB_ISP, $PUB_CITY ${PUB_CC_ISO:-$PUB_CC})"
   else
     bad "Could not reach ifconfig.co — no internet, captive portal, or DNS broken."
   fi

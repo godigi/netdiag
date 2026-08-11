@@ -64,6 +64,17 @@ THRESH_GW_LOSS_CRIT_PCT=20
 LOSS_PROBE_COUNT=20
 LOSS_PROBE_INTERVAL=0.2
 
+# The monitor's per-cycle gateway probe. Ten packets, not the three or five
+# a "quick liveness check" suggests, and the reason is quantisation rather
+# than accuracy: at 3 packets the only reportable losses are 0/33/67/100%,
+# so one dropped packet reads as 33% — past the 20% critical floor. At 5 it
+# reads as exactly 20%, which still trips it. At 10 the quantum is 10%, so
+# one drop lands in G3's warn band and it takes two to reach critical:
+# the same shape the scanner's 20-packet probe produces. Cost is 2 s of a
+# 10 s cycle, averaging one packet per second.
+MONITOR_PING_COUNT=10
+MONITOR_PING_INTERVAL=0.2
+
 # TCP-1 — TCP connections succeed while ping reports heavy loss, i.e. the
 # path filters ICMP. Set well above LOSS_CRIT_PCT: below this a real lossy
 # link and a filtered one look the same, and calling a degraded network

@@ -1,0 +1,530 @@
+# shellcheck shell=bash
+# lib/monitor.sh — `netdiag --monitor`: a long-lived process that emits one
+# compact JSON object per line on stdout, flushed per sample.
+#
+# This is the machine-readable sibling of --watch. --watch re-runs --quick
+# on an interval and prints prose for a human watching a terminal;
+# --monitor never prints prose, never writes a log, never touches
+# baseline.jsonl, and emits a deliberately *smaller* shape than a full run
+# (documented in docs/JSON-SCHEMA.md). The menu-bar app consumes it; a
+# person would not enjoy reading it.
+#
+# Reads:  MONITOR_* interval flags set by bin/netdiag's argparse
+# Entry:  monitor_run (loops until SIGINT/SIGTERM or stdout closes)
+#
+# ── Three cadence tiers ────────────────────────────────────────────────
+# Probing everything on the fastest interval would be both rude to the
+# network and pointless: a public-IP lookup answers a question that
+# changes hourly, a gateway ping one that changes second to second.
+#
+#   fast   gateway ping, VPN state, link/SSID     10 s (5 s when degraded)
+#   medium DNS resolve, TCP/443, RSSI/SNR         60 s
+#   slow   public IP, ISP, ASN, country, portal   300 s + on network change
+#
+# The slow tier is the only one making an external call, so it is the only
+# one where rate-limit politeness is at stake — hence 300 s, and hence the
+# network-change trigger, because a changed public IP is the one thing
+# worth knowing immediately after joining somewhere new.
+#
+# ── The monitor computes rules, not verdicts ───────────────────────────
+# Each sample carries status.rules: the IDs from docs/DIAGNOSIS-RULES.md
+# that *would* fire on this sample, evaluated here in bash against
+# lib/thresholds.sh — the same constants lib/diagnosis.sh reads. The GUI
+# renders that list and never re-derives a threshold. If the two ever
+# disagree about what "lossy" means, the app contradicts the report it
+# links to and the user has no way to tell which lied.
+#
+# ── Power is the GUI's problem ─────────────────────────────────────────
+# The monitor stays dumb about sleep and battery: NSWorkspace delivers
+# those events to the app for free, where bash would have to poll pmset.
+# The app pauses and resumes this process with SIGSTOP/SIGCONT.
+#
+# The one thing it does manage itself is a dead link: with no default
+# route there is nothing to probe, so it stops probing and emits a minimal
+# N1 sample at the fast cadence. It deliberately does *not* exit — a
+# stream that dies at the instant WiFi drops cannot report that WiFi
+# dropped, which is the single event the app exists to announce.
+
+# ── Sample state ─────────────────────────────────────────────────────────
+# All MON_* — a distinct namespace from the scanner's globals so that
+# sourcing both (as bin/netdiag does) can't have one silently read the
+# other's value.
+MON_SEQ=0
+MON_INTERFACE=""
+MON_IFACE_TYPE=""
+MON_LINK_UP=0
+MON_GATEWAY=""
+MON_GW_MAC=""
+MON_SSID=""
+MON_BSSID=""
+MON_LOCAL_IP=""
+MON_NETWORK_ID=""
+MON_NETWORK_LABEL=""
+MON_VPN_ACTIVE=0
+MON_VPN_TYPE=""
+MON_VPN_NAME=""
+MON_GW_LOSS=""
+MON_GW_RTT=""
+MON_WIFI_RSSI=""
+MON_WIFI_NOISE=""
+MON_WIFI_SNR=""
+MON_WIFI_CHAN=""
+MON_DNS_OK=""
+MON_DNS_RESOLVER=""
+MON_DNS_MS=""
+MON_TCP_OK=""
+MON_TCP_LINES=""
+MON_PUB_IP=""
+MON_PUB_ISP=""
+MON_PUB_ASN=""
+MON_PUB_CC=""
+MON_PUB_CC_ISO=""
+MON_PUB_CITY=""
+MON_PUBLIC_OK=""
+MON_CAPTIVE=""
+MON_RULES=""
+MON_SEVERITY="ok"
+MON_ICMP_FILTERED=0
+MON_DEGRADED=0
+MON_REFRESHED=""
+MON_STOP=0
+MON_HW_PORTS=""
+
+# ── Fast tier ────────────────────────────────────────────────────────────
+
+# One `route -n get default` for both fields: it is a syscall to the
+# routing table, but two of them per sample forever adds up and they can
+# disagree if the route changes between the calls.
+_mon_probe_link() {
+  local route_out
+  route_out="$(route -n get default 2>/dev/null || true)"
+  MON_INTERFACE="$(printf '%s\n' "$route_out" | awk '/interface:/{print $2; exit}')"
+  MON_GATEWAY="$(printf '%s\n' "$route_out"  | awk '/gateway:/{print $2; exit}')"
+  if [ -n "$MON_INTERFACE" ] && [ -n "$MON_GATEWAY" ]; then
+    MON_LINK_UP=1
+  else
+    MON_LINK_UP=0
+  fi
+  MON_LOCAL_IP=""
+  [ -n "$MON_INTERFACE" ] && MON_LOCAL_IP="$(ipconfig getifaddr "$MON_INTERFACE" 2>/dev/null || true)"
+
+  # Hardware-port list is static for the life of the machine, so read it
+  # once. networksetup is ~100 ms — affordable at startup, not every 10 s.
+  if [ -z "$MON_HW_PORTS" ]; then
+    MON_HW_PORTS="$(networksetup -listallhardwareports 2>/dev/null || true)"
+  fi
+  MON_IFACE_TYPE="wired"
+  MON_SSID=""; MON_BSSID=""
+  if [ -n "$MON_INTERFACE" ]; then
+    local hw_port
+    hw_port="$(printf '%s\n' "$MON_HW_PORTS" | awk -v d="$MON_INTERFACE" '
+      /^Hardware Port:/{port=substr($0, index($0,$3))}
+      /^Device:/{if($2==d){print port; exit}}')"
+    if printf '%s' "$hw_port" | grep -qi 'Wi-Fi\|AirPort'; then
+      MON_IFACE_TYPE="wifi"
+      local summary
+      summary="$(ipconfig getsummary "$MON_INTERFACE" 2>/dev/null || true)"
+      MON_SSID="$(printf '%s\n' "$summary"  | awk -F': ' '/^[[:space:]]*SSID[[:space:]]*:/{print $2; exit}')"
+      MON_BSSID="$(printf '%s\n' "$summary" | awk -F': ' '/^[[:space:]]*BSSID[[:space:]]*:/{print $2; exit}')"
+    fi
+  fi
+
+  # Gateway MAC from the ARP cache — a local table read, no packets. This
+  # is the strongest identity a network has and the thing "you're not on
+  # the network you think you are" keys off.
+  MON_GW_MAC=""
+  if [ -n "$MON_GATEWAY" ]; then
+    MON_GW_MAC="$(arp -n "$MON_GATEWAY" 2>/dev/null \
+      | awk '/ at /{ if ($4 != "(incomplete)") print $4; exit }')"
+  fi
+  _mon_identity
+}
+
+# Reuse lib/netid.sh rather than reimplementing precedence. Identity has to
+# be byte-identical to what a scan records or the app cannot join a live
+# sample to the history it charts.
+_mon_identity() {
+  # netid_run reads these four by name and writes the two below. They look
+  # unused to shellcheck because the read happens in another file through
+  # dynamic scope, which is exactly the point: the precedence logic stays
+  # in one place.
+  # shellcheck disable=SC2034
+  local IS_WIFI=0 WIFI_SSID="$MON_SSID" GW_MAC="$MON_GW_MAC" GATEWAY="$MON_GATEWAY"
+  local NETWORK_ID="" NETWORK_LABEL=""
+  # shellcheck disable=SC2034
+  [ "$MON_IFACE_TYPE" = "wifi" ] && IS_WIFI=1
+  netid_run
+  MON_NETWORK_ID="$NETWORK_ID"
+  MON_NETWORK_LABEL="$NETWORK_LABEL"
+}
+
+_mon_probe_vpn() {
+  MON_VPN_ACTIVE=0; MON_VPN_TYPE=""; MON_VPN_NAME=""
+  # A utun/wg interface carrying the default route is free to detect —
+  # _mon_probe_link already read it.
+  if printf '%s' "$MON_INTERFACE" | grep -qE '^(utun|wg)'; then
+    MON_VPN_ACTIVE=1; MON_VPN_TYPE="utun-route"; MON_VPN_NAME="$MON_INTERFACE"
+    return 0
+  fi
+  local scutil_nc
+  scutil_nc="$(scutil --nc list 2>/dev/null || true)"
+  if printf '%s' "$scutil_nc" | grep -q '(Connected)'; then
+    MON_VPN_ACTIVE=1
+    MON_VPN_TYPE="managed"
+    MON_VPN_NAME="$(printf '%s' "$scutil_nc" | awk -F'"' '/\(Connected\)/{print $2; exit}')"
+  fi
+}
+
+_mon_probe_gateway() {
+  MON_GW_LOSS=""; MON_GW_RTT=""
+  [ -n "$MON_GATEWAY" ] || return 0
+  local out
+  # -q: summary only. The scanner keeps the per-packet lines because it
+  # logs them; nothing here reads them.
+  #
+  # MONITOR_PING_COUNT is 10, not the 3 or 5 a "quick liveness check"
+  # suggests, and the reason is quantisation rather than accuracy. At 3
+  # packets the only reportable losses are 0/33/67/100%, so one dropped
+  # packet reads as 33% — comfortably past the 20% critical floor. At 5 it
+  # reads as exactly 20%, which still trips it. At 10 the quantum is 10%:
+  # one drop lands in G3's warn band and it takes two to reach critical,
+  # which is the same shape the scanner's 20-packet probe produces. Cost
+  # is 2 s of a 10 s cycle, at one packet per second average.
+  out="$(with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" "$MON_GATEWAY" 2>/dev/null || true)"
+  MON_GW_LOSS="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
+  MON_GW_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  is_numeric "$MON_GW_LOSS" || MON_GW_LOSS=""
+  is_numeric "$MON_GW_RTT"  || MON_GW_RTT=""
+}
+
+# ── Medium tier ──────────────────────────────────────────────────────────
+
+_mon_probe_dns() {
+  MON_DNS_OK=""; MON_DNS_RESOLVER=""; MON_DNS_MS=""
+  [ "$MON_LINK_UP" -eq 1 ] || return 0
+  MON_DNS_RESOLVER="$(scutil --dns 2>/dev/null \
+    | awk '/nameserver\[0\]/{print $3; exit}')"
+  [ -n "$MON_DNS_RESOLVER" ] || return 0
+  local t0 answer
+  t0="$EPOCHREALTIME"
+  answer="$(with_timeout 3 dig +time=2 +tries=1 +short @"$MON_DNS_RESOLVER" cloudflare.com 2>/dev/null | head -1)"
+  MON_DNS_MS="$(awk -v a="$t0" -v b="$EPOCHREALTIME" 'BEGIN{printf "%.0f", (b-a)*1000}')"
+  if [ -n "$answer" ]; then MON_DNS_OK=1; else MON_DNS_OK=0; fi
+}
+
+_mon_probe_tcp() {
+  MON_TCP_OK=""; MON_TCP_LINES=""
+  [ "$MON_LINK_UP" -eq 1 ] || return 0
+  # TCP-1 exists because hotel and corporate networks block ICMP wholesale.
+  # Without a TCP probe alongside the ping, a monitor on such a network
+  # reports 100% loss forever and every loss alert it can raise is a false
+  # one. Two independent targets so a single unreachable host doesn't read
+  # as "the internet is gone".
+  local entry host port t0 ms any=0
+  for entry in "1.1.1.1:443" "8.8.8.8:443"; do
+    host="${entry%:*}"; port="${entry##*:}"
+    t0="$EPOCHREALTIME"
+    if with_timeout 4 nc -G 3 -z "$host" "$port" >/dev/null 2>&1; then
+      ms="$(awk -v a="$t0" -v b="$EPOCHREALTIME" 'BEGIN{printf "%.0f", (b-a)*1000}')"
+      MON_TCP_LINES+="${host}|${port}|1|${ms}"$'\n'
+      any=1
+    else
+      MON_TCP_LINES+="${host}|${port}|0|"$'\n'
+    fi
+  done
+  MON_TCP_OK="$any"
+}
+
+_mon_probe_wifi_signal() {
+  MON_WIFI_RSSI=""; MON_WIFI_NOISE=""; MON_WIFI_SNR=""; MON_WIFI_CHAN=""
+  [ "$MON_IFACE_TYPE" = "wifi" ] || return 0
+  # wdutil needs root. The GUI runs unprivileged, so in practice these stay
+  # null and W1/W2 never fire from the monitor — which is correct: a null
+  # RSSI is "not measured", and inventing one would be worse than the
+  # missing alert. `sudo -n` never prompts.
+  sudo -n true 2>/dev/null || return 0
+  local out rssi noise
+  out="$(with_timeout 4 sudo -n wdutil info 2>/dev/null || true)"
+  [ -n "$out" ] || return 0
+  rssi="$(printf  '%s\n' "$out" | awk -F': ' '/^[[:space:]]*RSSI/{gsub(/ dBm/,"",$2); print $2; exit}')"
+  noise="$(printf '%s\n' "$out" | awk -F': ' '/^[[:space:]]*Noise/{gsub(/ dBm/,"",$2); print $2; exit}')"
+  MON_WIFI_CHAN="$(printf '%s\n' "$out" | awk -F': ' '/^[[:space:]]*Channel/{print $2; exit}')"
+  is_numeric "$rssi"  || rssi=""
+  is_numeric "$noise" || noise=""
+  MON_WIFI_RSSI="$rssi"
+  MON_WIFI_NOISE="$noise"
+  if [ -n "$rssi" ] && [ -n "$noise" ]; then
+    MON_WIFI_SNR=$((rssi - noise))
+  fi
+}
+
+# ── Slow tier ────────────────────────────────────────────────────────────
+
+_mon_probe_public() {
+  MON_PUBLIC_OK=""; MON_CAPTIVE=""
+  [ "$MON_LINK_UP" -eq 1 ] || return 0
+  local out
+  out="$(curl -s -m 4 https://ifconfig.co/json 2>/dev/null || true)"
+  if [ -n "$out" ]; then
+    MON_PUBLIC_OK=1
+    MON_PUB_IP="$(printf   '%s' "$out" | sed -n 's/.*"ip": *"\([^"]*\)".*/\1/p')"
+    MON_PUB_ISP="$(printf  '%s' "$out" | sed -n 's/.*"asn_org": *"\([^"]*\)".*/\1/p')"
+    MON_PUB_ASN="$(printf  '%s' "$out" | sed -n 's/.*"asn": *"\([^"]*\)".*/\1/p')"
+    MON_PUB_CITY="$(printf '%s' "$out" | sed -n 's/.*"city": *"\([^"]*\)".*/\1/p')"
+    MON_PUB_CC="$(printf   '%s' "$out" | sed -n 's/.*"country": *"\([^"]*\)".*/\1/p')"
+    MON_PUB_CC_ISO="$(printf '%s' "$out" | sed -n 's/.*"country_iso": *"\([^"]*\)".*/\1/p')"
+  else
+    MON_PUBLIC_OK=0
+  fi
+  local captive
+  captive="$(curl -s -m 3 -o /dev/null -w '%{http_code}' \
+    http://captive.apple.com/hotspot-detect.html 2>/dev/null || true)"
+  case "$captive" in
+    200)      MON_CAPTIVE=0 ;;
+    3[0-9][0-9]) MON_CAPTIVE=1 ;;
+    *)        MON_CAPTIVE="" ;;
+  esac
+}
+
+# ── Rule evaluation ──────────────────────────────────────────────────────
+# A deliberately partial mirror of lib/diagnosis.sh: only the rules whose
+# inputs a between-scans probe actually measures. NT-1, DI-*, DH-1 and BL-1
+# are scan-only and are never claimed here — the app triggers a real scan
+# for those rather than have the monitor guess.
+#
+# Every cutoff comes from lib/thresholds.sh. Nothing in this function may
+# contain a numeric literal.
+
+_mon_add_rule() {
+  local sev="$1" rule="$2"
+  MON_RULES+="${rule} "
+  case "$sev" in
+    critical) MON_SEVERITY="critical" ;;
+    warn)     [ "$MON_SEVERITY" = "critical" ] || MON_SEVERITY="warn" ;;
+    info)     case "$MON_SEVERITY" in ok) MON_SEVERITY="info" ;; esac ;;
+  esac
+  return 0
+}
+
+_mon_rules() {
+  MON_RULES=""
+  MON_SEVERITY="ok"
+  MON_ICMP_FILTERED=0
+
+  if [ "$MON_LINK_UP" -eq 0 ]; then
+    _mon_add_rule critical N1
+    MON_DEGRADED=1
+    return 0
+  fi
+
+  # G1/G2/G3, evaluated exactly as lib/diagnosis.sh evaluates them —
+  # including when ICMP turns out to be filtered.
+  #
+  # It is tempting to suppress these when TCP-1 holds, and wrong. The
+  # constraint this project is built on is that the CLI owns every verdict
+  # and the GUI owns only alert policy. A monitor that quietly withheld G2
+  # on a hotel network would name a different rule set than a scan taken
+  # one second later on the same link, and the app would show a green dot
+  # over a red report. So the rule fires, `status.icmp_filtered` says the
+  # ping numbers are not to be trusted, and the alert engine — whose job
+  # this is — declines to notify. Same facts, one place to decide.
+  if loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+    if [ "$MON_IFACE_TYPE" = "wifi" ] && [ -n "$MON_WIFI_RSSI" ] \
+       && [ "$MON_WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_G1_DBM" ]; then
+      _mon_add_rule critical G1
+    else
+      _mon_add_rule critical G2
+    fi
+  elif loss_at_least "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
+    _mon_add_rule warn G3
+  fi
+
+  # P1/P2 need the slow tier to have run at least once. An unmeasured
+  # public reach is "" and must not read as an outage — the same
+  # distinction that JSON-SCHEMA.md draws between null and 0.
+  if [ "${MON_PUBLIC_OK:-}" = "0" ] && loss_below "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+    if [ "${MON_DNS_OK:-}" = "0" ]; then
+      _mon_add_rule critical P1
+    else
+      _mon_add_rule critical P2
+    fi
+  fi
+
+  # D1 — resolution failing while the internet itself is reachable.
+  if [ "${MON_DNS_OK:-}" = "0" ] && [ "${MON_PUBLIC_OK:-}" = "1" ]; then
+    _mon_add_rule warn D1
+  fi
+
+  if [ "$MON_IFACE_TYPE" = "wifi" ] && [ -n "$MON_WIFI_RSSI" ] \
+     && [ "$MON_WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then
+    _mon_add_rule warn W1
+  fi
+  if [ -n "$MON_WIFI_SNR" ] && [ "$MON_WIFI_SNR" -lt "$THRESH_WIFI_SNR_LOW_DB" ]; then
+    _mon_add_rule warn W2
+  fi
+
+  if [ "${MON_CAPTIVE:-}" = "1" ]; then
+    _mon_add_rule warn CP-1
+  fi
+
+  if [ "$MON_VPN_ACTIVE" -eq 1 ]; then
+    _mon_add_rule info VPN-1
+  fi
+
+  # TCP-1 last, matching lib/diagnosis.sh's order so the two emit the same
+  # rule list in the same sequence. Real connections work, only ping is
+  # being dropped — common on hotel and corporate WiFi, and the reason a
+  # naive loss monitor is unusable there. It sets the flag the alert engine
+  # reads to hold every loss notification.
+  if [ "${MON_TCP_OK:-0}" = "1" ] \
+     && loss_at_least "$MON_GW_LOSS" "$THRESH_ICMP_FILTERED_LOSS_PCT"; then
+    MON_ICMP_FILTERED=1
+    _mon_add_rule info TCP-1
+  fi
+
+  # Cadence follows severity, not rule count: an info-level VPN notice is
+  # not a reason to probe twice as often.
+  case "$MON_SEVERITY" in
+    warn|critical) MON_DEGRADED=1 ;;
+    *)             MON_DEGRADED=0 ;;
+  esac
+  return 0
+}
+
+# ── Emit ─────────────────────────────────────────────────────────────────
+# Through python3 rather than bash printf. An SSID may contain a quote, a
+# backslash, or a newline, and a JSON-escaping bug in a stream the GUI
+# parses forever is a far worse trade than ~50 ms of interpreter startup
+# once per cycle. At the 10 s fast cadence that is 0.5% duty.
+_mon_emit() {
+  NETDIAG_MON_SCHEMA=1 \
+  NETDIAG_MON_VERSION="$NETDIAG_VERSION" \
+  NETDIAG_MON_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  NETDIAG_MON_SEQ="$MON_SEQ" \
+  NETDIAG_MON_REFRESHED="$MON_REFRESHED" \
+  NETDIAG_MON_LINK_UP="$MON_LINK_UP" \
+  NETDIAG_MON_INTERFACE="$MON_INTERFACE" \
+  NETDIAG_MON_IFACE_TYPE="$MON_IFACE_TYPE" \
+  NETDIAG_MON_LOCAL_IP="$MON_LOCAL_IP" \
+  NETDIAG_MON_GATEWAY="$MON_GATEWAY" \
+  NETDIAG_MON_GW_MAC="$MON_GW_MAC" \
+  NETDIAG_MON_SSID="$MON_SSID" \
+  NETDIAG_MON_BSSID="$MON_BSSID" \
+  NETDIAG_MON_NETWORK_ID="$MON_NETWORK_ID" \
+  NETDIAG_MON_NETWORK_LABEL="$MON_NETWORK_LABEL" \
+  NETDIAG_MON_VPN_ACTIVE="$MON_VPN_ACTIVE" \
+  NETDIAG_MON_VPN_TYPE="$MON_VPN_TYPE" \
+  NETDIAG_MON_VPN_NAME="$MON_VPN_NAME" \
+  NETDIAG_MON_GW_LOSS="$MON_GW_LOSS" \
+  NETDIAG_MON_GW_RTT="$MON_GW_RTT" \
+  NETDIAG_MON_WIFI_RSSI="$MON_WIFI_RSSI" \
+  NETDIAG_MON_WIFI_NOISE="$MON_WIFI_NOISE" \
+  NETDIAG_MON_WIFI_SNR="$MON_WIFI_SNR" \
+  NETDIAG_MON_WIFI_CHAN="$MON_WIFI_CHAN" \
+  NETDIAG_MON_DNS_OK="$MON_DNS_OK" \
+  NETDIAG_MON_DNS_RESOLVER="$MON_DNS_RESOLVER" \
+  NETDIAG_MON_DNS_MS="$MON_DNS_MS" \
+  NETDIAG_MON_TCP_OK="$MON_TCP_OK" \
+  NETDIAG_MON_TCP_LINES="$MON_TCP_LINES" \
+  NETDIAG_MON_PUBLIC_OK="$MON_PUBLIC_OK" \
+  NETDIAG_MON_PUB_IP="$MON_PUB_IP" \
+  NETDIAG_MON_PUB_ISP="$MON_PUB_ISP" \
+  NETDIAG_MON_PUB_ASN="$MON_PUB_ASN" \
+  NETDIAG_MON_PUB_CITY="$MON_PUB_CITY" \
+  NETDIAG_MON_PUB_CC="$MON_PUB_CC" \
+  NETDIAG_MON_PUB_CC_ISO="$MON_PUB_CC_ISO" \
+  NETDIAG_MON_CAPTIVE="$MON_CAPTIVE" \
+  NETDIAG_MON_RULES="$MON_RULES" \
+  NETDIAG_MON_SEVERITY="$MON_SEVERITY" \
+  NETDIAG_MON_ICMP_FILTERED="$MON_ICMP_FILTERED" \
+  NETDIAG_MON_DEGRADED="$MON_DEGRADED" \
+  NETDIAG_MON_CADENCE_S="$1" \
+  python3 "$HELPERS_DIR/monitor_sample.py"
+}
+
+# ── Loop ─────────────────────────────────────────────────────────────────
+
+# Interruptible sleep. A bare `sleep` swallows the signal until it returns,
+# so a GUI sending SIGTERM would wait up to a full cadence for the process
+# to die; backgrounding it and waiting makes the trap fire immediately.
+_mon_sleep() {
+  sleep "$1" &
+  wait $! 2>/dev/null || true
+}
+
+# shellcheck disable=SC2317,SC2329  # reached via trap, not a direct call
+_mon_on_signal() { MON_STOP=1; }
+
+monitor_run() {
+  local now next_fast=0 next_medium=0 next_slow=0 cadence
+  local prev_network_id="" network_changed
+  trap _mon_on_signal INT TERM
+
+  while :; do
+    [ "$MON_STOP" -eq 0 ] || break
+    now="$EPOCHSECONDS"
+    MON_REFRESHED=""
+
+    # Fast tier drives everything: it establishes whether there is a link
+    # at all, and the identity the other tiers are scoped to.
+    if [ "$now" -ge "$next_fast" ]; then
+      MON_REFRESHED+="fast "
+      _mon_probe_link
+      _mon_probe_vpn
+      [ "$MON_LINK_UP" -eq 1 ] && _mon_probe_gateway
+    fi
+
+    network_changed=0
+    if [ "$MON_NETWORK_ID" != "$prev_network_id" ]; then
+      network_changed=1
+      prev_network_id="$MON_NETWORK_ID"
+    fi
+
+    # A dead link means nothing to probe. Skipping the other tiers here is
+    # the monitor's only power decision, and it is about pointlessness
+    # rather than battery: a DNS query with no default route cannot
+    # succeed, it can only cost four seconds of timeout per cycle.
+    if [ "$MON_LINK_UP" -eq 1 ]; then
+      if [ "$now" -ge "$next_medium" ] || [ "$network_changed" -eq 1 ]; then
+        MON_REFRESHED+="medium "
+        _mon_probe_dns
+        _mon_probe_tcp
+        _mon_probe_wifi_signal
+        next_medium=$((now + MONITOR_MEDIUM_INTERVAL))
+      fi
+      # The slow tier is the only external call, so it is the only one
+      # where being polite matters — but a network change is exactly when
+      # its answer has certainly gone stale, so that overrides the timer.
+      if [ "$now" -ge "$next_slow" ] || [ "$network_changed" -eq 1 ]; then
+        MON_REFRESHED+="slow "
+        _mon_probe_public
+        next_slow=$((now + MONITOR_SLOW_INTERVAL))
+      fi
+    fi
+
+    _mon_rules
+
+    cadence="$MONITOR_FAST_INTERVAL"
+    [ "$MON_DEGRADED" -eq 1 ] && cadence="$MONITOR_DEGRADED_INTERVAL"
+    next_fast=$((now + cadence))
+
+    MON_SEQ=$((MON_SEQ + 1))
+    # A failed emit means stdout is gone — the GUI exited, or a `| head -5`
+    # closed the pipe. Either way there is no one left to talk to.
+    _mon_emit "$cadence" || break
+
+    if [ "$MONITOR_COUNT" -gt 0 ] && [ "$MON_SEQ" -ge "$MONITOR_COUNT" ]; then
+      break
+    fi
+    [ "$MON_STOP" -eq 0 ] || break
+
+    # Sleep only the remainder: the probes themselves take 2-6 s, and
+    # sleeping a full interval on top would make the real cadence drift
+    # well past what the app's Settings slider claims.
+    local spent remain
+    spent=$((EPOCHSECONDS - now))
+    remain=$((cadence - spent))
+    [ "$remain" -gt 0 ] && _mon_sleep "$remain"
+  done
+  return 0
+}

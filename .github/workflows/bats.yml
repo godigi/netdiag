@@ -38,6 +38,36 @@ jobs:
           jq -e 'type == "object" and has("version") and has("diagnosis")' /tmp/smoke.json > /dev/null
           echo "emitted $(jq 'keys | length' /tmp/smoke.json) top-level keys"
 
+      # The bats suite drives --history and --monitor through their pure
+      # functions, which is where the logic is. These two steps cover the
+      # part it deliberately can't: a real process, a real network, and a
+      # real stream. Both are new surfaces the GUI depends on, so a break
+      # here has to fail CI rather than surface as a blank menu-bar app.
+      - name: Smoke test --history
+        run: |
+          ./bin/netdiag --quick --no-gping --quiet > /dev/null || true
+          ./bin/netdiag --history > /tmp/history.json
+          jq -e '
+            has("networks") and has("runs") and has("metrics")
+            and (.counts.records_read >= 1)
+            and ([.networks[] | select(.id | startswith("[redacted]"))] | length == 0)
+          ' /tmp/history.json > /dev/null
+          echo "history: $(jq '.counts.runs' /tmp/history.json) runs across $(jq '.counts.networks' /tmp/history.json) network(s)"
+
+      - name: Smoke test --monitor
+        run: |
+          # One object per line, each with the rule list the GUI renders.
+          # --monitor-count bounds the run; without it this would hang CI.
+          ./bin/netdiag --monitor --monitor-fast-interval 2 --monitor-count 3 > /tmp/monitor.jsonl
+          [ "$(wc -l < /tmp/monitor.jsonl)" -eq 3 ]
+          while IFS= read -r line; do
+            printf '%s' "$line" | jq -e '
+              has("schema") and has("status") and (.status.rules | type == "array")
+              and (.link | has("up")) and (.network | has("id"))
+            ' > /dev/null
+          done < /tmp/monitor.jsonl
+          echo "monitor: 3 valid samples, rules=$(jq -c '.status.rules' /tmp/monitor.jsonl | tr '\n' ' ')"
+
       - name: Smoke test the installer
         run: |
           ./install.sh --prefix /tmp/ndbin --no-brew
