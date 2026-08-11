@@ -4,6 +4,29 @@ All notable changes to `netdiag` are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-11
+
+### Fixed
+
+- **`--quick` is back inside its 8 s budget: 10.6 s → 3.8 s.** A single
+  `traceroute6` in `lib/ipv6.sh` accounted for 7.4 s of that 10.6 — 70% of
+  the wall clock of the mode whose entire purpose is a fast "is it up?"
+  answer. It now only runs outside `--quick`. What it produces,
+  `IPV6_TRACE_HOPS`, feeds **no diagnosis rule**: it reaches the JSON and
+  one `info` line that default compact output doesn't print. `--quick`
+  leaves it empty, which renders as JSON `null` — "not measured", never a
+  fabricated `0`. Full runs are unaffected and still report the hop count.
+  - `parallel_batch` under `--quick` drops from 7.9 s to 1.1 s. The batch
+    is bounded by its slowest member, and `ipv6_run` was that member by a
+    factor of twelve; the other three surviving checks total 0.6 s.
+- **`traceroute6` is now bounded by `with_timeout` in every mode**, not
+  just skipped in the fast one. It was the only probe in the module with
+  no wall-clock bound — `ping6`, `dig` and `nc` are all capped — and at
+  `-m 12` hops × `-w 2` s it is a 24 s worst case on a path that
+  black-holes IPv6. An unbounded probe that can silently dominate a run is
+  the same shape as the `ping -t` bug fixed in 0.6.0. A test now asserts
+  every probe in the module carries a bound.
+
 ## [0.6.0] - 2026-08-11
 
 netdiag could measure internet-side packet loss but could not diagnose it.
