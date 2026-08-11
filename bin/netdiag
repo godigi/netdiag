@@ -128,6 +128,11 @@ WATCH=0
 WATCH_INTERVAL_S=300
 SUMMARY=0
 SUMMARY_WINDOW_HOURS=24
+# --history emits the whole run store as normalized, network-grouped JSON
+# for a GUI to chart. Distinct from --summary, which prints prose about one
+# recent window. HISTORY_LIMIT caps it to the N most recent runs.
+HISTORY=0
+HISTORY_LIMIT=0
 INSTALL_WATCHER=0
 UNINSTALL_WATCHER=0
 WATCH_CHILD=0
@@ -158,6 +163,8 @@ while [ "$#" -gt 0 ]; do
     --watch=*)        WATCH=1; WATCH_INTERVAL_S="${1#--watch=}" ;;
     --summary)        SUMMARY=1 ;;
     --summary=*)      SUMMARY=1; SUMMARY_WINDOW_HOURS="${1#--summary=}" ;;
+    --history)        HISTORY=1 ;;
+    --history=*)      HISTORY=1; HISTORY_LIMIT="${1#--history=}" ;;
     --install-watcher)   INSTALL_WATCHER=1 ;;
     --uninstall-watcher) UNINSTALL_WATCHER=1 ;;
     --watch-child)       WATCH_CHILD=1 ;;
@@ -217,6 +224,10 @@ Modes (exit after running, don't run the normal check battery):
                            (default 300). Ctrl-C to stop.
   --summary[=HOURS]        print an aggregate over the last HOURS of
                            ~/net-diag/baseline.jsonl (default 24).
+  --history[=N]            emit the whole run store as one normalized JSON
+                           object — networks grouped by identity, one
+                           compact row per run — for charting. N caps it to
+                           the N most recent runs. Reads the archive too.
   --install-watcher        install a launchd plist that runs netdiag
                            every 15 min in the background.
   --uninstall-watcher      remove the launchd plist.
@@ -266,6 +277,18 @@ if [ "$SUMMARY" -eq 1 ]; then
   python3 "$HELPERS_DIR/summary.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --window "$SUMMARY_WINDOW_HOURS"
+  exit 0
+fi
+if [ "$HISTORY" -eq 1 ]; then
+  # A non-numeric --history=X is a usage error, not something to pass to
+  # python and let argparse turn into an exit 2 — that status is reserved
+  # for a real diagnosis.
+  case "$HISTORY_LIMIT" in
+    ''|*[!0-9]*) printf 'netdiag: --history expects a run count (got: %s)\n' "$HISTORY_LIMIT" >&2; exit 3 ;;
+  esac
+  python3 "$HELPERS_DIR/history.py" \
+    --history "$LOG_DIR/baseline.jsonl" \
+    --limit "$HISTORY_LIMIT"
   exit 0
 fi
 if [ "$WATCH" -eq 1 ]; then

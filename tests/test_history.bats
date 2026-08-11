@@ -1,0 +1,354 @@
+#!/usr/bin/env bats
+#
+# helpers/history.py — network identity over a store that spans four
+# versions of netdiag's own identity scheme. The failure modes are all
+# silent: a chart that merges two networks, or splits one, looks exactly
+# like a chart that didn't.
+#
+# Synthetic records rather than captured ones: every test states the
+# minimum fields the grouping rule under test actually reads, so a reader
+# can see what the rule keys off without diffing two 5 KB snapshots.
+
+setup() {
+  REPO="${BATS_TEST_DIRNAME}/.."
+  HELPERS="$REPO/helpers"
+  TMP="$BATS_TEST_TMPDIR"
+  LIVE="$TMP/baseline.jsonl"
+  ARCHIVE="$TMP/baseline-archive.jsonl"
+  : > "$LIVE"
+}
+
+# rec <file> <ts> <json-body…> — append one record. The body is spliced in
+# so each test writes only the fields it cares about.
+rec() {
+  local file="$1" ts="$2"; shift 2
+  printf '{"version":"0.6.0","timestamp":"%s"%s}\n' "$ts" "${1:+,$1}" >> "$file"
+}
+
+hist() {
+  python3 "$HELPERS/history.py" --history "$LIVE" "$@"
+}
+
+# `run` takes a command, not a pipeline, and `run bash -c` would spawn a
+# shell that has none of these helpers. Wrap the pipe instead.
+hget() {
+  local path="$1"; shift
+  hist "$@" | get "$path"
+}
+
+hpy() {
+  local script="$1"; shift
+  hist "$@" | python3 -c "$script"
+}
+
+# Pull one value out of the emitted object with a dotted/indexed path.
+get() {
+  python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for k in sys.argv[1].split('.'):
+    d = d[int(k)] if k.lstrip('-').isdigit() else d.get(k)
+    if d is None: break
+print(json.dumps(d, ensure_ascii=False, sort_keys=True))
+" "$1"
+}
+
+# ── MAC grouping ─────────────────────────────────────────────────────────
+# The id of one network changes the day Location Services is granted:
+# "wifi:mac=X" becomes "wifi:ssid=Home,mac=X". Exact-string matching would
+# split a single network's history in half at that moment.
+
+@test "runs before and after an SSID becomes visible stay one network" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff","label":"WiFi (SSID hidden by macOS)"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:ssid=Home,mac=aa:bb:cc:dd:ee:ff","label":"Home"}'
+  run hget counts.networks
+  [ "$output" = "1" ]
+}
+
+@test "the surviving group is keyed on the MAC and prefers the real label" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff","label":"WiFi (SSID hidden by macOS)"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:ssid=Home,mac=aa:bb:cc:dd:ee:ff","label":"Home"}'
+  run hget networks.0.id
+  [ "$output" = '"mac:aa:bb:cc:dd:ee:ff"' ]
+  run hget networks.0.label
+  [ "$output" = '"Home"' ]
+}
+
+@test "MAC comparison is case-insensitive" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=AA:BB:CC:DD:EE:FF"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget counts.networks
+  [ "$output" = "1" ]
+}
+
+@test "two different routers stay two networks" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=11:22:33:44:55:66"}'
+  run hget counts.networks
+  [ "$output" = "2" ]
+}
+
+# ── Legacy backfill ──────────────────────────────────────────────────────
+# 1,926 of the author's 1,972 records predate lib/netid.sh and carry no
+# network.id at all. Skipping them would throw away 98% of the history;
+# pooling them into one bucket would invent a network that never existed.
+
+@test "a record with no network.id is backfilled from its gateway MAC" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"}'
+  run hget networks.0.id
+  [ "$output" = '"mac:aa:bb:cc:dd:ee:ff"' ]
+}
+
+@test "backfill falls back to SSID when no gateway MAC was recorded" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"wifi":{"ssid":"CafeNet"},"interface":{"gateway":"10.0.0.1"}'
+  run hget networks.0.id
+  [ "$output" = '"ssid:CafeNet"' ]
+}
+
+@test "backfill falls back to gateway IP when the SSID is OS-redacted" {
+  # This is the real case: every legacy record here carries the literal
+  # string "<redacted>" as its SSID. Treating that as a name would collapse
+  # every network the machine has ever seen into one group.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"wifi":{"ssid":"<redacted>"},"interface":{"gateway":"192.168.50.1"}'
+  run hget networks.0.id
+  [ "$output" = '"gw:192.168.50.1"' ]
+}
+
+@test "a backfilled group is marked synthesized" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.50.1"}'
+  run hget networks.0.synthesized
+  [ "$output" = "true" ]
+}
+
+@test "a group derived from a recorded network.id is not marked synthesized" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget networks.0.synthesized
+  [ "$output" = "false" ]
+}
+
+@test "a record with no identity at all lands in 'unknown', not in someone else's group" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"interface":{}'
+  run hget counts.networks
+  [ "$output" = "2" ]
+  run hpy 'import json,sys; print(sorted(n["id"] for n in json.load(sys.stdin)["networks"]))'
+  [[ "$output" == *"unknown"* ]]
+}
+
+# ── The bridge heuristic ─────────────────────────────────────────────────
+
+@test "a legacy gateway group bridges into the MAC group it shares a router and ISP with" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"ACME ISP"}'
+  run hget counts.networks
+  [ "$output" = "1" ]
+  run hget networks.0.run_count
+  [ "$output" = "2" ]
+  run hget networks.0.bridged_from
+  [ "$output" = '["gw:192.168.1.1"]' ]
+}
+
+@test "a bridged group is marked synthesized — the merge is inference, not a record" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"ACME ISP"}'
+  run hget networks.0.synthesized
+  [ "$output" = "true" ]
+}
+
+@test "a bridge widens the group's date range to cover the legacy runs" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-06-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"ACME ISP"}'
+  run hget networks.0.first_seen
+  [ "$output" = '"2026-01-01T00:00:00Z"' ]
+  run hget networks.0.last_seen
+  [ "$output" = '"2026-06-01T00:00:00Z"' ]
+}
+
+@test "no bridge when the ISP differs — same private range, different continent" {
+  # 192.168.1.1 is the most common LAN address on earth. Matching on it
+  # alone would merge a home network with a hotel's.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1"},"public":{"isp":"STARLINK"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"TELEFONICA"}'
+  run hget counts.networks
+  [ "$output" = "2" ]
+}
+
+@test "no bridge when the gateway differs even though the ISP matches" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.50.1"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"interface":{"gateway":"192.168.15.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"ACME ISP"}'
+  run hget counts.networks
+  [ "$output" = "2" ]
+}
+
+@test "an ambiguous bridge is left for the user rather than guessed" {
+  # Two MAC groups match the same evidence. Picking either would be a coin
+  # flip that silently corrupts a chart; the app offers a manual merge.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-01-03T00:00:00Z '"network":{"id":"wifi:mac=11:22:33:44:55:66"},"interface":{"gateway":"192.168.1.1","gateway_mac":"11:22:33:44:55:66"},"public":{"isp":"ACME ISP"}'
+  run hget counts.networks
+  [ "$output" = "3" ]
+}
+
+@test "a conflicting WiFi channel vetoes a bridge that gateway and ISP would allow" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"wifi":{"channel":"2g6/20"},"interface":{"gateway":"192.168.1.1"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"wifi":{"channel":"5g149/40"},"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"ACME ISP"}'
+  run hget counts.networks
+  [ "$output" = "2" ]
+}
+
+@test "a channel known on only one side does not veto — legacy runs rarely recorded it" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"interface":{"gateway":"192.168.1.1"},"public":{"isp":"ACME ISP"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"wifi":{"channel":"5g149/40"},"interface":{"gateway":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:ff"},"public":{"isp":"ACME ISP"}'
+  run hget counts.networks
+  [ "$output" = "1" ]
+}
+
+# ── Redacted records ─────────────────────────────────────────────────────
+
+@test "records whose identity was redacted are dropped and counted" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=[redacted]"},"interface":{"gateway_mac":"[redacted]"}'
+  run hget counts.redacted_dropped
+  [ "$output" = "1" ]
+  run hget counts.runs
+  [ "$output" = "1" ]
+}
+
+@test "a redacted record never becomes a phantom network" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=[redacted]"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=[redacted]"}'
+  run hget counts.networks
+  [ "$output" = "0" ]
+}
+
+# ── Archive + live ───────────────────────────────────────────────────────
+
+@test "the archive is read alongside the live file" {
+  rec "$ARCHIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE"    2026-06-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget counts.runs
+  [ "$output" = "2" ]
+  run hget networks.0.first_seen
+  [ "$output" = '"2026-01-01T00:00:00Z"' ]
+}
+
+@test "an archive/live overlap is deduped rather than double-counted" {
+  # prune_history appends to the archive before truncating the live file,
+  # so a crash between the two leaves byte-identical records in both.
+  rec "$ARCHIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE"    2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget counts.runs
+  [ "$output" = "1" ]
+  run hget counts.duplicates_dropped
+  [ "$output" = "1" ]
+}
+
+@test "two distinct runs in the same second are both kept" {
+  # Timestamps have one-second resolution and back-to-back manual runs do
+  # collide. Deduping on timestamp alone would delete a real measurement.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":3.1}'
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":9.7}'
+  run hget counts.runs
+  [ "$output" = "2" ]
+}
+
+@test "a missing archive is not an error" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  [ ! -e "$ARCHIVE" ]
+  run hget sources.archive
+  [ "$output" = "null" ]
+}
+
+@test "an unparseable line is counted, not fatal" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  printf 'not json at all\n' >> "$LIVE"
+  run hget counts.unparseable_dropped
+  [ "$output" = "1" ]
+}
+
+@test "an empty history still emits a valid, complete object" {
+  run hist
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+for k in ('schema','sources','counts','metrics','networks','runs'):
+    assert k in d, k
+assert d['runs'] == [] and d['networks'] == []
+"
+}
+
+# ── Run rows ─────────────────────────────────────────────────────────────
+
+@test "severity is the worst diagnosis in the run, and info does not count as a fault" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"diagnosis":[{"severity":"info","rule":"VPN-1","summary":"x"},{"severity":"warn","rule":"G3","summary":"y"},{"severity":"critical","rule":"L1","summary":"z"}]'
+  run hget runs.0.severity
+  [ "$output" = '"critical"' ]
+  run hget runs.0.diagnosis_count
+  [ "$output" = "2" ]
+  run hget runs.0.rules
+  [ "$output" = '["VPN-1", "G3", "L1"]' ]
+}
+
+@test "a run with no diagnoses is 'ok'" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"diagnosis":[]'
+  run hget runs.0.severity
+  [ "$output" = '"ok"' ]
+}
+
+@test "an unmeasured metric is absent rather than zero" {
+  # The whole reason JSON-SCHEMA.md distinguishes null from 0: a chart that
+  # plots "not measured" as 0 draws a cliff that never happened.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":3.4,"loss_pct":null}'
+  run hget runs.0.metrics
+  [ "$output" = '{"gateway_rtt_ms": 3.4}' ] || [ "$output" = '{"gateway_rtt_ms":3.4}' ]
+}
+
+@test "every metric reports how many samples back it" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":3.4}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":4.1},"wifi":{"rssi":-55}'
+  run hpy 'import json,sys; m={x["key"]:x["samples"] for x in json.load(sys.stdin)["metrics"]}; print(m["gateway_rtt_ms"], m["wifi_rssi_dbm"], m["speed_down_mbps"])'
+  [ "$output" = "2 1 0" ]
+}
+
+@test "a metric with no samples is still listed, so the UI can say 'no data'" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":3.4}'
+  run hpy 'import json,sys; print(len(json.load(sys.stdin)["metrics"]))'
+  [ "$output" -ge 13 ]
+}
+
+@test "--limit keeps the most recent runs" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-03T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget runs.0.ts --limit 2
+  [ "$output" = '"2026-01-02T00:00:00Z"' ]
+}
+
+@test "runs come out in chronological order regardless of file order" {
+  rec "$LIVE" 2026-03-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget runs.0.ts
+  [ "$output" = '"2026-01-01T00:00:00Z"' ]
+}
+
+# ── CLI surface ──────────────────────────────────────────────────────────
+
+@test "--history emits one parseable object and exits 0" {
+  run bash -c "HOME='$TMP' '$REPO/bin/netdiag' --history"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c 'import json,sys; json.load(sys.stdin)'
+}
+
+@test "--history with a non-numeric limit exits 3, not 2" {
+  run bash -c "HOME='$TMP' '$REPO/bin/netdiag' --history=soon"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"expects a run count"* ]]
+}
+
+@test "--history is documented in --help" {
+  run "$REPO/bin/netdiag" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--history"* ]]
+}
