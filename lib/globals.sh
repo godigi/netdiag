@@ -51,39 +51,12 @@ GW_LOSS=""
 GW_LATENCY=""
 GW_JITTER=""           # stddev from ping summary, ms
 
-# ── Packet-loss thresholds ───────────────────────────────────────────────
-# Shared by the gateway rules (G1/G2/G3) and the internet-side rules
-# (L1/L2) so the Report card and the diagnoses can never disagree about
-# what counts as lossy.
-#
-# Both floors are expressed in whole dropped packets out of the 20 each
-# probe sends, so each threshold lands on a value the probe can actually
-# report: the quantum is 5%, warn is two drops, critical is four.
-#
-#   warn (L2, G3):        2+ drops of 20  → 10%
-#   critical (L1, G1/G2): 4+ drops of 20  → 20%
-#
-# Why warn is two drops and not one: this is a judgement call, not a
-# measurement. A clean link here reports 0.0% on both targets in every
-# trial, so a 5% floor would not fire falsely on *this* network — but a
-# single transient drop in twenty is an ordinary event on real links, and
-# warning on it across the whole user base would be noise. Two drops is a
-# firmer signal and still well clear of the 20% critical.
-#
-# (An earlier revision justified this floor with a measured 5% "noise
-# level" at 0.1 s spacing. That reading was an artefact of ping's -t flag
-# truncating the probe before the last reply arrived — see the header of
-# lib/internet_ping.sh. With -t removed the noise level is 0.0%, and the
-# thresholds now rest on the judgement above rather than on that number.)
-LOSS_WARN_PCT=10
-LOSS_CRIT_PCT=20
-
-# 20 packets × 0.2 s ≈ 4 s per probe. The two internet targets are probed
-# concurrently, so the wall-clock cost is one probe's worth. Both counts
-# assume the caller passes no -t: on macOS that flag is a deadline for the
-# whole run and silently truncates the probe to whatever fits.
-LOSS_PROBE_COUNT=20
-LOSS_PROBE_INTERVAL=0.2
+# The packet-loss thresholds (LOSS_WARN_PCT, LOSS_CRIT_PCT) and the probe
+# geometry (LOSS_PROBE_COUNT, LOSS_PROBE_INTERVAL) moved to
+# lib/thresholds.sh, which bin/netdiag sources before this file. They left
+# because lib/monitor.sh needs the same numbers without dragging in the
+# whole global namespace: this file initialises run *state*, thresholds.sh
+# declares run *policy*, and only the second is safe to source standalone.
 
 # Internet-side ping (lib/internet_ping.sh)
 INET_RTT_AVG=""

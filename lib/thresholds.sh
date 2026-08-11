@@ -1,0 +1,128 @@
+# shellcheck shell=bash
+# lib/thresholds.sh — every numeric threshold a diagnosis rule fires on.
+#
+# Why this file exists: netdiag now has two things that judge a network.
+# The scanner (lib/diagnosis.sh, one verdict per run) and the monitor
+# (lib/monitor.sh, one verdict every few seconds) must agree on what
+# "lossy", "weak" and "drifted" mean, or the menu-bar app contradicts the
+# report it links to — the user sees a red dot and a clean scan, and stops
+# trusting both. The thresholds were inline literals in diagnosis.sh, so
+# there was no way for a second consumer to read them.
+#
+# The GUI is explicitly forbidden from re-deriving any of these. It renders
+# rule IDs the CLI hands it; the numbers live here and only here.
+#
+# Every constant names the rule(s) it decides, so a reader who sees `[G1]`
+# in expert output can find the cutoff in one grep. The rationale for each
+# rule is in docs/DIAGNOSIS-RULES.md; this file holds the values, not the
+# argument for them.
+#
+# Sourced before lib/common.sh and lib/globals.sh in bin/netdiag, and
+# independently by lib/monitor.sh. Nothing here may depend on another
+# module.
+#
+# Read across modules that shellcheck can't follow from here.
+# shellcheck disable=SC2034
+
+# ── Packet loss ──────────────────────────────────────────────────────────
+# Shared by the gateway rules (G1/G2/G3) and the internet-side rules
+# (L1/L2) so the Report card and the diagnoses can never disagree about
+# what counts as lossy.
+#
+# Both floors are expressed in whole dropped packets out of the 20 each
+# probe sends, so each threshold lands on a value the probe can actually
+# report: the quantum is 5%, warn is two drops, critical is four.
+#
+#   warn (L2, G3):        2+ drops of 20  → 10%
+#   critical (L1, G1/G2): 4+ drops of 20  → 20%
+#
+# Why warn is two drops and not one: this is a judgement call, not a
+# measurement. A clean link here reports 0.0% on both targets in every
+# trial, so a 5% floor would not fire falsely on *this* network — but a
+# single transient drop in twenty is an ordinary event on real links, and
+# warning on it across the whole user base would be noise. Two drops is a
+# firmer signal and still well clear of the 20% critical.
+#
+# (An earlier revision justified this floor with a measured 5% "noise
+# level" at 0.1 s spacing. That reading was an artefact of ping's -t flag
+# truncating the probe before the last reply arrived — see the header of
+# lib/internet_ping.sh. With -t removed the noise level is 0.0%, and the
+# thresholds now rest on the judgement above rather than on that number.)
+LOSS_WARN_PCT=10
+LOSS_CRIT_PCT=20
+
+# G1/G2 — "you are losing packets to your own router". Deliberately a
+# separate name from LOSS_CRIT_PCT even though the values match today:
+# they answer different questions (how lossy is the LAN leg vs the WAN
+# leg) and a future revision may want to move one without the other.
+THRESH_GW_LOSS_CRIT_PCT=20
+
+# 20 packets × 0.2 s ≈ 4 s per probe. The two internet targets are probed
+# concurrently, so the wall-clock cost is one probe's worth. Both counts
+# assume the caller passes no -t: on macOS that flag is a deadline for the
+# whole run and silently truncates the probe to whatever fits.
+LOSS_PROBE_COUNT=20
+LOSS_PROBE_INTERVAL=0.2
+
+# TCP-1 — TCP connections succeed while ping reports heavy loss, i.e. the
+# path filters ICMP. Set well above LOSS_CRIT_PCT: below this a real lossy
+# link and a filtered one look the same, and calling a degraded network
+# "just filtered ICMP" is the more damaging mistake of the two.
+THRESH_ICMP_FILTERED_LOSS_PCT=50
+
+# ICMP-1 — total loss to *both* public targets while curl and TCP both
+# succeed. Real 100% loss would take curl with it, so this is a middlebox
+# dropping ICMP wholesale, not an outage.
+THRESH_ICMP_TOTAL_LOSS_PCT=100
+
+# ── WiFi ─────────────────────────────────────────────────────────────────
+# W1 — "your signal is weak" on its own.
+THRESH_WIFI_RSSI_WEAK_DBM=-75
+# G1 — the stricter cutoff used only to attribute *gateway loss* to the
+# radio rather than the router. Easy to miss that these differ: a link at
+# -72 dBm is not weak enough to complain about by itself (W1 stays quiet)
+# but is weak enough to explain packets going missing (G1 fires instead of
+# G2, and the user is told to move rather than to reboot the router).
+THRESH_WIFI_RSSI_G1_DBM=-70
+# W2 — signal-to-noise ratio, dB. Below this, interference rather than
+# distance is the story.
+THRESH_WIFI_SNR_LOW_DB=20
+# WS-1 — how many other networks may share your channel before it counts
+# as congested.
+THRESH_WIFI_CHANNEL_NEIGHBOURS=3
+# WD-1 — disconnects within WIFI_DISCONNECT_WINDOW_HOURS before the link
+# counts as flapping.
+THRESH_WIFI_DISCONNECTS=3
+
+# ── IPv6 ─────────────────────────────────────────────────────────────────
+# V6-1 — ping6 loss above this counts as broken IPv6 (given IPv4 works).
+THRESH_IPV6_LOSS_PCT=20
+
+# ── Path MTU ─────────────────────────────────────────────────────────────
+# M1 — anything under the standard 1500 is a warning; under this floor it
+# is a critical, because at that point ordinary HTTPS responses stop
+# fitting and pages hang half-loaded rather than merely slowing down.
+THRESH_MTU_STANDARD=1500
+THRESH_MTU_CRIT=1400
+
+# ── Clock ────────────────────────────────────────────────────────────────
+# NT-1 — drift in seconds. Past the critical floor, certificate validity
+# windows fail and every https:// URL refuses to connect; the warn band is
+# the range where some authenticated services object and most don't.
+THRESH_NTP_DRIFT_CRIT_S=30
+THRESH_NTP_DRIFT_WARN_S=1
+
+# ── DHCP ─────────────────────────────────────────────────────────────────
+# DH-1 — warn when the lease has less than an hour left. Renewal is
+# normally invisible; it is only interesting when the router happens to be
+# rebooting or out of addresses at that moment.
+THRESH_DHCP_LEASE_WARN_S=3600
+
+# ── Bufferbloat grading ──────────────────────────────────────────────────
+# Waveform/DSLReports cutoffs for added latency under load, in ms:
+# A < 5, B < 30, C < 60, D < 200, F ≥ 200. B1/B2 warn at grade C and go
+# critical at D or F. Read by grade_bufferbloat in lib/common.sh.
+THRESH_BUFFERBLOAT_A_MS=5
+THRESH_BUFFERBLOAT_B_MS=30
+THRESH_BUFFERBLOAT_C_MS=60
+THRESH_BUFFERBLOAT_D_MS=200

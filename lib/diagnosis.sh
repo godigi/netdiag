@@ -8,7 +8,11 @@
 #         MAX_SEVERITY (indirectly via add_diag)
 # Entry:  diagnosis_run
 #
-# Rule names match docs/DIAGNOSIS-RULES.md.
+# Rule names match docs/DIAGNOSIS-RULES.md. Every numeric cutoff lives in
+# lib/thresholds.sh, not inline here, because lib/monitor.sh judges the
+# same conditions between scans and the two must never disagree — a
+# menu-bar dot that says "unstable" over a report that says "healthy"
+# discredits both.
 
 diagnosis_run() {
   hdr "What we found"
@@ -32,14 +36,14 @@ diagnosis_run() {
   fi
 
   # W1, W2, G1/G2 — WiFi quality and gateway loss interplay.
-  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt -75 ]; then
-    add_diag warn W1 "Your WiFi signal is weak (${WIFI_RSSI} dBm — anything below -75 is poor). Web pages will be slow and video calls will stutter. Try moving closer to the router, or switch to the 5 GHz network if your router broadcasts both bands."
+  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then
+    add_diag warn W1 "Your WiFi signal is weak (${WIFI_RSSI} dBm — anything below ${THRESH_WIFI_RSSI_WEAK_DBM} is poor). Web pages will be slow and video calls will stutter. Try moving closer to the router, or switch to the 5 GHz network if your router broadcasts both bands."
   fi
-  if [ -n "$WIFI_SNR" ] && [ "$WIFI_SNR" -lt 20 ]; then
-    add_diag warn W2 "Other electronics or nearby WiFi networks are interfering with yours (signal-to-noise ratio ${WIFI_SNR} dB — below 20 dB is noisy). Try switching to a less crowded channel in your router settings."
+  if [ -n "$WIFI_SNR" ] && [ "$WIFI_SNR" -lt "$THRESH_WIFI_SNR_LOW_DB" ]; then
+    add_diag warn W2 "Other electronics or nearby WiFi networks are interfering with yours (signal-to-noise ratio ${WIFI_SNR} dB — below ${THRESH_WIFI_SNR_LOW_DB} dB is noisy). Try switching to a less crowded channel in your router settings."
   fi
-  if loss_at_least "$GW_LOSS" 20; then
-    if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt -70 ]; then
+  if loss_at_least "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+    if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_G1_DBM" ]; then
       add_diag critical G1 "You're losing packets between your Mac and your router, and your WiFi signal is weak — the WiFi link is the bottleneck, not the router or the ISP. Move closer to the router or switch WiFi channel."
     else
       add_diag critical G2 "You're losing packets between your Mac and your router even though the WiFi signal is strong — the router itself is misbehaving. Try rebooting it (unplug for 30 seconds, plug back in)."
@@ -61,7 +65,7 @@ diagnosis_run() {
   # 20), so a total loss of internet produced no diagnosis at all. The
   # guard now means "the router is not the problem", not "the router is
   # flawless".
-  if [ "$PUBLIC_OK" -eq 0 ] && loss_below "$GW_LOSS" 20; then
+  if [ "$PUBLIC_OK" -eq 0 ] && loss_below "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ "$DNS_OK" -eq 0 ]; then
       add_diag critical P1 "Your local network is working but the wider internet is unreachable, and name lookups are also failing — likely a DNS or upstream-ISP outage. Try opening http://1.1.1.1 in a browser: if it loads, the problem is DNS; if not, it's the ISP."
     else
@@ -86,9 +90,9 @@ diagnosis_run() {
   esac
 
   # M1 — path MTU below 1500.
-  if [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1400 ]; then
+  if [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt "$THRESH_MTU_CRIT" ]; then
     add_diag critical M1 "Most websites won't load fully — your network is silently dropping anything bigger than ${MTU_EFFECTIVE} bytes per packet. Cause is usually a VPN or DSL link that hasn't been configured to tell other devices about the smaller size. Disconnect any VPN; if it persists, check your router's WAN settings (technical: path MTU ${MTU_EFFECTIVE} — needs MSS clamping)."
-  elif [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt 1500 ]; then
+  elif [ -n "$MTU_EFFECTIVE" ] && [ "$MTU_EFFECTIVE" -lt "$THRESH_MTU_STANDARD" ]; then
     add_diag warn M1 "Some websites load fine and others hang forever loading — your network is silently dropping packets above ${MTU_EFFECTIVE} bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting."
   fi
 
@@ -100,7 +104,7 @@ diagnosis_run() {
   # V6-1 — IPv6 broken while IPv4 works.
   if [ "$IPV6_AVAILABLE" -eq 1 ]; then
     local v6_broken=0 aaaa_str tcp6_str
-    [ -n "$IPV6_PING_LOSS" ] && [ "${IPV6_PING_LOSS%.*}" -ge 20 ] && v6_broken=1
+    [ -n "$IPV6_PING_LOSS" ] && [ "${IPV6_PING_LOSS%.*}" -ge "$THRESH_IPV6_LOSS_PCT" ] && v6_broken=1
     [ "$IPV6_AAAA_OK" -eq 0 ] && v6_broken=1
     [ "$IPV6_TCP_OK" -eq 0 ] && v6_broken=1
     if [ "$v6_broken" -eq 1 ] && [ "$PUBLIC_OK" -eq 1 ]; then
@@ -118,7 +122,7 @@ diagnosis_run() {
   fi
 
   # TCP-1 — TCP works, ICMP is filtered.
-  if [ "$TCP_REACH_ANY_OK" -eq 1 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge 50 ]; then
+  if [ "$TCP_REACH_ANY_OK" -eq 1 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge "$THRESH_ICMP_FILTERED_LOSS_PCT" ]; then
     add_diag info TCP-1 "Actual connections work fine, only the \"ping\" tests fail (${GW_LOSS}% loss to the gateway) — something on the path is blocking pings but not real traffic. Common on hotel WiFi, corporate networks, and some ISPs. The network is up; don't worry about the ping numbers above."
   fi
 
@@ -141,7 +145,8 @@ diagnosis_run() {
   # which is the same false-critical shape as the ping6 bug in v0.5.2.
   local _icmp_filtered=0
   if [ "$PUBLIC_OK" -eq 1 ] && [ "$TCP_REACH_ANY_OK" -eq 1 ] \
-     && loss_at_least "$INET_LOSS" 100 && loss_at_least "$INET_LOSS_ALT" 100; then
+     && loss_at_least "$INET_LOSS" "$THRESH_ICMP_TOTAL_LOSS_PCT" \
+     && loss_at_least "$INET_LOSS_ALT" "$THRESH_ICMP_TOTAL_LOSS_PCT"; then
     _icmp_filtered=1
     add_diag info ICMP-1 "Ping to the outside world fails completely (${INET_TARGET} and ${INET_TARGET_ALT} both at 100%), but real connections — websites, DNS, TCP — all work. Something upstream is blocking ping specifically, which some ISPs and most corporate or hotel networks do on purpose. Your internet is fine; the latency numbers above just can't be measured."
   fi
@@ -159,21 +164,21 @@ diagnosis_run() {
   fi
 
   # WS-1 — congested WiFi channel.
-  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
+  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt "$THRESH_WIFI_CHANNEL_NEIGHBOURS" ]; then
     add_diag warn WS-1 "Your WiFi channel (${WIFI_SCAN_CURRENT_CHANNEL}) is shared with ${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} neighbouring networks — they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
   fi
 
   # WD-1 — WiFi flapping.
-  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
+  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt "$THRESH_WIFI_DISCONNECTS" ]; then
     add_diag warn WD-1 "Your WiFi keeps dropping and reconnecting (${WIFI_DISCONNECT_COUNT} times in the past hour). Common causes: weak signal at your desk, your Mac bouncing between two routers / mesh nodes that overlap, or a router firmware bug. If you have multiple WiFi points, check whether they're set up as a proper mesh."
   fi
 
   # NT-1 — system clock significantly off. Sub-second drift is round-trip
   # noise and not worth reporting; > 30 s breaks TLS everywhere; the
   # 1-30 s band is a soft warning since some apps tolerate it and some don't.
-  if [ -n "$NTP_DRIFT_S" ] && awk -v d="$NTP_DRIFT_S" 'BEGIN{exit !((d<0?-d:d) > 30)}'; then
+  if [ -n "$NTP_DRIFT_S" ] && awk -v d="$NTP_DRIFT_S" -v t="$THRESH_NTP_DRIFT_CRIT_S" 'BEGIN{exit !((d<0?-d:d) > t)}'; then
     add_diag critical NT-1 "Your Mac's clock is off by ${NTP_DRIFT_S} seconds — every secure website (anything starting with https://) will refuse to connect because clock-based certificate checks will fail. Fix: open System Settings → General → Date & Time and turn \"Set date and time automatically\" on."
-  elif [ -n "$NTP_DRIFT_S" ] && awk -v d="$NTP_DRIFT_S" 'BEGIN{exit !((d<0?-d:d) > 1)}'; then
+  elif [ -n "$NTP_DRIFT_S" ] && awk -v d="$NTP_DRIFT_S" -v t="$THRESH_NTP_DRIFT_WARN_S" 'BEGIN{exit !((d<0?-d:d) > t)}'; then
     add_diag warn NT-1 "Your Mac's clock is off by ${NTP_DRIFT_S} seconds. Most apps will be fine but some authenticated services (banking apps, work VPNs) may refuse to connect. Turn on \"Set date and time automatically\" in System Settings → General → Date & Time if this persists."
   fi
 
@@ -186,7 +191,7 @@ diagnosis_run() {
   fi
 
   # DH-1 — DHCP lease expires soon.
-  if [ -n "$DHCP_TIME_REMAINING_S" ] && [ "$DHCP_TIME_REMAINING_S" -gt 0 ] && [ "$DHCP_TIME_REMAINING_S" -lt 3600 ]; then
+  if [ -n "$DHCP_TIME_REMAINING_S" ] && [ "$DHCP_TIME_REMAINING_S" -gt 0 ] && [ "$DHCP_TIME_REMAINING_S" -lt "$THRESH_DHCP_LEASE_WARN_S" ]; then
     add_diag warn DH-1 "Your Mac's network-address lease from the router expires in $((DHCP_TIME_REMAINING_S / 60)) minutes. Normally it renews automatically, but if your router is rebooting or out of addresses at that moment, you'll suddenly lose the network with no warning. Keep an eye out."
   fi
 

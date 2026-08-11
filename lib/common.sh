@@ -372,14 +372,16 @@ is_numeric() {
 }
 
 # ── Bufferbloat grading ──────────────────────────────────────────────────
-# Waveform/DSLReports thresholds: A < +5ms, B < +30ms, C < +60ms,
-# D < +200ms, F ≥ +200ms.
+# Waveform/DSLReports thresholds, held in lib/thresholds.sh alongside every
+# other cutoff a diagnosis rule fires on: A < +5ms, B < +30ms, C < +60ms,
+# D < +200ms, F ≥ +200ms. B1/B2 warn at C and go critical at D or F.
 grade_bufferbloat() {
-  awk -v d="$1" 'BEGIN{
-    if (d+0 < 5)   { print "A"; exit }
-    if (d+0 < 30)  { print "B"; exit }
-    if (d+0 < 60)  { print "C"; exit }
-    if (d+0 < 200) { print "D"; exit }
+  awk -v d="$1" -v a="$THRESH_BUFFERBLOAT_A_MS" -v b="$THRESH_BUFFERBLOAT_B_MS" \
+      -v c="$THRESH_BUFFERBLOAT_C_MS" -v e="$THRESH_BUFFERBLOAT_D_MS" 'BEGIN{
+    if (d+0 < a) { print "A"; exit }
+    if (d+0 < b) { print "B"; exit }
+    if (d+0 < c) { print "C"; exit }
+    if (d+0 < e) { print "D"; exit }
     print "F";
   }'
 }

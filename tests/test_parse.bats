@@ -9,6 +9,10 @@ setup() {
   FIX="${BATS_TEST_DIRNAME}/fixtures"
   # Minimum variables the modules expect to exist (set -u in netdiag main).
   JSON_MODE=0 QUIET=0 QUICK=0 LOG=/dev/null
+  # thresholds.sh declares the cutoffs diagnosis.sh fires on; bin/netdiag
+  # sources it before common.sh and so must every test that exercises a rule.
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
   # shellcheck source=../lib/common.sh
   . "$REPO/lib/common.sh"
   # shellcheck source=../lib/globals.sh

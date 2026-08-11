@@ -292,6 +292,12 @@ fi
 # Explicit per-source comments give shellcheck a follow path; the dynamic
 # loop below sources the rest with SC1090 disabled since the path is
 # variable.
+# thresholds.sh first: it declares the policy constants (loss floors, RSSI
+# cutoffs, drift limits) that common.sh's grade_bufferbloat and every rule
+# in diagnosis.sh read. It deliberately depends on nothing, so lib/monitor.sh
+# can source it alone and judge the same conditions with the same numbers.
+# shellcheck source=lib/thresholds.sh
+. "$LIB_DIR/thresholds.sh"
 # shellcheck source=lib/common.sh
 . "$LIB_DIR/common.sh"
 # shellcheck source=lib/globals.sh

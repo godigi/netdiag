@@ -1,0 +1,123 @@
+#!/usr/bin/env bats
+#
+# lib/thresholds.sh is the single source of truth for every number a
+# diagnosis fires on. Two consumers now read it — lib/diagnosis.sh (one
+# verdict per scan) and lib/monitor.sh (one verdict every few seconds) —
+# and the failure mode this file guards is them drifting apart: a menu-bar
+# dot that says "unstable" over a report that says "healthy" discredits
+# both, and the user has no way to tell which lied.
+
+setup() {
+  REPO="${BATS_TEST_DIRNAME}/.."
+  JSON_MODE=0 QUIET=0 QUICK=0 EXPERT=0 REDACT=0 LOG=/dev/null
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  # shellcheck source=../lib/globals.sh
+  . "$REPO/lib/globals.sh"
+}
+
+# ── The file stands alone ────────────────────────────────────────────────
+
+@test "thresholds.sh sources standalone under set -eu with nothing else loaded" {
+  # lib/monitor.sh sources it on its own. If it ever grows a dependency on
+  # common.sh or globals.sh, the monitor breaks at spawn time rather than
+  # at review time.
+  run bash -c "set -eu; . '$REPO/lib/thresholds.sh'; printf '%s' \"\$LOSS_CRIT_PCT\""
+  [ "$status" -eq 0 ]
+  [ "$output" = "20" ]
+}
+
+@test "every threshold a rule reads is defined" {
+  for v in LOSS_WARN_PCT LOSS_CRIT_PCT LOSS_PROBE_COUNT LOSS_PROBE_INTERVAL \
+           THRESH_GW_LOSS_CRIT_PCT THRESH_ICMP_FILTERED_LOSS_PCT \
+           THRESH_ICMP_TOTAL_LOSS_PCT THRESH_WIFI_RSSI_WEAK_DBM \
+           THRESH_WIFI_RSSI_G1_DBM THRESH_WIFI_SNR_LOW_DB \
+           THRESH_WIFI_CHANNEL_NEIGHBOURS THRESH_WIFI_DISCONNECTS \
+           THRESH_IPV6_LOSS_PCT THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+           THRESH_NTP_DRIFT_CRIT_S THRESH_NTP_DRIFT_WARN_S \
+           THRESH_DHCP_LEASE_WARN_S THRESH_BUFFERBLOAT_A_MS \
+           THRESH_BUFFERBLOAT_B_MS THRESH_BUFFERBLOAT_C_MS \
+           THRESH_BUFFERBLOAT_D_MS; do
+    [ -n "${!v:-}" ] || { echo "undefined threshold: $v"; return 1; }
+  done
+}
+
+@test "no diagnosis rule carries an inline numeric cutoff" {
+  # The regression this catches: someone tightening a rule by editing the
+  # literal in diagnosis.sh, leaving monitor.sh on the old value. Matches
+  # the comparison operators against a bare number, so prose that happens
+  # to contain a digit is not a hit.
+  #
+  # Zero is excluded deliberately: `-gt 0` on DHCP_TIME_REMAINING_S asks
+  # "did we measure anything?", not "is it past a cutoff". Sentinels of
+  # that shape are validity guards and belong inline; no policy threshold
+  # in this project is 0.
+  run grep -nE '(loss_at_least|loss_below) "\$[A-Z_]+" [0-9]+|-lt -?[1-9][0-9]* \]|-ge -?[1-9][0-9]* \]|-gt -?[1-9][0-9]* \]' \
+    "$REPO/lib/diagnosis.sh"
+  [ "$status" -ne 0 ] || { echo "inline cutoff in diagnosis.sh:"; echo "$output"; return 1; }
+}
+
+# ── The two RSSI cutoffs really are different ────────────────────────────
+# W1's -75 and G1's -70 sit four lines apart in diagnosis.sh and mean
+# different things: -75 is "your signal is bad enough to complain about",
+# -70 is "your signal is bad enough to explain the packets going missing".
+# Collapsing them would change which fix the user is told to try.
+
+@test "W1 and G1 read different RSSI cutoffs" {
+  [ "$THRESH_WIFI_RSSI_WEAK_DBM" -ne "$THRESH_WIFI_RSSI_G1_DBM" ]
+  [ "$THRESH_WIFI_RSSI_WEAK_DBM" -lt "$THRESH_WIFI_RSSI_G1_DBM" ]
+}
+
+@test "at -72 dBm with gateway loss, G1 blames the radio while W1 stays quiet" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-72 GW_LOSS=25 PUBLIC_OK=1
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  local rules=" ${DIAG_RULE[*]} "
+  [[ "$rules" == *" G1 "* ]]
+  [[ "$rules" != *" G2 "* ]]
+  [[ "$rules" != *" W1 "* ]]
+}
+
+@test "at -60 dBm the same loss blames the router instead" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-60 GW_LOSS=25 PUBLIC_OK=1
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  local rules=" ${DIAG_RULE[*]} "
+  [[ "$rules" == *" G2 "* ]]
+  [[ "$rules" != *" G1 "* ]]
+}
+
+@test "raising a threshold in one place changes the rule that reads it" {
+  # Proves the refactor is live wiring and not a parallel set of constants
+  # sitting unused next to the original literals.
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-60 PUBLIC_OK=1 GW_LOSS=25
+  THRESH_GW_LOSS_CRIT_PCT=90
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  local rules=" ${DIAG_RULE[*]} "
+  [[ "$rules" != *" G2 "* ]]
+  [[ "$rules" == *" G3 "* ]]
+}
+
+# ── grade_bufferbloat reads the same table ───────────────────────────────
+
+@test "grade_bufferbloat maps the Waveform bands from the shared constants" {
+  [ "$(grade_bufferbloat 1)"   = A ]
+  [ "$(grade_bufferbloat 20)"  = B ]
+  [ "$(grade_bufferbloat 45)"  = C ]
+  [ "$(grade_bufferbloat 150)" = D ]
+  [ "$(grade_bufferbloat 500)" = F ]
+}
+
+@test "grade_bufferbloat boundaries are exclusive at the lower edge" {
+  [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_A_MS")" = B ]
+  [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_D_MS")" = F ]
+}

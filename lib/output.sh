@@ -132,6 +132,35 @@ build_json() {
   python3 "$HELPERS_DIR/emit_json.py"
 }
 
+# ── The canonical, private snapshot ──────────────────────────────────────
+# build_json honours $REDACT, which is right for stdout and wrong for
+# everything that stays on this machine. `output_run` appended the emitted
+# JSON to baseline.jsonl *after* redaction, so every `--redact` run wrote a
+# record whose public IP, SSID, gateway MAC and — fatally — network.id had
+# all been replaced with "[redacted]". Eleven such records exist in the
+# author's own history, two of them written by v0.5.2.
+#
+# The damage is worse than a few masked fields. network.id is the join key
+# helpers/baseline.py scopes history by, so a redacted record can never
+# match a real one: it is dead weight in the file, and it drags the
+# retention cap down for the records that still mean something. The GUI's
+# "Copy shareable report" runs --redact, so this would have fired on every
+# use.
+#
+# baseline.jsonl is a local, private file. Redaction exists for the copy
+# that *leaves* the machine, so the comparison input, the history append,
+# and the archive all read the unredacted build; only the stdout rendition
+# under --json is masked, and it is built separately at the end of the run.
+#
+# Save/restore rather than a subshell: build_json assigns
+# MOST_LIKELY_ROOT_CAUSE as a global, and a subshell would drop it.
+build_json_private() {
+  local _saved_redact="$REDACT"
+  REDACT=0
+  build_json
+  REDACT="$_saved_redact"
+}
+
 # ── Retention ────────────────────────────────────────────────────────────
 # Nothing bounded ~/net-diag before this. The launchd watcher runs every
 # 15 min — 96 timestamped .log files and 96 appended JSONL records a day,
@@ -146,8 +175,35 @@ build_json() {
 NETDIAG_KEEP_LOGS="${NETDIAG_KEEP_LOGS:-200}"
 NETDIAG_KEEP_HISTORY="${NETDIAG_KEEP_HISTORY:-2000}"
 
+# Where prune_history rolls the lines it takes off the front. Derived from
+# the live file so a caller pointing at a test path gets a test archive:
+# baseline.jsonl → baseline-archive.jsonl.
+history_archive_path() {
+  printf '%s-archive.jsonl' "${1%.jsonl}"
+}
+
+# Truncating the live history used to *delete* the oldest runs. That is the
+# wrong trade for a file whose whole value is depth: at the launchd
+# watcher's 15-minute cadence the 2000-line cap is about three weeks, and
+# the first lines to go are always the oldest — the ones a history chart is
+# for. The author's own file was at 1,968 of the 2,200 trigger when this
+# was written, with 2.5 months of runs about to be discarded.
+#
+# So the head rolls into baseline-archive.jsonl instead. `--history` reads
+# archive + live and dedupes on timestamp; helpers/baseline.py still reads
+# only the live file, so the per-run comparison cost stays bounded by the
+# cap while nothing is ever actually lost.
+#
+# The archive is deliberately uncapped. It is one line per run of a file
+# that took two months to reach 5 MB, and "the retention policy quietly ate
+# your history" is the failure this exists to prevent.
+#
+# Order matters: append to the archive first, truncate second. Crashing
+# between the two duplicates records rather than dropping them, and
+# helpers/history.py dedupes on timestamp precisely so that the safe
+# failure is also the harmless one.
 prune_history() {
-  local file="$1" keep="$2" lines tmp
+  local file="$1" keep="$2" lines tmp archive head_lines
   [ "$keep" -gt 0 ]   || return 0
   [ -f "$file" ]      || return 0
   lines="$(wc -l < "$file" 2>/dev/null | tr -d ' ')"
@@ -155,6 +211,12 @@ prune_history() {
   # Only rewrite when meaningfully over the cap, so the common case is a
   # single wc(1) and no file churn.
   [ "$lines" -gt $((keep + keep / 10)) ] || return 0
+  head_lines=$((lines - keep))
+  archive="$(history_archive_path "$file")"
+  # If the archive can't be written, leave the live file alone. A history
+  # that is over its cap costs a little parse time; a history whose oldest
+  # runs were deleted because an append failed costs the runs.
+  head -n "$head_lines" "$file" >> "$archive" 2>/dev/null || return 0
   tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-hist.XXXXXX")" || return 0
   if tail -n "$keep" "$file" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$file"
@@ -180,13 +242,16 @@ prune_logs() {
 }
 
 output_run() {
-  local json_tmp baseline_out baseline_lines reg
+  local json_tmp shared_tmp baseline_out baseline_lines reg
   # macOS mktemp(1) only substitutes the trailing X's. Any suffix after
   # them (e.g. ".json") is treated as literal and breaks subsequent runs
   # because the file already exists. Keep X's at the end; the file is
   # internal so the extension doesn't matter.
   json_tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-out.XXXXXX")"
-  build_json > "$json_tmp"
+  # Unredacted throughout: this file feeds the baseline comparison and the
+  # history append, both of which are local and both of which need the real
+  # network.id to be worth anything. See build_json_private.
+  build_json_private > "$json_tmp"
 
   # Baseline comparison: compare current JSON to history, surface any
   # regressions, then rebuild the JSON so they appear in its diagnosis array.
@@ -224,7 +289,7 @@ for r in d.get('regressions', []):
             warn "Something changed since your last runs: $reg"
           done <<<"$baseline_lines"
           # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
-          build_json > "$json_tmp"
+          build_json_private > "$json_tmp"
         fi
       fi
     fi
@@ -248,7 +313,17 @@ for r in d.get('regressions', []):
   fi
 
   if [ "$JSON_MODE" -eq 1 ]; then
-    cat "$json_tmp"
+    if [ "$REDACT" -eq 1 ]; then
+      # The one place redaction belongs: the copy that leaves the machine.
+      # Built fresh rather than reusing $json_tmp, which is deliberately
+      # unredacted for the history above.
+      shared_tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-share.XXXXXX")"
+      build_json > "$shared_tmp"
+      cat "$shared_tmp"
+      rm -f "$shared_tmp"
+    else
+      cat "$json_tmp"
+    fi
   elif [ "$WATCH_CHILD" -eq 0 ]; then
     say ""
     # Hint about --expert only when we suppressed the section bodies AND

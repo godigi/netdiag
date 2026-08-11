@@ -19,6 +19,10 @@ setup() {
   REPO="${BATS_TEST_DIRNAME}/.."
   JSON_MODE=0 QUIET=0 QUICK=0 LOG=/dev/null
   SPUN=()
+  # thresholds.sh declares the cutoffs diagnosis.sh fires on; bin/netdiag
+  # sources it before common.sh and so must every test that exercises a rule.
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
   # shellcheck source=../lib/common.sh
   . "$REPO/lib/common.sh"
   # shellcheck source=../lib/globals.sh
