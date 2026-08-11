@@ -14,6 +14,46 @@ All notable changes to `netdiag` are recorded here. Format follows
   is fixed here because pushing workflow files needs a token scope this
   branch doesn't have — both are one-file changes for a maintainer.
 
+## [0.5.1] - 2026-08-11
+
+Fixes found by running every CLI mode on a live network. Three of the four
+share a root cause: focused runs skip most modules, and the consumers
+could not tell an untouched global default from a real measurement.
+
+### Fixed
+
+- **`--wifi-only` no longer reports a false critical and exits 2.** On a
+  perfectly healthy connection it printed "Your Mac has a router but
+  nothing on the public internet responded" and returned exit 2. Rule N1b
+  keyed off `PUBLIC_OK`, but `--wifi-only` never runs `public_run`, so the
+  `PUBLIC_OK=0` default from `lib/globals.sh` read as a measured failure.
+  The rule now also requires `PUBLIC_CHECKED=1`. Since exit 2 is the
+  machine-readable "something is critically wrong" contract, this misfired
+  on every scripted `--wifi-only` caller.
+- **N1b names the flag you actually passed.** Its text hardcoded
+  "without --mtu-only" even when the active focus was `--wifi-only`.
+- **`--mtu-only` no longer calls a WiFi link "wired".** The Report card
+  treated `IS_WIFI != 1` as wired, but `--mtu-only` never runs `wifi_run`,
+  so the flag never left its `0` default. The medium is now omitted when
+  it was not measured. `--json` was already correct (`interface.type`).
+- **`--redact` no longer leaks the gateway MAC.** `IPV6_GATEWAY` was left
+  intact in both the human output and `.ipv6.gateway`, but a `fe80::`
+  address is EUI-64-derived from the router's MAC — so a redacted report
+  still published the same `GW_MAC` masked one field over. Added to the
+  redaction set in `lib/common.sh` and `helpers/emit_json.py`.
+- **shellcheck passes again.** `_netdiag_on_exit` carries a
+  `disable=SC2317` for its trap-only dispatch; shellcheck 0.11.0 reports
+  that case as SC2329 instead, so `ludeeus/action-shellcheck@master`
+  (which tracks latest) failed on every push. Both codes are now listed.
+
+### Known
+
+- A full run measured 36 s against the spec's 30 s budget and `--quick`
+  8.9 s against 8 s, on a link with ~76 ms RTT to the internet. How much
+  is script overhead versus link latency is not yet separated — needs a
+  re-measure on a low-latency connection before it is treated as a
+  regression.
+
 ## [0.5.0] - 2026-08-07
 
 Second correctness pass, plus the instrumentation needed to check the

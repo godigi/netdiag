@@ -255,3 +255,10 @@ _write_history() {
   run emit NETDIAG_REDACT=1 NETDIAG_NETWORK_LABEL='unknown network'
   [ "$(printf '%s' "$output" | jq_get network.label)" = '"unknown network"' ]
 }
+
+@test "emit_json redact: masks the IPv6 link-local gateway" {
+  run emit NETDIAG_REDACT=1 \
+           NETDIAG_IPV6_GATEWAY='fe80::1298:5fff:fe91:2f00%en0' \
+           NETDIAG_IPV6_AVAILABLE=1
+  [ "$(printf '%s' "$output" | jq_get ipv6.gateway)" = '"[redacted]"' ]
+}

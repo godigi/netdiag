@@ -12,6 +12,7 @@
 # shellcheck disable=SC2034
 public_run() {
   hdr "Public reachability"
+  PUBLIC_CHECKED=1
   local pub_out captive
   pub_out="$(curl -s -m 4 https://ifconfig.co/json 2>/dev/null)"
   if [ -n "$pub_out" ]; then

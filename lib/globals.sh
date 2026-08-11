@@ -20,6 +20,11 @@ GW_COUNT=0
 
 # WiFi (lib/wifi.sh, lib/wifi_scan.sh, lib/wifi_disconnect.sh)
 IS_WIFI=0
+# The *_CHECKED flags separate "measured and negative" from "never ran".
+# Focused runs (--mtu-only / --wifi-only) skip most modules, so without
+# these a skipped check reads as a failed one — a WiFi link was reported
+# as "wired" under --mtu-only purely because wifi_run had not executed.
+WIFI_CHECKED=0
 WIFI_SSID=""
 WIFI_BSSID=""
 WIFI_SEC=""
@@ -53,6 +58,9 @@ INET_LOSS=""
 
 # Public reach / target ping (lib/public.sh)
 PUBLIC_OK=0
+# See WIFI_CHECKED above: --wifi-only never runs public_run, and the 0
+# default used to fire the "nothing on the internet responded" critical.
+PUBLIC_CHECKED=0
 PUB_IP=""
 PUB_ASN=""
 PUB_ISP=""

@@ -74,9 +74,11 @@ headline_run() {
         [ "$WIFI_RSSI" -lt -80 ] && quality="very weak"
         netline="$netline · ${WIFI_RSSI} dBm ($quality)"
       fi
-    else
+    elif [ "${WIFI_CHECKED:-0}" -eq 1 ]; then
       netline="$netline · wired"
     fi
+    # WIFI_CHECKED=0 means wifi_run never executed (--mtu-only), so the
+    # medium is unknown — say nothing rather than guess "wired".
     _row ok "Network" "$netline"
   else
     _row bad "Network" "no default route"

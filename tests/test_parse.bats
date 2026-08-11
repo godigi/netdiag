@@ -421,3 +421,68 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
   # The on-disk log is the user's own copy and keeps the real value.
   grep -q '203.0.113.42' "$tmplog"
 }
+
+# ── Focused runs must not report unmeasured checks as measured ───────────
+# --mtu-only and --wifi-only skip most modules, leaving their globals at
+# the defaults in globals.sh. Those defaults are indistinguishable from a
+# real negative result, so a skipped check was being reported as a failed
+# one: --wifi-only exited 2 on a perfectly healthy network.
+
+@test "diagnosis: N1b does not fire when the public check never ran" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  # --wifi-only state: a gateway exists, but public_run never executed, so
+  # PUBLIC_OK is still its 0 default and GW_LOSS was never measured.
+  GATEWAY="192.168.1.1"; PUBLIC_OK=0; GW_LOSS=""; PUBLIC_CHECKED=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  run diagnosis_run
+  [[ "$output" != *"nothing on the public internet responded"* ]]
+}
+
+@test "diagnosis: N1b still fires when public was measured and failed" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="192.168.1.1"; PUBLIC_OK=0; GW_LOSS=""; PUBLIC_CHECKED=1
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "$MAX_SEVERITY" -eq 2 ]
+}
+
+@test "diagnosis: N1b message does not name the wrong focus flag" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="192.168.1.1"; PUBLIC_OK=0; GW_LOSS=""; PUBLIC_CHECKED=1
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  run diagnosis_run
+  # It used to hardcode "--mtu-only" regardless of which focus was active.
+  [[ "$output" != *"without --mtu-only"* ]]
+}
+
+@test "headline: link medium is omitted when the WiFi check never ran" {
+  # shellcheck source=../lib/headline.sh
+  . "$REPO/lib/headline.sh"
+  # --mtu-only state: iface_run ran, wifi_run did not, so IS_WIFI is still 0.
+  FOCUS="mtu"; INTERFACE="en0"; IS_WIFI=0; WIFI_CHECKED=0
+  run headline_run
+  [[ "$output" == *"en0"* ]]
+  [[ "$output" != *"wired"* ]]
+}
+
+@test "headline: still says wired when the WiFi check ran and found no WiFi" {
+  # shellcheck source=../lib/headline.sh
+  . "$REPO/lib/headline.sh"
+  FOCUS="mtu"; INTERFACE="en0"; IS_WIFI=0; WIFI_CHECKED=1
+  run headline_run
+  [[ "$output" == *"wired"* ]]
+}
+
+@test "_redact_line: masks the IPv6 link-local gateway" {
+  # fe80::…  is EUI-64-derived from the router's MAC, so leaving it in
+  # publishes the same gateway MAC that GW_MAC is masked to protect.
+  PUB_IP=""; WIFI_SSID=""; WIFI_BSSID=""; PUB_CITY=""
+  LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC="10:98:5f:91:2f:0"
+  IPV6_GATEWAY="fe80::1298:5fff:fe91:2f00%en0"
+  result="$(_redact_line "System resolver: fe80::1298:5fff:fe91:2f00%en0")"
+  [[ "$result" != *"fe91:2f00"* ]]
+  [[ "$result" == *"[redacted]"* ]]
+}

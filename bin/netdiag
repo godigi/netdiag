@@ -47,7 +47,7 @@ set -u
 NETDIAG_COMPLETED=0
 # Every line below is reached via `trap … EXIT` — an indirect dispatch that
 # static analysis can't follow, so the body is not dead code.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 _netdiag_on_exit() {
   local rc=$?
   [ "$NETDIAG_COMPLETED" -eq 1 ] && exit "$rc"
@@ -79,7 +79,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-NETDIAG_VERSION="0.5.0"
+NETDIAG_VERSION="0.5.1"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping

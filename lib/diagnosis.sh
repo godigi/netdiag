@@ -20,10 +20,15 @@ diagnosis_run() {
   # exit 0, on a machine with no network whatsoever.
   if [ -z "$GATEWAY" ]; then
     add_diag critical N1 "Your Mac has no network connection at all — there's no default route, which means it isn't joined to a WiFi network and has no working ethernet link. Turn WiFi on and pick a network, or check that the ethernet cable is seated at both ends. Nothing else can be diagnosed until this is fixed."
-  elif [ "$PUBLIC_OK" -eq 0 ] && [ -z "$GW_LOSS" ]; then
+  elif [ "${PUBLIC_CHECKED:-0}" -eq 1 ] && [ "$PUBLIC_OK" -eq 0 ] && [ -z "$GW_LOSS" ]; then
     # Reachable only from a focused run (--mtu-only), where the gateway
-    # section is skipped so P1/P2 below can't evaluate.
-    add_diag critical N1b "Your Mac has a router but nothing on the public internet responded. Re-run plain \`netdiag\` (without --mtu-only) for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
+    # section is skipped so P1/P2 below can't evaluate. PUBLIC_CHECKED
+    # gates it because --wifi-only never runs public_run at all, and the
+    # untouched PUBLIC_OK=0 default made this critical fire — exit 2 — on
+    # a network whose internet was fine.
+    local _rerun="Re-run plain \`netdiag\`"
+    [ -n "${FOCUS:-}" ] && _rerun="$_rerun (without --${FOCUS}-only)"
+    add_diag critical N1b "Your Mac has a router but nothing on the public internet responded. $_rerun for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
   fi
 
   # W1, W2, G1/G2 — WiFi quality and gateway loss interplay.

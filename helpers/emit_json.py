@@ -258,8 +258,12 @@ REDACTED = "[redacted]"
 # that identify anything get masked anyway, leaving the readable structure
 # intact. Listing them here would instead make generic placeholders like
 # "unknown network" into secrets and blank them wherever they appeared.
+#
+# IPV6_GATEWAY is included despite being link-local and unroutable: a
+# fe80:: address is EUI-64-derived from the router's MAC, so leaving it in
+# republishes the GW_MAC sitting next to it in this same tuple.
 _REDACT_ENV = ("PUB_IP", "LOCAL_IP", "WIFI_SSID", "WIFI_BSSID",
-               "IPV6_GLOBAL_ADDR", "GW_MAC", "PUB_CITY")
+               "IPV6_GLOBAL_ADDR", "IPV6_GATEWAY", "GW_MAC", "PUB_CITY")
 
 
 def _scrub(node, secrets: list[str]):

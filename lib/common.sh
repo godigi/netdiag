@@ -64,8 +64,12 @@ _should_print_stdout() {
 # the former is too short to replace safely, the latter isn't identifying.
 _redact_line() {
   local s="$1" v
+  # IPV6_GATEWAY is masked even though it is link-local and unroutable: a
+  # fe80:: address is EUI-64-derived from the router's MAC, so publishing
+  # it leaks the very GW_MAC listed on the line below.
   for v in "${PUB_IP:-}" "${LOCAL_IP:-}" "${WIFI_SSID:-}" "${WIFI_BSSID:-}" \
-           "${IPV6_GLOBAL_ADDR:-}" "${GW_MAC:-}" "${PUB_CITY:-}"; do
+           "${IPV6_GLOBAL_ADDR:-}" "${IPV6_GATEWAY:-}" "${GW_MAC:-}" \
+           "${PUB_CITY:-}"; do
     # Skip empties (would match everywhere) and 1-2 char values (too short
     # to replace without corrupting unrelated text).
     [ "${#v}" -ge 3 ] || continue

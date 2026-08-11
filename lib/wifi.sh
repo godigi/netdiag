@@ -12,6 +12,7 @@
 wifi_run() {
   hdr "WiFi"
   IS_WIFI=0
+  WIFI_CHECKED=1
   # Detect WiFi via hardware port type (more reliable than networksetup
   # -getairportnetwork, which is broken on some macOS versions and falsely
   # reports "not associated").
