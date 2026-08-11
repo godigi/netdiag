@@ -110,9 +110,9 @@ or P2. That branch points the user at a full run rather than guessing.
 - Recommendation: your ISP's CPE/uplink is the bottleneck. Call the ISP;
   if you control the modem, try a firmware update.
 
-## Rules to add (one per upcoming feature)
+## Rules added for the 14 enhancements
 
-These are placeholders; each will be filled in when its source feature lands.
+All of the below are implemented and can fire.
 
 ### M1 — Path MTU below 1500
 
@@ -156,10 +156,14 @@ These are placeholders; each will be filled in when its source feature lands.
   tailscale status BackendState==Running, default route via utun*/wg*).
 - Severity: `info` (it's a heads-up, not a fault).
 - Evidence: VPN type and name.
-- Recommendation: the "gateway" line below is the VPN endpoint, not your
-  LAN router. RTT, loss, and traceroute reflect the tunnel — for a true
-  picture of the local link, drop the VPN or run with --no-vpn-bypass
-  (future flag).
+- Recommendation: the "gateway" line is the VPN endpoint, not your LAN
+  router. RTT, loss, and traceroute reflect the tunnel — for a true
+  picture of the local link, disconnect the VPN and run netdiag again.
+- **Status: specified but not yet emitted.** `lib/vpn.sh` prints a section
+  line and stops there — no `add_diag` call exists, so an active VPN does
+  not currently reach the Diagnosis section even though this file and the
+  README have both promised it since v0.1.0. The implementation is written
+  and tested and lands with the next release; this note goes away with it.
 - Rationale: users blame the router when the VPN is the actual
   bottleneck. Surfacing this up-front saves the support volley.
 ### TCP-1 — TCP works, ICMP is filtered
@@ -286,3 +290,66 @@ These are placeholders; each will be filled in when its source feature lands.
   Steam / consoles that need it, you can disable it in the router UI.
 - Rationale: defensive call-out, not a fault — most home networks have
   UPnP on by default and the user may not realise.
+- **Not emitted as a diagnosis.** UPnP state already has its own row on
+  the Report card, and `wan_diagnosis_run` deliberately skips re-stating
+  it so the same fact isn't reported in two places. The ID is reserved
+  and documented; nothing calls `add_diag` with it.
+
+### NAT-1b — ISP-side private transit (not your double-NAT)
+
+- Trigger: `wan.double_nat.isp_transit_count > 1` while home-side
+  double-NAT was *not* detected.
+- Severity: `info`.
+- Evidence: the `10/8` transit chain from the traceroute.
+- Recommendation: none — this is the carrier's normal internal routing.
+- Rationale: carrier-grade NAT puts RFC1918 hops in a traceroute that
+  look identical to a home double-NAT. Splitting them (see
+  `_wan_split_nat_chain`) stops netdiag telling users to bridge a router
+  they don't own. Only the home-side chain produces the actionable NAT-1.
+
+## Rules added in v0.4.x–v0.5.x
+
+### N1b — Router present, nothing public responds
+
+- Trigger: `PUBLIC_CHECKED == 1` and `public.ok == 0` and gateway loss was
+  never measured (a focused run such as `--mtu-only`).
+- Severity: `critical`.
+- Evidence: names the focus flag actually in use.
+- Recommendation: re-run plain `netdiag` for a full picture.
+- Rationale: focused runs skip the gateway section, so P1/P2 can't
+  evaluate and a real outage would otherwise produce no diagnosis at all.
+  `PUBLIC_CHECKED` is what keeps it honest — `--wifi-only` never runs
+  `public_run`, and before v0.5.1 the untouched `PUBLIC_OK=0` default made
+  this critical fire, and exit 2, on networks whose internet was fine.
+
+### DI-2 — Duplicate IP on the LAN
+
+- Trigger: an IP in `arp -an` resolving to more than one MAC.
+- Severity: `critical`.
+- Evidence: the colliding IP list.
+- Recommendation: two devices are fighting over one address and will
+  randomly steal each other's traffic. Usually a static IP colliding with
+  the DHCP pool, or a second DHCP server. Find and renumber one of them.
+- Rationale: split from DI-1 so "the router is unreachable at layer 2"
+  and "two devices share an address" don't share a message. They have
+  different causes and different fixes.
+
+### BL-1 — A metric regressed against this network's own history
+
+- Trigger: `baseline.regressions` is non-empty, which needs ≥ 3 prior runs
+  recorded on the same `network.id`.
+- Severity: `warn`.
+- Evidence: metric name, current value, and the median it's compared to.
+- Recommendation: depends on the metric; the text names what moved.
+- Rationale: the point of the rolling baseline. An absolute threshold
+  can't catch "your gateway RTT is 4× what it normally is" when the
+  absolute number still looks fine. Scoped per-network since v0.5.0 —
+  before that, a laptop moving between home and a café reported a
+  regression on every move.
+
+## Rules under active development
+
+The internet-side loss family (`G3`, `L1`, `L2`, `ICMP-1`) is being
+implemented separately; see `tests/test_loss.bats` and the
+`LOSS_WARN_PCT` / `LOSS_CRIT_PCT` thresholds in `lib/globals.sh`. This
+file will be updated when that work lands.

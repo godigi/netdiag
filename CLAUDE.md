@@ -1,10 +1,10 @@
 # netdiag — project instructions
 
-This project builds `netdiag`, a comprehensive macOS network-diagnostic CLI. The full specification lives in [`netdiag-prompt.md`](./netdiag-prompt.md) — read it before making non-trivial changes. The summary below is the working contract.
+This project builds `netdiag`, a comprehensive macOS network-diagnostic CLI. This file is the working contract; the reference docs are [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md), [`docs/DIAGNOSIS-RULES.md`](./docs/DIAGNOSIS-RULES.md), and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ## Scope
 
-Extend a ~300-line bash starter (embedded in `netdiag-prompt.md`) with 14 enhancements, refactor as it grows, and ship it as a GitHub repo with CI and distribution.
+Grown from a ~300-line bash starter into a modular `lib/*.sh` CLI with 14 diagnostic enhancements, shipped as a public GitHub repo with CI and a one-line installer. The original build spec (`netdiag-prompt.md`) was removed once its two load-bearing sections — the JSON schema and the acceptance criteria — had been moved into `docs/JSON-SCHEMA.md` and this file. It remains in git history.
 
 ## Engineering constraints (non-negotiable)
 
@@ -30,7 +30,7 @@ netdiag --install-watcher | --uninstall-watcher
 ## Output modes
 
 - **Default:** colored human-readable stdout + ANSI-stripped log to `~/net-diag/<timestamp>.log`.
-- **`--json`:** single JSON object to stdout matching the schema in `netdiag-prompt.md`. No colors, no log unless `--log` also passed.
+- **`--json`:** single JSON object to stdout matching [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md). No colors, no log unless `--log` also passed.
 - **`--quiet`:** only the Diagnosis section to stdout (full log still written).
 - **`--quick`:** skip bufferbloat, mtr, speed test, baseline diff, WiFi scan.
 
@@ -59,7 +59,7 @@ netdiag/
 ├── helpers/*.py             # Python helpers if porting parse logic
 ├── tests/{fixtures,*.bats}  # bats-core
 ├── examples/sample-output.{txt,json}
-├── docs/{ARCHITECTURE,DIAGNOSIS-RULES}.md
+├── docs/{ARCHITECTURE,DIAGNOSIS-RULES,JSON-SCHEMA}.md
 ├── .github/workflows/{shellcheck,bats}.yml
 ├── README.md  CHANGELOG.md  LICENSE  install.sh  .gitignore
 ```
@@ -75,4 +75,16 @@ Before refactoring past ~700 lines of bash, decide bash-modules vs bash+Python h
 
 ## Acceptance criteria (definition of done)
 
-See the "Acceptance criteria" section of `netdiag-prompt.md` — all 11 items must hold before declaring the project shippable.
+All 11 must hold before declaring the project shippable:
+
+1. `netdiag` runs end-to-end on macOS with all 14 sections, no shellcheck warnings, no uncaught errors.
+2. `netdiag --json` produces valid JSON matching `docs/JSON-SCHEMA.md`; `netdiag --json | jq .` succeeds.
+3. `netdiag --quick` skips bufferbloat, mtr, speed test, baseline diff, and WiFi scan; finishes in ≤ 8 s on a healthy network.
+4. `sudo netdiag` adds RSSI/noise/channel/PHY/tx_rate to the WiFi section and to the neighborhood scan.
+5. `netdiag github.com` adds the target to ping, traceroute, TCP-reach, and DNS.
+6. Exit codes work as specified (0/1/2/3).
+7. A successful run writes a parseable human-readable log to `~/net-diag/<timestamp>.log`.
+8. Each diagnosis explains its conclusion with evidence, not just a verdict.
+9. README is complete; `examples/sample-output.{txt,json}` are real captures from an actual run.
+10. The repo is public on GitHub, tagged, with passing CI (shellcheck + bats).
+11. `docs/ARCHITECTURE.md` explains the bash-vs-Python decision; `docs/DIAGNOSIS-RULES.md` lists every diagnosis rule that can fire.

@@ -17,3 +17,31 @@ jobs:
         run: brew install bats-core jq bash
       - name: Run bats tests
         run: bats tests/
+
+      # End-to-end smoke test. The runner's network is not our network, so
+      # this asserts nothing about the findings — only that a real run
+      # completes and emits parseable JSON. Exit 3 is the failure we care
+      # about: it means the script itself broke, as opposed to 0/1/2 which
+      # are verdicts about the runner's link.
+      - name: Smoke test a real run
+        run: |
+          # Actions runs `bash -e`, and exit 1/2 are legitimate verdicts
+          # about the runner's link, so guard the call rather than let -e
+          # abort on a healthy result.
+          status=0
+          ./bin/netdiag --quick --no-gping --no-baseline --json > /tmp/smoke.json || status=$?
+          echo "netdiag exit status: $status"
+          if [ "$status" -eq 3 ]; then
+            echo "::error::netdiag exited 3 (script error)"
+            exit 1
+          fi
+          jq -e 'type == "object" and has("version") and has("diagnosis")' /tmp/smoke.json > /dev/null
+          echo "emitted $(jq 'keys | length' /tmp/smoke.json) top-level keys"
+
+      - name: Smoke test the installer
+        run: |
+          ./install.sh --prefix /tmp/ndbin --no-brew
+          test -L /tmp/ndbin/netdiag
+          /tmp/ndbin/netdiag --help > /dev/null
+          ./install.sh --prefix /tmp/ndbin --uninstall
+          test ! -e /tmp/ndbin/netdiag

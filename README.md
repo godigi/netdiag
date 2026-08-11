@@ -1,5 +1,10 @@
 # netdiag
 
+[![shellcheck](https://github.com/godigi/netdiag/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/godigi/netdiag/actions/workflows/shellcheck.yml)
+[![bats](https://github.com/godigi/netdiag/actions/workflows/bats.yml/badge.svg)](https://github.com/godigi/netdiag/actions/workflows/bats.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![macOS](https://img.shields.io/badge/macOS-14%2B-lightgrey.svg)](#requirements)
+
 > Comprehensive network diagnostic CLI for macOS — finds the root cause of
 > internet problems in one run instead of forcing you to chain eight commands.
 
@@ -28,17 +33,61 @@ the regression on the next pass.
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/godigi/netdiag/main/install.sh | bash
+```
+
+Then run `netdiag`.
+
+That fetches netdiag into `~/.local/share/netdiag`, puts a `netdiag`
+symlink on your PATH, and installs Homebrew's bash 5 if you don't have it
+(macOS ships bash 3.2, which netdiag can't run on). Re-running the same
+command updates an existing install via `git pull`.
+
+If you'd rather read the script before piping it to a shell — a reasonable
+habit — clone instead:
+
+```sh
 git clone https://github.com/godigi/netdiag.git
 cd netdiag
 ./install.sh
 ```
 
-`install.sh` symlinks `bin/netdiag` into `/usr/local/bin` (or `~/bin` if
-the system prefix isn't writable) and runs `brew install bash` if it
-needs to. Pass `--prefix DIR` to override the install location;
-`--no-brew` to skip the bash bootstrap.
+Run from inside a clone, `install.sh` points the symlink at that clone and
+never touches the network.
 
-A Homebrew tap and a `curl | bash` one-liner are still on the roadmap.
+<details>
+<summary>Options and uninstall</summary>
+
+```sh
+install.sh --prefix DIR    # where to put the symlink
+                           # default: /usr/local/bin if writable, else ~/bin
+install.sh --no-brew       # skip the bash 5 bootstrap
+install.sh --uninstall     # remove the symlink; keeps the checkout and ~/net-diag
+```
+
+When piping, flags go after `-s --`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/godigi/netdiag/main/install.sh \
+  | bash -s -- --prefix ~/.local/bin
+```
+
+`NETDIAG_SRC` overrides the checkout location, `NETDIAG_REPO` the clone URL.
+
+To remove netdiag entirely:
+
+```sh
+netdiag --uninstall-watcher            # if you installed the LaunchAgent
+~/.local/share/netdiag/install.sh --uninstall
+rm -rf ~/.local/share/netdiag ~/net-diag
+```
+
+</details>
+
+### Requirements
+
+macOS 14+ on Apple Silicon or Intel, plus bash 5 (the installer handles
+it). A Homebrew tap is still on the roadmap.
 
 ## Usage
 
@@ -139,29 +188,44 @@ paged for a broken network, not for a typo in its own arguments.
 
 ## Sample output
 
-Quoted from [`examples/sample-output.txt`](./examples/sample-output.txt)
-(real run on a Starlink link; SSID/BSSID/public IP redacted):
+The default run is a compact Report card plus plain-English findings —
+no jargon, and each finding says what it means for you and what to do.
+Abridged from [`examples/sample-output.txt`](./examples/sample-output.txt),
+a real `netdiag --redact` run:
 
 ```
-── Local network ──
-  ✓ Interface: en0   IP: 192.168.50.56   Gateway: 192.168.50.1
-── VPN ──
-  ✓ No VPN active.
-── WiFi ──
-  ✓ SSID: <redacted-ssid>  (interface en0)
-── Bufferbloat (loaded vs idle latency) ──
-  · Loaded: gateway 3.2 ms (+-2.1 ms) · internet 28.6 ms (+1.8 ms)
-  ✓ Bufferbloat (gateway): grade A
-  ✓ Bufferbloat (internet): grade A
-── Path MTU (DF-set probe to 1.1.1.1) ──
-  ✓ Effective path MTU: 1500 (full ethernet frames pass DF)
-── Diagnosis ──
-  ✓ Nothing obviously wrong from these checks.
+── Report ──
+  ⚠  Packet size         1480 bytes · below standard · some sites may hang
+  ⚠  WiFi channel        crowded · 6 neighbouring networks
+
+  ✓  Network             en0 · WiFi 5GHz ch52
+  ✓  Router              192.168.15.1 · 0% loss · 3.9 ms · ±0.8 ms jitter
+  ✓  Internet            TELEFONICA BRASIL S.A ([redacted], Brazil)
+  ✓  Latency             1.1.1.1 · 57 ms · ±1.3 ms jitter
+  ✓  DNS                 working
+  ✓  Bufferbloat         grade A/A · clean under load
+  ✓  Router config       UPnP disabled (safer default)
+  ✓  Hosts file          clean (only macOS defaults)
+  ·  VPN                 not active
+  ·  Speed               not tested (run with --speed)
+
+── What we found ──
+  ⚠ Some websites load fine and others hang forever loading — your network
+    is silently dropping packets above 1480 bytes. Usually caused by a
+    VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN;
+    if it persists, ask your ISP or check your router's WAN-MTU /
+    MSS-clamping setting.
+
+  ⚠ Your WiFi channel (52) is shared with 6 neighbouring networks — they
+    all interfere with each other. Switch to a less-crowded channel in
+    your router's WiFi settings (good 5 GHz choices most routers don't
+    pick automatically: 149, 153, 157, 161).
 ```
 
-The corresponding JSON is at
-[`examples/sample-output.json`](./examples/sample-output.json) and matches
-the schema in [`netdiag-prompt.md`](./netdiag-prompt.md).
+`--expert` adds every underlying measurement section (RSSI, full DNS,
+TCP, traceroute, DHCP, per-hop loss). The corresponding JSON is at
+[`examples/sample-output.json`](./examples/sample-output.json); its shape
+is documented in [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md).
 
 ## Diagnosis rules
 
@@ -169,6 +233,7 @@ Each diagnosis is documented with trigger, severity, evidence,
 recommendation, and rationale in
 [`docs/DIAGNOSIS-RULES.md`](./docs/DIAGNOSIS-RULES.md). Short list:
 
+- **N1/N1b** no network at all / router up but nothing public responds
 - **W1/W2** weak WiFi signal / low SNR
 - **G1/G2** gateway loss (with vs without weak WiFi)
 - **P1/P2** public unreachable; DNS in/out of play
@@ -177,14 +242,21 @@ recommendation, and rationale in
 - **M1** path MTU < 1500
 - **MT1** first lossy hop identified
 - **V6-1** IPv6 broken while v4 works (Happy Eyeballs masks)
-- **VPN-1** VPN carrying the default route
+- **VPN-1** VPN carrying the default route *(specified, not yet emitted)*
 - **TCP-1** TCP works, ICMP filtered
 - **WS-1** WiFi channel congested
 - **WD-1** WiFi link flapping
 - **NT-1** system clock drift > 30 s
-- **DI-1** duplicate IP / incomplete gateway ARP
+- **DI-1/DI-2** incomplete gateway ARP / duplicate IP on the LAN
 - **DH-1** DHCP lease expires within 1 h
-- **DH-2** DHCP DNS ≠ system resolver
+- **DH-2** system resolver manually overrides the DHCP-handed one
+- **WAN-1/WAN-1b** traffic split across ISPs / CGNAT round-robin
+- **NAT-1/NAT-1b** home-side double-NAT / ISP-side private transit
+- **BL-1** a metric regressed against this network's own history
+
+`UP-1` (UPnP enabled) is specified but deliberately not emitted as a
+diagnosis — it already has its own Report row, and repeating it here
+would say the same thing twice.
 
 ## Dependencies
 
@@ -236,41 +308,43 @@ netdiag --json | jq '.bufferbloat'
 }
 ```
 
-Full schema in [`netdiag-prompt.md`](./netdiag-prompt.md). Sample at
+Full schema in [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md). Sample at
 [`examples/sample-output.json`](./examples/sample-output.json).
 
 ## Roadmap
 
-v0.3:
+Shipped: modular `lib/*.sh` (v0.3.0), NAT/WAN topology (v0.3.0),
+plain-English diagnoses and the Report card (v0.4.0), per-network
+baselines and `--redact` (v0.5.0), a one-line installer (v0.5.3).
 
-- Refactor into `lib/*.sh` modules (currently single-file at ~1300 lines)
-- Diagnosis ranking (severity × confidence, `most_likely_root_cause`)
+Next:
+
+- Homebrew tap (`brew install godigi/netdiag/netdiag`)
 - Apple Private Relay detection
 - Captive-DNS detection (resolver returning A records for `.invalid`)
 - Upload-side bufferbloat probe
-- Homebrew tap
+- Diagnosis confidence scoring, not just severity
 
-v0.4+:
+Later:
 
 - Linux port
 - Web UI for `~/net-diag/`
 - Slack/Discord webhook on critical diagnosis
-- iperf3 to user-provided server for LAN throughput
+- iperf3 to a user-provided server for LAN throughput
 
 ## Contributing
 
-`shellcheck` runs on every push (`.github/workflows/shellcheck.yml`).
-`bats-core` smoke tests run on `macos-latest`
-(`.github/workflows/bats.yml`). Run locally:
+Bug reports and PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+`shellcheck` runs on every push (`.github/workflows/shellcheck.yml`) and
+`bats-core` runs on `macos-latest` (`.github/workflows/bats.yml`).
+Run both locally:
 
 ```sh
 brew install shellcheck bats-core jq
-shellcheck bin/netdiag install.sh
+shellcheck bin/netdiag install.sh lib/*.sh
 bats tests/
 ```
-
-Conventional commits preferred; one logical change per PR; samples
-must come from real runs (with personal info redacted).
 
 ## License
 

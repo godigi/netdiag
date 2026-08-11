@@ -17,4 +17,4 @@ jobs:
         with:
           scandir: '.'
           additional_files: 'install.sh'
-          ignore_paths: 'tests/fixtures nimbalyst-local'
+          ignore_paths: 'tests/fixtures'

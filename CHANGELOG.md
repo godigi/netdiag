@@ -57,13 +57,53 @@ data. Two of them told the user something untrue about their own setup.
 
 ## [Unreleased]
 
+### Added
+
+- **A one-line install.** `curl -fsSL .../install.sh | bash` now works.
+  `install.sh` previously symlinked `$REPO_ROOT/bin/netdiag`, so it only
+  ran inside an existing clone and could not be piped from curl at all.
+  It now detects that it has no checkout to point at, fetches one into
+  `~/.local/share/netdiag`, and `git pull`s it on re-run. Run from inside
+  a clone it uses that clone and never touches the network. Adds
+  `--uninstall`, and creates the `--prefix` directory instead of failing
+  with a bare `ln: No such file or directory`.
+- **`docs/JSON-SCHEMA.md`** documenting every top-level key of `--json`
+  as actually emitted, the `null` (didn't run) vs `[]` (ran, found
+  nothing) convention, and the `dhcp.dns_servers` string-not-array wart.
+- **`CONTRIBUTING.md`.**
+- **CI smoke tests** — a real `netdiag --json` run whose exit status and
+  JSON shape are checked, and an install/uninstall round-trip. Closes the
+  gap noted here previously.
+
+### Fixed
+
+- **`.github/workflows/shellcheck.yml`** no longer carries a stale
+  `nimbalyst-local` entry in `ignore_paths`, left over from another
+  project.
+- **README no longer documents output the tool doesn't produce.** The
+  sample-output block showed a `── Diagnosis ──` section and wording
+  retired in v0.4.0; it now quotes the real Report card. The Roadmap
+  still listed the v0.3.0 module refactor as upcoming work. The rule
+  list was missing `N1`, `N1b`, `DI-2`, `WAN-1b`, `NAT-1b` and `BL-1`,
+  and listed `UP-1` without noting it is deliberately never emitted.
+- **`examples/sample-output.{txt,json}`** regenerated from real
+  `--redact` runs; the previous pair predated the current output format.
+
+### Removed
+
+- **`netdiag-prompt.md`**, the original build spec. Its JSON schema moved
+  to `docs/JSON-SCHEMA.md` (rewritten against what the emitter actually
+  produces — the spec's copy had drifted, e.g. `ping6_loss_pct` vs the
+  real `ping_loss_pct`, and predated the `wan`, `hosts_file`, `timings`
+  and `network` keys). Its acceptance criteria moved into `CLAUDE.md`.
+  Still in git history.
+
 ### Known
 
-- `.github/workflows/shellcheck.yml` still carries a stale
-  `nimbalyst-local` entry in `ignore_paths`, left over from another
-  project, and CI has no smoke test that runs netdiag end to end. Neither
-  is fixed here because pushing workflow files needs a token scope this
-  branch doesn't have — both are one-file changes for a maintainer.
+- `VPN-1` is documented in the README and `docs/DIAGNOSIS-RULES.md` but
+  never fires: `lib/vpn.sh` prints a section line and calls no
+  `add_diag`. Both documents now say so. The fix is written and tested
+  and lands with the next release.
 
 ## [0.5.1] - 2026-08-11
 

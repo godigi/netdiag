@@ -5,7 +5,7 @@ Called from bin/netdiag with the run's collected globals exported as
 environment variables (NETDIAG_* prefix). Fields that weren't set
 become JSON null.
 
-Top-level keys follow the order specified in netdiag-prompt.md:
+Top-level keys follow the order specified in docs/JSON-SCHEMA.md:
   version, timestamp, interface, wifi, gateway, public, dns, traceroute,
   per_hop, bufferbloat, mtu, ipv6, vpn, tcp_reach, wifi_scan,
   wifi_disconnects, speedtest, ntp, duplicate_ips, dhcp, mtr, wan,
@@ -332,10 +332,16 @@ def main() -> None:
             "rtt_jitter_ms": _maybe_float("GW_JITTER"),
         },
         "internet_latency": {
-            "target": "1.1.1.1",
+            "target": _env("INET_TARGET") or "1.1.1.1",
             "rtt_avg_ms": _maybe_float("INET_RTT_AVG"),
             "rtt_jitter_ms": _maybe_float("INET_RTT_JITTER"),
             "loss_pct": _maybe_float("INET_LOSS"),
+            # Second independent anycast target. L1 escalates packet loss
+            # to critical only when both agree, so a consumer reproducing
+            # the diagnosis needs both numbers, not just the primary.
+            "target_alt": _env("INET_TARGET_ALT") or "8.8.8.8",
+            "rtt_avg_ms_alt": _maybe_float("INET_RTT_AVG_ALT"),
+            "loss_pct_alt": _maybe_float("INET_LOSS_ALT"),
         },
         "public": {
             "ip": _env("PUB_IP"),
