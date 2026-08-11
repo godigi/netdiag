@@ -367,6 +367,41 @@ EOF
   [ "$output" = "none:" ]
 }
 
+# ── Unbounded probes ─────────────────────────────────────────────────────
+# traceroute6 was 7.4 s of --quick's 10.6 s — 70% of the wall clock of the
+# mode built to answer "is it up?" quickly — for a hop count that feeds no
+# diagnosis rule and that default compact output never prints. It was also
+# the only probe in lib/ipv6.sh with no wall-clock bound: -m 12 hops at
+# -w 2 s is a 24 s worst case on a path that black-holes IPv6.
+
+@test "traceroute6 is skipped under --quick" {
+  run grep -n 'traceroute6 -n' "$REPO/lib/ipv6.sh"
+  [ "$status" -eq 0 ]
+  run grep -c 'QUICK.*-eq 0.*command -v traceroute6' "$REPO/lib/ipv6.sh"
+  [ "$output" -eq 1 ]
+}
+
+@test "every network probe in lib/ipv6.sh has a wall-clock bound" {
+  # ping6, dig and traceroute6 must all be wrapped; nc carries its own -G.
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      *with_timeout*) ;;
+      *) printf 'unbounded probe: %s\n' "$line"; return 1 ;;
+    esac
+  # The trailing [-+] requires a flag, so this matches real invocations
+  # (ping6 -c, traceroute6 -n, dig +time) and not prose that happens to
+  # name the command inside a warn/info string.
+  done < <(grep -hE '^[^#]*(ping6|traceroute6|dig) [-+]' "$REPO/lib/ipv6.sh")
+}
+
+@test "an unmeasured IPv6 hop count stays empty rather than reporting zero" {
+  # --quick leaves IPV6_TRACE_HOPS unset; _maybe_int renders that as JSON
+  # null. Defaulting it to 0 would claim a zero-hop path to Cloudflare.
+  . "$REPO/lib/globals.sh"
+  [ -z "$IPV6_TRACE_HOPS" ]
+}
+
 # ── Healthy networks stay healthy ────────────────────────────────────────
 
 @test "a fully healthy network still reports nothing wrong and exits 0" {

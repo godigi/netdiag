@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/ipv6.sh — IPv6 parity checks: global address, ping6, AAAA, TCP/443.
 #
-# Reads:  INTERFACE
+# Reads:  INTERFACE, QUICK
 # Writes: IPV6_AVAILABLE, IPV6_GLOBAL_ADDR, IPV6_GATEWAY, IPV6_PING_LOSS,
 #         IPV6_AAAA_OK, IPV6_TRACE_HOPS, IPV6_TCP_OK
 # Entry:  ipv6_run
@@ -61,8 +61,26 @@ ipv6_run() {
       bad "AAAA cloudflare.com FAILED"
     fi
 
-    if command -v traceroute6 >/dev/null 2>&1; then
-      IPV6_TRACE_HOPS="$(traceroute6 -n -q 1 -w 2 -m 12 2606:4700:4700::1111 2>/dev/null \
+    # Skipped under --quick, and bounded in every mode.
+    #
+    # This one call was 7.4 s of --quick's 10.6 s — 70% of the wall clock
+    # of the mode whose entire purpose is a fast "is it up?" answer. What
+    # it produces is a hop count that feeds NO diagnosis rule:
+    # IPV6_TRACE_HOPS reaches the JSON and a single info line that default
+    # compact output doesn't even print. Paying seven seconds for it in
+    # the fast path was the wrong trade.
+    #
+    # The with_timeout applies in full runs too, not just --quick. -m 12
+    # hops at -w 2 s each is a 24 s worst case on a path that black-holes
+    # IPv6, and this was the only probe in the module with no wall-clock
+    # bound at all — ping6, dig and nc are all capped. An unbounded probe
+    # that can silently dominate a run is the same shape as the ping -t
+    # bug fixed in v0.6.0.
+    #
+    # Left empty when skipped, which _maybe_int renders as JSON null:
+    # "not measured", never a fabricated 0.
+    if [ "$QUICK" -eq 0 ] && command -v traceroute6 >/dev/null 2>&1; then
+      IPV6_TRACE_HOPS="$(with_timeout 8 traceroute6 -n -q 1 -w 2 -m 12 2606:4700:4700::1111 2>/dev/null \
         | awk '/^[[:space:]]*[0-9]+/' | wc -l | tr -d ' ')"
       info "traceroute6: ${IPV6_TRACE_HOPS} hops to Cloudflare"
     fi
