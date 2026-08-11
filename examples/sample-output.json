@@ -1,6 +1,6 @@
 {
-  "version": "0.6.0",
-  "timestamp": "2026-08-11T15:01:36Z",
+  "version": "0.8.0",
+  "timestamp": "2026-08-12T02:10:00Z",
   "interface": {
     "name": "en0",
     "ip": "[redacted]",
@@ -26,16 +26,16 @@
   "gateway": {
     "ip": "192.168.15.1",
     "loss_pct": 0.0,
-    "rtt_avg_ms": 6.118,
-    "rtt_jitter_ms": 6.221
+    "rtt_avg_ms": 3.497,
+    "rtt_jitter_ms": 0.547
   },
   "internet_latency": {
     "target": "1.1.1.1",
-    "rtt_avg_ms": 56.404,
-    "rtt_jitter_ms": 3.426,
+    "rtt_avg_ms": 48.592,
+    "rtt_jitter_ms": 2.593,
     "loss_pct": 0.0,
     "target_alt": "8.8.8.8",
-    "rtt_avg_ms_alt": 73.77,
+    "rtt_avg_ms_alt": 74.778,
     "loss_pct_alt": 0.0
   },
   "public": {
@@ -44,6 +44,7 @@
     "isp": "TELEFONICA BRASIL S.A",
     "city": "[redacted]",
     "country": "Brazil",
+    "country_iso": "BR",
     "captive_portal": false
   },
   "dns": [
@@ -68,7 +69,7 @@
     {
       "resolver": "[redacted]",
       "name": "cloudflare.com",
-      "answer": "104.16.132.229",
+      "answer": "104.16.133.229",
       "ok": true
     },
     {
@@ -80,7 +81,7 @@
     {
       "resolver": "8.8.8.8",
       "name": "cloudflare.com",
-      "answer": "104.16.133.229",
+      "answer": "104.16.132.229",
       "ok": true
     }
   ],
@@ -91,7 +92,7 @@
         "n": 1,
         "ip": "192.168.15.1",
         "responded": true,
-        "rtt_ms": 4.245
+        "rtt_ms": 3.818
       },
       {
         "n": 2,
@@ -101,33 +102,33 @@
       },
       {
         "n": 3,
-        "ip": "201.1.224.115",
+        "ip": "201.1.224.111",
         "responded": true,
-        "rtt_ms": 6.208
+        "rtt_ms": 5.01
       },
       {
         "n": 4,
-        "ip": "152.255.135.145",
+        "ip": "152.255.135.153",
         "responded": true,
-        "rtt_ms": 49.67
+        "rtt_ms": 52.784
       },
       {
         "n": 5,
-        "ip": null,
-        "responded": false,
-        "rtt_ms": null
+        "ip": "152.255.135.142",
+        "responded": true,
+        "rtt_ms": 32.572
       },
       {
         "n": 6,
-        "ip": "152.255.206.22",
+        "ip": "152.255.165.251",
         "responded": true,
-        "rtt_ms": 57.297
+        "rtt_ms": 51.13
       },
       {
         "n": 7,
-        "ip": null,
-        "responded": false,
-        "rtt_ms": null
+        "ip": "187.100.57.100",
+        "responded": true,
+        "rtt_ms": 60.244
       },
       {
         "n": 8,
@@ -145,7 +146,7 @@
         "n": 10,
         "ip": "1.1.1.1",
         "responded": true,
-        "rtt_ms": 53.357
+        "rtt_ms": 52.89
       }
     ]
   },
@@ -155,44 +156,58 @@
       "ip": "192.168.15.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 6.472
+      "avg_ms": 4.4
     },
     {
       "n": 2,
-      "ip": "201.1.224.115",
+      "ip": "201.1.224.111",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 3,
-      "ip": "152.255.135.145",
+      "ip": "152.255.135.153",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 4,
-      "ip": "152.255.206.22",
+      "ip": "152.255.135.142",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 5,
+      "ip": "152.255.165.251",
+      "responded": true,
+      "loss_pct": 100.0,
+      "avg_ms": null
+    },
+    {
+      "n": 6,
+      "ip": "187.100.57.100",
+      "responded": true,
+      "loss_pct": 100.0,
+      "avg_ms": null
+    },
+    {
+      "n": 7,
       "ip": "1.1.1.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 56.128
+      "avg_ms": 49.145
     }
   ],
   "bufferbloat": {
-    "idle_gw_rtt_ms": 6.118,
-    "loaded_gw_rtt_ms": 3.87,
-    "idle_inet_rtt_ms": 56.933,
-    "loaded_inet_rtt_ms": 55.357,
-    "gw_delta_ms": -2.2,
-    "inet_delta_ms": -1.6,
+    "idle_gw_rtt_ms": 3.497,
+    "loaded_gw_rtt_ms": 4.516,
+    "idle_inet_rtt_ms": 49.311,
+    "loaded_inet_rtt_ms": 49.556,
+    "gw_delta_ms": 1.0,
+    "inet_delta_ms": 0.2,
     "gw_grade": "A",
     "inet_grade": "A"
   },
@@ -219,61 +234,61 @@
       "host": "1.1.1.1",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 95.0
+      "elapsed_ms": 72.0
     },
     {
       "host": "1.1.1.1",
       "port": 53,
       "ok": true,
-      "elapsed_ms": 86.0
+      "elapsed_ms": 79.0
     },
     {
       "host": "8.8.8.8",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 105.0
+      "elapsed_ms": 88.0
     },
     {
       "host": "github.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 102.0
+      "elapsed_ms": 83.0
     },
     {
       "host": "apple.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 96.0
+      "elapsed_ms": 92.0
     }
   ],
   "wifi_scan": {
     "current_channel": "52",
     "current_band": "5GHz",
-    "neighbour_count": 53,
-    "current_channel_neighbours": 5
+    "neighbour_count": 55,
+    "current_channel_neighbours": 1
   },
   "wifi_disconnects": {
     "window_hours": 1,
     "count": 0
   },
   "speedtest": {
-    "down_mbps": 106.9,
-    "up_mbps": 104.2,
-    "latency_ms": 99.493,
-    "jitter_ms": null,
-    "server": "st-cabanorte-slo1.cablevisionfibertel.com.ar:8080"
+    "down_mbps": 298.0,
+    "up_mbps": 237.8,
+    "latency_ms": 29.283,
+    "jitter_ms": 1.385,
+    "server": "Fiber Network"
   },
   "ntp": {
-    "drift_seconds": 0.012951,
+    "drift_seconds": 0.058044,
     "using_network_time": null,
     "server": null
   },
   "duplicate_ips": [],
   "dhcp": {
     "server": "192.168.15.1",
-    "lease_start": "08/11/2026 10:31:55",
-    "lease_end": "08/11/2026 14:31:55",
-    "time_remaining_s": 12615,
+    "lease_start": "08/11/2026 20:31:50",
+    "lease_end": "08/12/2026 00:31:50",
+    "time_remaining_s": 8506,
     "dns_servers": "192.168.15.1"
   },
   "mtr": {
@@ -285,35 +300,49 @@
         "ip": "192.168.15.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 6.472
+        "avg_ms": 4.4
       },
       {
         "n": 2,
-        "ip": "201.1.224.115",
+        "ip": "201.1.224.111",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 3,
-        "ip": "152.255.135.145",
+        "ip": "152.255.135.153",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 4,
-        "ip": "152.255.206.22",
+        "ip": "152.255.135.142",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 5,
+        "ip": "152.255.165.251",
+        "responded": true,
+        "loss_pct": 100.0,
+        "avg_ms": null
+      },
+      {
+        "n": 6,
+        "ip": "187.100.57.100",
+        "responded": true,
+        "loss_pct": 100.0,
+        "avg_ms": null
+      },
+      {
+        "n": 7,
         "ip": "1.1.1.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 56.128
+        "avg_ms": 49.145
       }
     ],
     "first_lossy_hop": null
@@ -352,39 +381,39 @@
     "suspicious_redirects": []
   },
   "timings": {
-    "total_s": 134.37,
+    "total_s": 59.08,
     "budget_s": 30.0,
     "over_budget": true,
     "phases": {
       "iface": 0.02,
-      "vpn": 0.03,
-      "wifi": 0.08,
+      "vpn": 0.02,
+      "wifi": 0.05,
       "gateway": 3.92,
       "arp": 0.02,
       "netid": 0.0,
       "dhcp": 0.03,
-      "public": 0.66,
-      "parallel_batch": 13.16,
-      "internet_ping": 3.98,
+      "public": 0.62,
+      "parallel_batch": 13.32,
+      "internet_ping": 4.01,
       "bufferbloat": 4.07,
-      "mtu": 2.49,
-      "traceroute": 10.21,
-      "nat": 0.01,
-      "mtr": 2.16,
-      "speedtest": 93.24
+      "mtu": 2.48,
+      "traceroute": 6.31,
+      "nat": 0.02,
+      "mtr": 2.15,
+      "speedtest": 21.69
     }
   },
-  "baseline": null,
+  "baseline": {
+    "compared_runs": 10,
+    "network_id": "wifi:mac=[redacted]",
+    "skipped_other_networks": 1937,
+    "regressions": []
+  },
   "diagnosis": [
     {
       "severity": "warn",
       "rule": "M1",
       "summary": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting."
-    },
-    {
-      "severity": "warn",
-      "rule": "WS-1",
-      "summary": "Your WiFi channel (52) is shared with 5 neighbouring networks \u2014 they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
     }
   ],
   "most_likely_root_cause": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting.",

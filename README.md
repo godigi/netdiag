@@ -99,7 +99,9 @@ netdiag --mtu-only               # just the path-MTU probe
 netdiag --wifi-only              # just the WiFi checks
 netdiag --redact --json          # safe to paste into a ticket
 netdiag --watch[=SEC]            # foreground loop, every SEC (default 300)
+netdiag --monitor                # streaming JSONL, one sample per line
 netdiag --summary[=HOURS]        # aggregate ~/net-diag/baseline.jsonl
+netdiag --history[=N]            # whole run store as network-grouped JSON
 netdiag --install-watcher        # launchd plist, every 15 min, background
 netdiag --uninstall-watcher
 ```
@@ -126,6 +128,8 @@ netdiag --uninstall-watcher
 | `--redact`           | mask identifying values on stdout / JSON (see below)   |
 | `--mtu-only`         | run only the path-MTU probe and its prerequisites      |
 | `--wifi-only`        | run only link quality, neighbourhood scan, disconnects |
+| `--monitor`          | stream one compact JSON object per line until stopped  |
+| `--history[=N]`      | emit the whole run store as one grouped JSON object    |
 
 Examples:
 
@@ -138,6 +142,8 @@ netdiag --watch=180          # check every 3 min
 netdiag --summary=168        # what's been happening this past week?
 netdiag --wifi-only          # "is it the WiFi?" without the full battery
 netdiag --redact             # before pasting output into a forum thread
+netdiag --monitor | jq -c .status    # watch the rules a program would see
+netdiag --history | jq .networks     # which networks have I been on?
 sudo netdiag                 # unlocks RSSI/noise/channel + mtr per-hop
 ```
 
@@ -298,7 +304,68 @@ netdiag --summary=168        # what happened this past week?
 ```
 
 `baseline.jsonl` is append-only at `~/net-diag/baseline.jsonl`; pipe it
-through `jq` for ad-hoc analysis.
+through `jq` for ad-hoc analysis. Once it passes its retention cap the
+oldest records roll into `baseline-archive.jsonl` rather than being
+deleted — `--history` reads both.
+
+### `--watch` vs `--monitor`
+
+Two different tools that both repeat, and it is worth being clear which
+you want:
+
+| | `--watch[=SEC]` | `--monitor` |
+|---|---|---|
+| Audience | a person watching a terminal | a program |
+| Output | prose — the Diagnosis section, per iteration | one JSON object per line |
+| Work per cycle | a full `--quick` run (~10 s) | one cadence tier (~2 s) |
+| Writes | a log file and a history record per run | nothing at all |
+| Cadence | one fixed interval | three tiers, adaptive |
+
+`--watch` is for sitting and watching a flaky link. `--monitor` is for
+feeding something — it is what [`netdiag.app`](#netdiagapp-menu-bar-monitor)
+consumes. Sample shape and signals (`SIGUSR1` pauses, `SIGUSR2` resumes)
+are documented in [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md).
+
+## netdiag.app (menu-bar monitor)
+
+A native SwiftUI menu-bar app lives in [`gui/`](./gui). It watches the
+connection continuously, notifies in plain English when something breaks,
+and keeps every raw measurement one click away.
+
+```sh
+make -C gui identity   # once: a stable signing identity (see below)
+make -C gui run        # build, bundle, sign, launch
+```
+
+**The app is a client, not a second brain.** It holds no thresholds and
+writes no diagnosis prose. Every verdict on screen comes from the CLI:
+`status.rules` arrives pre-computed from `lib/monitor.sh`, and every
+explanatory sentence is a `diagnosis[].summary` rendered verbatim. If a
+change would add a number that decides whether something is wrong, or a
+sentence explaining a fault, it belongs in `lib/` instead.
+
+Four disclosure layers, so the same app serves a non-technical user and an
+expert without asking anyone to declare which they are:
+
+| Layer | Content |
+|---|---|
+| Menu bar | health dot, country flag, optionally the public IP |
+| Dropdown | one plain sentence, current network, VPN badge, Run button |
+| Dashboard | report-card rows plus the CLI's diagnosis prose |
+| Expert | raw measurements, rule IDs, hop tables, live sparklines, raw JSON |
+
+The expert layer is a disclosure whose open/closed state persists — never
+a mode chosen at first launch.
+
+**Signing.** `make identity` creates a stable self-signed identity in your
+keychain (one interactive keychain prompt). This matters more than it
+sounds: macOS keys permission grants to the code signature, and `codesign
+-s -` produces a new one on every rebuild — which would re-prompt not only
+for Location but for **Notifications**, the permission the alert engine
+depends on. Without the identity the build still works, signs ad-hoc, and
+says so.
+
+Requires macOS 14+ and the Command Line Tools (no Xcode needed).
 
 ## JSON mode
 

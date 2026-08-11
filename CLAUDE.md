@@ -16,6 +16,15 @@ Grown from a ~300-line bash starter into a modular `lib/*.sh` CLI with 14 diagno
   - Two checks must **not** be parallelised, because both measure a property of a quiet link: `internet_ping_run` (packet loss / latency) and `bufferbloat_run` (which saturates the link deliberately). Running the loss probe inside the parallel batch made it report 30% loss on a healthy network.
 - **Read-only:** never modify routing, DNS, WiFi, or ARP state.
 - **shellcheck-clean** at default severity. `# shellcheck disable=...` only with justification.
+- **Thresholds live in `lib/thresholds.sh`, nowhere else.** Two things now
+  judge a network — `lib/diagnosis.sh` (one verdict per scan) and
+  `lib/monitor.sh` (one every few seconds) — and if they drift the app
+  shows a green dot over a red report. `tests/test_thresholds.bats` fails
+  the build on an inline numeric cutoff in either file.
+- **The GUI holds no diagnostic logic.** `gui/` renders what the CLI
+  decides: rule IDs come from `status.rules`, prose comes from
+  `diagnosis[].summary` verbatim. If a change would put a threshold or a
+  user-facing verdict string into Swift, it belongs in `lib/` instead.
 
 ## CLI surface
 
@@ -24,9 +33,23 @@ netdiag [TARGET] [--quick] [--quiet] [--json] [--expert] [--redact]
         [--gping] [--no-gping] [--no-bufferbloat]
         [--speed] [--no-speed] [--mtu-only] [--wifi-only]
         [--baseline] [--no-baseline] [--log PATH] [-h|--help]
-netdiag --watch[=SEC] | --summary[=HOURS]
+netdiag --watch[=SEC] | --summary[=HOURS] | --history[=N]
+netdiag --monitor [--monitor-fast-interval SEC] [--monitor-degraded-interval SEC]
+                  [--monitor-medium-interval SEC] [--monitor-slow-interval SEC]
+                  [--monitor-count N]
 netdiag --install-watcher | --uninstall-watcher
 ```
+
+`--history` and `--monitor` exist for the GUI (see below) but are ordinary
+CLI surface: both are documented in `docs/JSON-SCHEMA.md`, both are covered
+by bats, and neither requires the app.
+
+`--monitor` is the machine-readable sibling of `--watch`, not a duplicate
+of it: `--watch` re-runs `--quick` and prints prose for a person, while
+`--monitor` streams one compact JSON object per line for a program, writes
+nothing to disk, and probes on three cadence tiers instead of one. It is
+paused with `SIGUSR1` and resumed with `SIGUSR2` — **never `SIGSTOP`**, see
+the header of `lib/monitor.sh` for the orphaned-process-group reason.
 
 ## Output modes
 
@@ -60,6 +83,9 @@ netdiag/
 ├── helpers/*.py             # Python helpers if porting parse logic
 ├── tests/{fixtures,*.bats}  # bats-core
 ├── examples/sample-output.{txt,json}
+├── gui/                     # SwiftUI menu-bar app (SwiftPM, no Xcode)
+│   ├── Package.swift  Makefile  Resources/Info.plist
+│   └── Sources/NetdiagGUI/{Models,Services,Alerts,Views,Support}
 ├── docs/{ARCHITECTURE,DIAGNOSIS-RULES,JSON-SCHEMA}.md
 ├── .github/workflows/{shellcheck,bats}.yml
 ├── README.md  CHANGELOG.md  LICENSE  install.sh  .gitignore

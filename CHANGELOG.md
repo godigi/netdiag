@@ -4,6 +4,107 @@ All notable changes to `netdiag` are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-11
+
+Adds a native macOS menu-bar app, and the two CLI surfaces it is built on.
+The app is a **client, not a second brain**: it holds no thresholds and
+writes no diagnosis prose. Everything it says comes from the CLI.
+
+### Added
+
+- **`netdiag --monitor`** — a long-lived process emitting one compact JSON
+  object per line on stdout, flushed per sample, until stopped. The
+  machine-readable sibling of `--watch`: where `--watch` re-runs `--quick`
+  and prints prose for a person, `--monitor` streams for a program, writes
+  no log and no history record, and probes on three cadence tiers instead
+  of one — fast (gateway ping, VPN, link) 10 s, medium (DNS, TCP/443,
+  RSSI) 60 s, slow (public IP, ISP, country, captive portal) 300 s plus
+  immediately on a network change. Sample shape documented separately in
+  `docs/JSON-SCHEMA.md`; intervals overridable with
+  `--monitor-{fast,degraded,medium,slow}-interval`.
+  - Each sample carries `status.rules`: the `DIAGNOSIS-RULES.md` IDs that
+    would fire, evaluated in bash against `lib/thresholds.sh`. For any
+    given network state the monitor and a full run name the **same** rule
+    IDs, asserted by bats across eleven conditions. Consumers render the
+    list; they never re-derive it.
+  - The gateway probe sends **10** packets, not the 3 a liveness check
+    suggests. This is quantisation, not accuracy: at 3 packets the only
+    reportable losses are 0/33/67/100 %, so one dropped packet reads as
+    33 % — past the 20 % critical floor. At 10 the quantum is 10 %, so one
+    drop lands in G3's warn band and it takes two to go critical, matching
+    the shape of the scanner's 20-packet probe.
+  - Samples are emitted through a Python helper rather than bash `printf`.
+    An SSID may legally contain a quote, a backslash or a newline, and a
+    JSON-escaping bug in a stream parsed forever is a far worse trade than
+    ~50 ms of interpreter startup per cycle.
+- **`netdiag --history[=N]`** — the whole run store as one normalized,
+  network-grouped object. 5.4 MB of full snapshots becomes 467 KB.
+  - Grouping is **not** exact-string matching on `network.id`, because
+    that does not work on real data: of 1,972 records here, 1,926 predate
+    `lib/netid.sh` and carry no id at all, all 46 that do are
+    `wifi:mac=…` because macOS has redacted the SSID throughout v0.5.x,
+    and every legacy record's `wifi.ssid` is the literal `<redacted>`.
+    Groups key on the `mac=` component, backfill idless records through
+    `netid.sh`'s own precedence (marked `synthesized`), and bridge weak
+    groups into MAC groups only when gateway **and** ISP agree. Genuine
+    ambiguity is left for the app's manual merge — a wrong merge silently
+    corrupts a chart, a missing one is visible and fixable.
+  - Every metric reports its sample count, because sparse series are the
+    normal case: `gateway_rtt_ms` has 1,959 samples here and `wifi.rssi`
+    has 1. A chart that omits the count presents one reading as a trend.
+- **`lib/thresholds.sh`** — every numeric cutoff a rule fires on, moved out
+  of inline literals. There are now two things that judge a network, and
+  if they drift the app shows a green dot over a red report. A test fails
+  the build on an inline cutoff in either file. It also makes W1's −75 dBm
+  and G1's −70 dBm visibly distinct rather than four lines apart.
+- **`public.country_iso`** in both `--json` and `--monitor`. `country` is
+  the full name ("Brazil"); rendering a flag or picking a locale needs the
+  ISO-3166 alpha-2, and deriving it would mean shipping a country table in
+  every consumer.
+- **`gui/` — netdiag.app.** SwiftUI menu-bar client, SwiftPM, macOS 14+,
+  builds with Command Line Tools and no Xcode. Continuous monitoring, a
+  twelve-alert engine with dwell/cooldown/auto-resolve, Swift Charts over
+  the full history, per-network rename and merge, and four disclosure
+  layers from a menu-bar dot to a raw-JSON viewer. `make -C gui run` is
+  the dev loop; `make -C gui identity` creates the stable signing identity
+  that keeps TCC grants alive across rebuilds.
+
+### Fixed
+
+- **`--redact` no longer corrupts the history store.** `output_run`
+  appended the emitted JSON to `baseline.jsonl` *after* redaction, so
+  every `--redact` run wrote a record whose `network.id` was the literal
+  string `wifi:mac=[redacted]`. That id is the join key
+  `helpers/baseline.py` scopes history by, so such a record can never
+  match a real one: it is dead weight that also burns a slot under the
+  retention cap. Eleven exist in the author's history, two written by
+  v0.5.2. The comparison input, the history append and the archive now
+  read an unredacted build; only the `--json` copy that actually leaves
+  the machine is masked.
+- **Retention no longer deletes the history it exists to keep.**
+  `prune_history` ran `tail -n` over the file and discarded the head. At
+  the launchd watcher's 96 runs/day the 2000-line cap is about three
+  weeks, and the lines it dropped were always the oldest — the only ones a
+  multi-month chart is made of. The head now rolls into
+  `baseline-archive.jsonl`, appended *before* the truncate so a crash
+  between the two duplicates records rather than losing them.
+  `--history` reads both and dedupes; `baseline.py` still reads only the
+  live file, so per-run cost stays bounded.
+
+### Notes
+
+- The monitor is paused with **`SIGUSR1`** and resumed with `SIGUSR2`,
+  handled in-process. `SIGSTOP` from the parent — the obvious mechanism,
+  and what the plan specified — is actively unsafe here: POSIX delivers
+  `SIGHUP`+`SIGCONT` to a process group that becomes newly orphaned while
+  any member is stopped, and a stopped monitor still has live children
+  (the 2 s gateway ping, `with_timeout`'s killer subshells). Measured
+  under the GUI, the monitor died 2.1 s into every pause — exactly one
+  ping probe — and the app then restarted it *during the scan the pause
+  existed to protect*. It never reproduced from a terminal, because a
+  controlling terminal keeps the group non-orphaned, which is precisely
+  how it would have shipped.
+
 ## [0.6.1] - 2026-08-11
 
 ### Fixed

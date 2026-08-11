@@ -1,6 +1,6 @@
 # Architecture
 
-## Current shape (v0.3.0)
+## Current shape (v0.7.0)
 
 `bin/netdiag` is a ~230-line orchestrator. Every section lives in its
 own `lib/*.sh` module with a `Reads / Writes / Entry` header comment.
@@ -34,7 +34,9 @@ lib/speedtest.sh             # Ookla / speedtest-cli
 lib/traceroute.sh            # traceroute to 1.1.1.1 + optional TARGET
 lib/mtr.sh                   # mtr -j -c 60 under sudo OR parallel per-hop fallback
 lib/wan.sh                   # NAT/WAN topology: dual-WAN, double-NAT, UPnP/NAT-PMP
+lib/thresholds.sh            # every numeric cutoff a rule fires on (sourced first)
 lib/diagnosis.sh             # rule set → DIAG[] + DIAG_SEV[] → sorted printout
+lib/monitor.sh               # --monitor: streaming samples + the same rule set
 lib/output.sh                # JSON build, baseline regression check, "report saved" line
 lib/gping.sh                 # exec gping at the end
 lib/watch.sh                 # --watch loop
@@ -42,7 +44,48 @@ lib/launchd.sh               # --install-watcher / --uninstall-watcher
 helpers/emit_json.py         # bash → JSON
 helpers/baseline.py          # historical median / regression detector
 helpers/summary.py           # --summary aggregation
+helpers/history.py           # --history: network identity + grouping
+helpers/monitor_sample.py    # one --monitor sample → one JSON line
+gui/                         # SwiftUI menu-bar client (SwiftPM, macOS 14+)
 ```
+
+## The CLI/GUI split (v0.7.0)
+
+`gui/` is a **client**. It renders; it does not decide.
+
+```
+CLI (bash + Python) — owns every measurement and every threshold
+├── netdiag --json         full scan, ~60 fields
+├── netdiag --history      normalized, network-grouped history
+├── netdiag --monitor      streaming JSONL, one compact sample per line
+└── lib/thresholds.sh      cutoffs shared by diagnosis.sh and monitor.sh
+
+GUI (SwiftUI) — owns rendering, OS events, and alert policy only
+├── consumes the three modes above
+├── CoreWLAN + NWPathMonitor for instant network-change events
+├── alert state machine: dwell / hysteresis / cooldown / auto-resolve
+└── never computes a threshold or writes a diagnosis string
+```
+
+Three consequences worth stating, because each was a decision rather than
+a default:
+
+1. **`lib/thresholds.sh` exists because there are now two judges.** The
+   scanner produces one verdict per run; the monitor produces one every
+   few seconds. Sharing the constants is what stops the menu-bar dot from
+   contradicting the report it links to, and `tests/test_monitor.bats`
+   asserts rule-for-rule parity across eleven network states.
+
+2. **Network identity stayed in Python.** `helpers/history.py` does the
+   grouping — parsing composite ids, backfilling records that predate
+   `lib/netid.sh`, bridging weak groups — rather than Swift, so identity
+   logic lives once, in the same language as the code that writes the
+   records. This is the same split the decision below already records.
+
+3. **Alert *policy* is the GUI's, alert *facts* are the CLI's.** The
+   monitor reports G2 even when ICMP is filtered, because withholding it
+   would break parity with a scan; the app reads `status.icmp_filtered`
+   and declines to notify. Same facts, one place to decide each thing.
 
 ## Bash vs Python helper — decision (v0.2.0, unchanged)
 
