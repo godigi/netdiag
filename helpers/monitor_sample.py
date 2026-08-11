@@ -169,6 +169,10 @@ def main() -> None:
             # string-match the rules array to find it.
             "icmp_filtered": os.environ.get("NETDIAG_MON_ICMP_FILTERED") == "1",
             "degraded": os.environ.get("NETDIAG_MON_DEGRADED") == "1",
+            # Paused by SIGUSR1 — probing is suspended, so every
+            # measurement in this sample is stale by definition. A
+            # consumer must not plot it or alert on it.
+            "paused": os.environ.get("NETDIAG_MON_PAUSED") == "1",
             "cadence_s": _i("CADENCE_S"),
         },
     }

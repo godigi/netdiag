@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Netdiag</string>
+  <key>CFBundleDisplayName</key><string>netdiag</string>
+  <key>CFBundleExecutable</key><string>NetdiagGUI</string>
+  <!-- TCC keys permission grants on bundle id + code signature. Changing
+       either re-prompts for Notifications and Location, so neither this
+       string nor the signing identity in gui/Makefile should be edited
+       casually. -->
+  <key>CFBundleIdentifier</key><string>me.brianfreeman.netdiag</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.7.0</string>
+  <key>CFBundleVersion</key><string>0.7.0</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+
+  <!-- Menu-bar only: no Dock icon, no app switcher entry. An always-on
+       network monitor that also took a Dock slot would be a nuisance. -->
+  <key>LSUIElement</key><true/>
+
+  <!-- Optional, and the app must work fully without it. macOS redacts the
+       SSID from every unprivileged caller unless Location Services is
+       granted; gateway-MAC identity plus user-assigned names already
+       deliver network grouping, so this only buys back real names. -->
+  <key>NSLocationUsageDescription</key>
+  <string>netdiag uses your location permission only to read the name of the Wi-Fi network you are on. macOS hides Wi-Fi names from apps without it. Nothing about your location is stored or sent anywhere.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>netdiag uses your location permission only to read the name of the Wi-Fi network you are on. macOS hides Wi-Fi names from apps without it. Nothing about your location is stored or sent anywhere.</string>
+</dict>
+</plist>

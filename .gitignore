@@ -23,3 +23,7 @@ scratch/
 
 # Python bytecode from helpers/
 __pycache__/
+
+# SwiftPM build products for gui/
+gui/.build/
+gui/build/

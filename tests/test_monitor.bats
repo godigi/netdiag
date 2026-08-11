@@ -396,3 +396,108 @@ assert json.load(sys.stdin)['refreshed'] == ['fast','medium']
   run grep -cE '^[^#]*(baseline\.jsonl|LOG_DIR|>>[[:space:]]*"\$LOG)' "$REPO/lib/monitor.sh"
   [ "$output" -eq 0 ]
 }
+
+# ── Pause and resume ─────────────────────────────────────────────────────
+# The one block here that spawns a real monitor, because the bug it guards
+# was invisible to every static check and to every terminal experiment.
+#
+# The app pauses the monitor while a scan runs — a speed test saturates the
+# link on purpose, so samples taken during one are fiction. The obvious
+# mechanism, SIGSTOP from the parent, is actively unsafe: POSIX sends
+# SIGHUP+SIGCONT to a process group that becomes newly orphaned while any
+# member is stopped, and a stopped monitor still has live children (the
+# 2 s gateway ping, with_timeout's killer subshells). The moment one exits,
+# the group orphans and the SIGHUP kills it.
+#
+# Measured under the GUI: the monitor died 2.1 s into every pause — exactly
+# one ping probe — and the app restarted it *during the scan the pause
+# existed to protect*. It never reproduced from a terminal, because a
+# controlling terminal keeps the group non-orphaned. That is precisely how
+# it would have shipped.
+
+# Start a monitor in the background and return its pid. `pgrep -f` is
+# deliberately avoided: bats runs each test through a shell whose own
+# command line contains the pattern, so pgrep matches the wrong process and
+# the signal lands on the test runner.
+start_monitor() {
+  "$REPO/bin/netdiag" --monitor --monitor-fast-interval 2 \
+    --monitor-medium-interval 3600 --monitor-slow-interval 3600 \
+    > "$BATS_TEST_TMPDIR/stream.jsonl" 2>"$BATS_TEST_TMPDIR/stream.err" &
+  printf '%s' "$!"
+}
+
+alive() { ps -o stat= -p "$1" >/dev/null 2>&1; }
+samples() { wc -l < "$BATS_TEST_TMPDIR/stream.jsonl" | tr -d ' '; }
+
+@test "SIGUSR1 suspends probing and SIGUSR2 resumes it" {
+  local pid; pid="$(start_monitor)"
+  sleep 5
+  local before; before="$(samples)"
+  [ "$before" -ge 1 ]
+
+  kill -USR1 "$pid"
+  sleep 6
+  local paused; paused="$(samples)"
+  # At most one in-flight cycle plus the pause marker. Certainly not three
+  # more, which is what 6 s at a 2 s cadence would produce unpaused.
+  [ $((paused - before)) -le 2 ]
+
+  kill -USR2 "$pid"
+  sleep 6
+  [ "$(samples)" -gt "$paused" ]
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+@test "a paused monitor stays alive rather than being killed by SIGHUP" {
+  # The actual regression. Six seconds is three times the ping probe that
+  # used to orphan the process group and take it down.
+  local pid; pid="$(start_monitor)"
+  sleep 4
+  kill -USR1 "$pid"
+  sleep 7
+  alive "$pid" || { echo "monitor died while paused"; return 1; }
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+@test "a paused monitor says so rather than going silently quiet" {
+  local pid; pid="$(start_monitor)"
+  sleep 4
+  kill -USR1 "$pid"
+  sleep 3
+  run tail -1 "$BATS_TEST_TMPDIR/stream.jsonl"
+  printf '%s' "$output" | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"]["paused"] is True'
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+@test "SIGTERM stops the monitor promptly, paused or not" {
+  local pid; pid="$(start_monitor)"
+  sleep 4
+  kill -TERM "$pid"
+  sleep 2
+  alive "$pid" && { echo "monitor ignored SIGTERM"; kill -9 "$pid"; return 1; }
+
+  pid="$(start_monitor)"
+  sleep 4
+  kill -USR1 "$pid"
+  sleep 2
+  kill -TERM "$pid"
+  sleep 2
+  alive "$pid" && { echo "paused monitor ignored SIGTERM"; kill -9 "$pid"; return 1; }
+  return 0
+}
+
+@test "lib/monitor.sh traps the pause signals it documents" {
+  run grep -cE '^[[:space:]]*trap _mon_on_(pause|resume) +USR[12]' "$REPO/lib/monitor.sh"
+  [ "$output" -eq 2 ]
+}
+
+@test "the GUI pauses with SIGUSR1, never SIGSTOP" {
+  # Structural guard on the fix. SIGSTOP against this process is a latent
+  # kill that only manifests under a GUI parent.
+  local gui="$REPO/gui/Sources/NetdiagGUI/Services/MonitorStream.swift"
+  [ -f "$gui" ] || skip "GUI sources not present"
+  run grep -nE '^[^/]*kill\(process\.processIdentifier, SIG(STOP|CONT)\)' "$gui"
+  [ "$status" -ne 0 ] || { echo "GUI still uses SIGSTOP/SIGCONT:"; echo "$output"; return 1; }
+  run grep -c 'SIGUSR1' "$gui"
+  [ "$output" -ge 1 ]
+}

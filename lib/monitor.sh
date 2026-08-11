@@ -34,16 +34,35 @@
 # disagree about what "lossy" means, the app contradicts the report it
 # links to and the user has no way to tell which lied.
 #
-# ── Power is the GUI's problem ─────────────────────────────────────────
+# ── Power is the GUI's problem, but pausing is ours ────────────────────
 # The monitor stays dumb about sleep and battery: NSWorkspace delivers
 # those events to the app for free, where bash would have to poll pmset.
-# The app pauses and resumes this process with SIGSTOP/SIGCONT.
+# The app decides *when* to pause; this file implements *how*.
 #
-# The one thing it does manage itself is a dead link: with no default
-# route there is nothing to probe, so it stops probing and emits a minimal
-# N1 sample at the fast cadence. It deliberately does *not* exit — a
-# stream that dies at the instant WiFi drops cannot report that WiFi
-# dropped, which is the single event the app exists to announce.
+#   SIGUSR1  pause  — stop probing, keep the process alive
+#   SIGUSR2  resume
+#   SIGTERM / SIGINT  exit cleanly
+#
+# Pausing is a signal handler here rather than SIGSTOP from the caller,
+# and that is not a stylistic choice — SIGSTOP is actively unsafe for this
+# process. POSIX says that when a process group becomes newly orphaned and
+# any member of it is stopped, the kernel delivers SIGHUP followed by
+# SIGCONT to the whole group. A SIGSTOPped monitor still has children (the
+# two-second gateway ping, the with_timeout killer subshells); the instant
+# one of them exits, the group orphans, the SIGHUP lands, and the monitor
+# dies. Measured: it survived about 2.1 s of every SIGSTOP under a GUI
+# parent, exactly the length of one ping probe. It never happened under a
+# shell, because a controlling terminal keeps the group non-orphaned —
+# which is precisely why the bug would have shipped.
+#
+# Handling it in-process also makes the pause testable, and lets a paused
+# monitor say so rather than going mysteriously silent.
+#
+# The one thing it manages by itself is a dead link: with no default route
+# there is nothing to probe, so it stops probing and emits a minimal N1
+# sample at the fast cadence. It deliberately does *not* exit — a stream
+# that dies at the instant WiFi drops cannot report that WiFi dropped,
+# which is the single event the app exists to announce.
 
 # ── Sample state ─────────────────────────────────────────────────────────
 # All MON_* — a distinct namespace from the scanner's globals so that
@@ -88,6 +107,7 @@ MON_ICMP_FILTERED=0
 MON_DEGRADED=0
 MON_REFRESHED=""
 MON_STOP=0
+MON_PAUSED=0
 MON_HW_PORTS=""
 
 # ── Fast tier ────────────────────────────────────────────────────────────
@@ -438,6 +458,7 @@ _mon_emit() {
   NETDIAG_MON_SEVERITY="$MON_SEVERITY" \
   NETDIAG_MON_ICMP_FILTERED="$MON_ICMP_FILTERED" \
   NETDIAG_MON_DEGRADED="$MON_DEGRADED" \
+  NETDIAG_MON_PAUSED="$MON_PAUSED" \
   NETDIAG_MON_CADENCE_S="$1" \
   python3 "$HELPERS_DIR/monitor_sample.py"
 }
@@ -452,16 +473,44 @@ _mon_sleep() {
   wait $! 2>/dev/null || true
 }
 
-# shellcheck disable=SC2317,SC2329  # reached via trap, not a direct call
+# All three are reached via trap, an indirect dispatch static analysis
+# can't follow.
+# shellcheck disable=SC2317,SC2329
 _mon_on_signal() { MON_STOP=1; }
+# shellcheck disable=SC2317,SC2329
+_mon_on_pause()  { MON_PAUSED=1; }
+# shellcheck disable=SC2317,SC2329
+_mon_on_resume() { MON_PAUSED=0; }
 
 monitor_run() {
   local now next_fast=0 next_medium=0 next_slow=0 cadence
-  local prev_network_id="" network_changed
+  local prev_network_id="" network_changed announced_pause=0
   trap _mon_on_signal INT TERM
+  trap _mon_on_pause  USR1
+  trap _mon_on_resume USR2
 
   while :; do
     [ "$MON_STOP" -eq 0 ] || break
+
+    # Paused: probe nothing, emit nothing, but stay alive and responsive.
+    # One sample announces the pause so a consumer — or a person watching
+    # the stream in a terminal — sees why it went quiet, rather than being
+    # left to wonder whether the process died.
+    if [ "$MON_PAUSED" -eq 1 ]; then
+      if [ "$announced_pause" -eq 0 ]; then
+        announced_pause=1
+        MON_REFRESHED=""
+        MON_SEQ=$((MON_SEQ + 1))
+        _mon_emit "$MONITOR_FAST_INTERVAL" || break
+      fi
+      # One second at a time so SIGUSR2 resumes promptly. The trap fires
+      # during _mon_sleep's `wait`, so the real latency is immediate; this
+      # bound only covers the gap between iterations.
+      _mon_sleep 1
+      continue
+    fi
+    announced_pause=0
+
     now="$EPOCHSECONDS"
     MON_REFRESHED=""
 
