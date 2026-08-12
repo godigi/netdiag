@@ -4,6 +4,68 @@ All notable changes to `netdiag` are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-12
+
+Makes a check watchable while it runs. A full check takes ~55 s and
+showed a spinner for all of them; the monitor held an hour of samples
+nothing drew; and there was no way to ask one question without waiting
+for all 28 checks.
+
+### Added
+
+- **`netdiag --progress`** — a JSON event stream on **fd 3**: a `plan`
+  naming the phases a mode will attempt, then `start`/`done`/`skip` per
+  phase, then a closing `run` event. Emitted from `run_timed` and
+  `launch_parallel`, so all 28 checks report and so does every check
+  added later.
+  - Not stdout, which must stay exactly one object, and not stderr:
+    `launch_parallel` captures each parallel check's stderr into a
+    per-check file that nothing reads until the check finishes — which is
+    when progress stops being useful. fd 3 survives that redirect and was
+    unused across the whole tree.
+  - A plan, not a percentage. `--json` produces nothing until the end, so
+    there is no quantity a percentage could be a percentage *of*.
+  - Every event is clamped well under `PIPE_BUF`, because parallel
+    subshells share fd 3 and only sub-`PIPE_BUF` pipe writes are atomic.
+    Clamping happens *before* escaping — a cut landing between a
+    backslash and the character it escapes stops the line being JSON.
+- **Live speed-test progress**, newly possible: Ookla's `--format=jsonl`
+  streams, where the `speedtest-cli` shim it replaced emitted nothing
+  until the end. 201 events in a real run.
+- **`netdiag --speed-only`** — one measurement without the other 27
+  checks, recorded to history.
+- **`run_mode`** on every record: `full`, `quick`, `speed-only`,
+  `mtu-only`, `wifi-only`. A `--quick` run and a full check were
+  previously indistinguishable in history, which overstated what a
+  network's run count actually measured. `helpers/history.py` gains
+  `check_count` beside `run_count`; partial modes contribute their
+  metrics but not to severity or incident counts.
+- **App: a Live tab** — gateway RTT, internet RTT and router loss over
+  the last hour, drawn from samples the monitor was already keeping.
+- **App: scan progress replaces the spinner**, and on-demand speed and
+  latency tests in the dropdown.
+
+### Fixed
+
+- **Cancelling a scan reported "netdiag returned something unreadable".**
+  Terminating the child yields a signal status and empty stdout, which
+  the runner classified as corrupt output rather than as cancellation.
+- **The elapsed-seconds counter froze during a scan** — it recomputed
+  only on observation, and the monitor that drove observation is paused
+  for the duration of every scan.
+- **The expert panel's sparklines drew straight lines across monitor
+  pauses**, claiming measurements that were never taken.
+
+### Notes
+
+- Ookla's `testStart` line carries `interface.internalIp` — the
+  machine's public IPv6 address. The translation to fd 3 extracts four
+  fields by name and rebuilds the object; it never passes through and
+  never filters known-bad keys. A fixture asserts the leak, and a real
+  217-event run was scanned for every identifying field in that line.
+- The declared plan is kept in sync with the code by a bats guard that
+  plants a phase into a copy of `bin/netdiag` and proves it catches it.
+
 ## [0.8.0] - 2026-08-11
 
 Makes the run history readable. `~/net-diag/baseline.jsonl` already held the

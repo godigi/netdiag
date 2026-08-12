@@ -1,6 +1,7 @@
 {
   "version": "0.8.0",
-  "timestamp": "2026-08-12T02:10:00Z",
+  "timestamp": "2026-08-12T04:14:39Z",
+  "run_mode": "full",
   "interface": {
     "name": "en0",
     "ip": "[redacted]",
@@ -26,16 +27,16 @@
   "gateway": {
     "ip": "192.168.15.1",
     "loss_pct": 0.0,
-    "rtt_avg_ms": 3.497,
-    "rtt_jitter_ms": 0.547
+    "rtt_avg_ms": 3.846,
+    "rtt_jitter_ms": 0.829
   },
   "internet_latency": {
     "target": "1.1.1.1",
-    "rtt_avg_ms": 48.592,
-    "rtt_jitter_ms": 2.593,
+    "rtt_avg_ms": 55.808,
+    "rtt_jitter_ms": 5.985,
     "loss_pct": 0.0,
     "target_alt": "8.8.8.8",
-    "rtt_avg_ms_alt": 74.778,
+    "rtt_avg_ms_alt": 68.107,
     "loss_pct_alt": 0.0
   },
   "public": {
@@ -69,7 +70,7 @@
     {
       "resolver": "[redacted]",
       "name": "cloudflare.com",
-      "answer": "104.16.133.229",
+      "answer": "104.16.132.229",
       "ok": true
     },
     {
@@ -81,7 +82,7 @@
     {
       "resolver": "8.8.8.8",
       "name": "cloudflare.com",
-      "answer": "104.16.132.229",
+      "answer": "104.16.133.229",
       "ok": true
     }
   ],
@@ -92,7 +93,7 @@
         "n": 1,
         "ip": "192.168.15.1",
         "responded": true,
-        "rtt_ms": 3.818
+        "rtt_ms": 14.955
       },
       {
         "n": 2,
@@ -102,33 +103,33 @@
       },
       {
         "n": 3,
-        "ip": "201.1.224.111",
+        "ip": "201.1.228.64",
         "responded": true,
-        "rtt_ms": 5.01
+        "rtt_ms": 7.776
       },
       {
         "n": 4,
-        "ip": "152.255.135.153",
+        "ip": "152.255.135.141",
         "responded": true,
-        "rtt_ms": 52.784
+        "rtt_ms": 51.729
       },
       {
         "n": 5,
-        "ip": "152.255.135.142",
+        "ip": "152.255.135.150",
         "responded": true,
-        "rtt_ms": 32.572
+        "rtt_ms": 34.683
       },
       {
         "n": 6,
-        "ip": "152.255.165.251",
+        "ip": "152.255.206.22",
         "responded": true,
-        "rtt_ms": 51.13
+        "rtt_ms": 48.515
       },
       {
         "n": 7,
-        "ip": "187.100.57.100",
+        "ip": "187.100.57.104",
         "responded": true,
-        "rtt_ms": 60.244
+        "rtt_ms": 51.713
       },
       {
         "n": 8,
@@ -146,7 +147,7 @@
         "n": 10,
         "ip": "1.1.1.1",
         "responded": true,
-        "rtt_ms": 52.89
+        "rtt_ms": 50.948
       }
     ]
   },
@@ -156,39 +157,39 @@
       "ip": "192.168.15.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 4.4
+      "avg_ms": 5.927
     },
     {
       "n": 2,
-      "ip": "201.1.224.111",
+      "ip": "201.1.228.64",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 3,
-      "ip": "152.255.135.153",
+      "ip": "152.255.135.141",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 4,
-      "ip": "152.255.135.142",
+      "ip": "152.255.135.150",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 5,
-      "ip": "152.255.165.251",
+      "ip": "152.255.206.22",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 6,
-      "ip": "187.100.57.100",
+      "ip": "187.100.57.104",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
@@ -198,16 +199,16 @@
       "ip": "1.1.1.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 49.145
+      "avg_ms": 57.545
     }
   ],
   "bufferbloat": {
-    "idle_gw_rtt_ms": 3.497,
-    "loaded_gw_rtt_ms": 4.516,
-    "idle_inet_rtt_ms": 49.311,
-    "loaded_inet_rtt_ms": 49.556,
-    "gw_delta_ms": 1.0,
-    "inet_delta_ms": 0.2,
+    "idle_gw_rtt_ms": 3.846,
+    "loaded_gw_rtt_ms": 3.742,
+    "idle_inet_rtt_ms": 56.33,
+    "loaded_inet_rtt_ms": 54.27,
+    "gw_delta_ms": -0.1,
+    "inet_delta_ms": -2.1,
     "gw_grade": "A",
     "inet_grade": "A"
   },
@@ -221,7 +222,7 @@
     "gateway": "[redacted]",
     "ping_loss_pct": 0.0,
     "aaaa_ok": true,
-    "trace_hops": 10,
+    "trace_hops": 9,
     "tcp_v6_ok": true
   },
   "vpn": {
@@ -234,61 +235,61 @@
       "host": "1.1.1.1",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 72.0
+      "elapsed_ms": 69.0
     },
     {
       "host": "1.1.1.1",
       "port": 53,
       "ok": true,
-      "elapsed_ms": 79.0
+      "elapsed_ms": 66.0
     },
     {
       "host": "8.8.8.8",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 88.0
+      "elapsed_ms": 82.0
     },
     {
       "host": "github.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 83.0
+      "elapsed_ms": 78.0
     },
     {
       "host": "apple.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 92.0
+      "elapsed_ms": 94.0
     }
   ],
   "wifi_scan": {
     "current_channel": "52",
     "current_band": "5GHz",
-    "neighbour_count": 55,
-    "current_channel_neighbours": 1
+    "neighbour_count": 57,
+    "current_channel_neighbours": 6
   },
   "wifi_disconnects": {
     "window_hours": 1,
     "count": 0
   },
   "speedtest": {
-    "down_mbps": 298.0,
-    "up_mbps": 237.8,
-    "latency_ms": 29.283,
-    "jitter_ms": 1.385,
-    "server": "Fiber Network"
+    "down_mbps": 440.0,
+    "up_mbps": 237.1,
+    "latency_ms": 8.266,
+    "jitter_ms": 1.284,
+    "server": "Full Telecom"
   },
   "ntp": {
-    "drift_seconds": 0.058044,
+    "drift_seconds": 0.278061,
     "using_network_time": null,
     "server": null
   },
   "duplicate_ips": [],
   "dhcp": {
     "server": "192.168.15.1",
-    "lease_start": "08/11/2026 20:31:50",
-    "lease_end": "08/12/2026 00:31:50",
-    "time_remaining_s": 8506,
+    "lease_start": "08/11/2026 22:31:49",
+    "lease_end": "08/12/2026 02:31:49",
+    "time_remaining_s": 8226,
     "dns_servers": "192.168.15.1"
   },
   "mtr": {
@@ -300,39 +301,39 @@
         "ip": "192.168.15.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 4.4
+        "avg_ms": 5.927
       },
       {
         "n": 2,
-        "ip": "201.1.224.111",
+        "ip": "201.1.228.64",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 3,
-        "ip": "152.255.135.153",
+        "ip": "152.255.135.141",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 4,
-        "ip": "152.255.135.142",
+        "ip": "152.255.135.150",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 5,
-        "ip": "152.255.165.251",
+        "ip": "152.255.206.22",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 6,
-        "ip": "187.100.57.100",
+        "ip": "187.100.57.104",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
@@ -342,7 +343,7 @@
         "ip": "1.1.1.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 49.145
+        "avg_ms": 57.545
       }
     ],
     "first_lossy_hop": null
@@ -381,26 +382,26 @@
     "suspicious_redirects": []
   },
   "timings": {
-    "total_s": 59.08,
+    "total_s": 58.07,
     "budget_s": 30.0,
     "over_budget": true,
     "phases": {
-      "iface": 0.02,
+      "iface": 0.06,
       "vpn": 0.02,
-      "wifi": 0.05,
+      "wifi": 0.06,
       "gateway": 3.92,
       "arp": 0.02,
       "netid": 0.0,
       "dhcp": 0.03,
-      "public": 0.62,
-      "parallel_batch": 13.32,
-      "internet_ping": 4.01,
-      "bufferbloat": 4.07,
-      "mtu": 2.48,
+      "public": 0.7,
+      "parallel_batch": 14.01,
+      "internet_ping": 4.0,
+      "bufferbloat": 4.08,
+      "mtu": 2.49,
       "traceroute": 6.31,
       "nat": 0.02,
-      "mtr": 2.15,
-      "speedtest": 21.69
+      "mtr": 2.16,
+      "speedtest": 19.81
     }
   },
   "baseline": {
@@ -414,6 +415,11 @@
       "severity": "warn",
       "rule": "M1",
       "summary": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting."
+    },
+    {
+      "severity": "warn",
+      "rule": "WS-1",
+      "summary": "Your WiFi channel (52) is shared with 6 neighbouring networks \u2014 they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
     }
   ],
   "most_likely_root_cause": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting.",

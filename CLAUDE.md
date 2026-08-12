@@ -32,7 +32,8 @@ Grown from a ~300-line bash starter into a modular `lib/*.sh` CLI with 14 diagno
 ```
 netdiag [TARGET] [--quick] [--quiet] [--json] [--expert] [--redact]
         [--gping] [--no-gping] [--no-bufferbloat]
-        [--speed] [--no-speed] [--mtu-only] [--wifi-only]
+        [--speed] [--no-speed] [--mtu-only] [--wifi-only] [--speed-only]
+        [--progress]
         [--baseline] [--no-baseline] [--log PATH] [-h|--help]
 netdiag --watch[=SEC] | --summary[=HOURS] | --history[=N] | --show=ID
 netdiag --monitor [--monitor-fast-interval SEC] [--monitor-degraded-interval SEC]

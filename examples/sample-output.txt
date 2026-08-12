@@ -1,13 +1,14 @@
-netdiag  2026-08-11-221228
-log: /Users/bfreeman/net-diag/2026-08-11-221228.log
+netdiag  2026-08-12-001537
+log: /Users/bfreeman/net-diag/2026-08-12-001537.log
 
 ── Report ──
   ⚠  Packet size         1480 bytes · below standard · some sites may hang
+  ⚠  WiFi channel        crowded · 6 neighbouring networks
 
   ✓  Network             en0 · WiFi 5GHz ch52
-  ✓  Router              192.168.15.1 · 0% loss · 3.7 ms · ±0.7 ms jitter
+  ✓  Router              192.168.15.1 · 0% loss · 7.6 ms · ±4.3 ms jitter
   ✓  Internet            TELEFONICA BRASIL S.A ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 48 ms · ±1.2 ms jitter
+  ✓  Latency             1.1.1.1 · 55 ms · ±1.2 ms jitter
   ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
   ✓  DNS                 working
   ✓  IPv6                working
@@ -24,10 +25,15 @@ log: /Users/bfreeman/net-diag/2026-08-11-221228.log
     if it persists, ask your ISP or check your router's WAN-MTU /
     MSS-clamping setting.
 
+  ⚠ Your WiFi channel (52) is shared with 6 neighbouring networks — they
+    all interfere with each other. Switch to a less-crowded channel in
+    your router's WiFi settings (good 5 GHz choices most routers don't
+    pick automatically: 149, 153, 157, 161).
+
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 343.5 Mbps · Up 237.9 Mbps · 31.112 ms (jitter 0.989 ms)
-  · Server: WSP FIBRA
+  ✓ Down 415.6 Mbps · Up 237.6 Mbps · 7.825 ms (jitter 1.712 ms)
+  · Server: Full Telecom
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-11-221228.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-12-001537.log
