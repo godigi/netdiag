@@ -17,8 +17,12 @@ and a recommendation. It also tracks a rolling baseline so intermittent
 regressions ("WiFi RSSI dropped from -55 to -78 since yesterday", "gateway
 RTT is 4× the 30-day median") get caught the next time you run it.
 
-Independent probes run as parallel background jobs, so a typical full
-run finishes well inside the spec's 30 s budget on a healthy link.
+Independent probes run as parallel background jobs. A default run is
+bound by the speed test — about 55 s with Ookla's `speedtest`, roughly
+twice that with the `speedtest-cli` fallback, which is why the installer
+prefers Ookla. `--no-speed` brings it under 35 s and `--quick` under 8 s.
+Pass `--progress` (or use the app) to watch each check land rather than
+a spinner.
 
 ## Why
 
@@ -93,15 +97,17 @@ it). A Homebrew tap is still on the roadmap.
 
 ```
 netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
-                 [--json] [--quiet] [--expert] [--log PATH]
+                 [--json] [--quiet] [--expert] [--log PATH] [--progress]
                  [--baseline | --no-baseline]
 netdiag --mtu-only               # just the path-MTU probe
 netdiag --wifi-only              # just the WiFi checks
+netdiag --speed-only             # just the speed test, recorded to history
 netdiag --redact --json          # safe to paste into a ticket
 netdiag --watch[=SEC]            # foreground loop, every SEC (default 300)
 netdiag --monitor                # streaming JSONL, one sample per line
 netdiag --summary[=HOURS]        # aggregate ~/net-diag/baseline.jsonl
 netdiag --history[=N]            # whole run store as network-grouped JSON
+netdiag --show=ID                # one stored run, judged against its network
 netdiag --install-watcher        # launchd plist, every 15 min, background
 netdiag --uninstall-watcher
 ```
@@ -128,8 +134,14 @@ netdiag --uninstall-watcher
 | `--redact`           | mask identifying values on stdout / JSON (see below)   |
 | `--mtu-only`         | run only the path-MTU probe and its prerequisites      |
 | `--wifi-only`        | run only link quality, neighbourhood scan, disconnects |
+| `--speed-only`       | run only the speed test; recorded as a `speed-only`    |
+|                      | run, so it contributes its number without counting as  |
+|                      | a health check                                         |
+| `--progress`         | emit progress events on **fd 3** while the run happens |
 | `--monitor`          | stream one compact JSON object per line until stopped  |
 | `--history[=N]`      | emit the whole run store as one grouped JSON object    |
+| `--show=ID`          | one stored run in full, plus how each of its metrics   |
+|                      | compares to every other run on the same network        |
 
 Examples:
 
@@ -144,8 +156,47 @@ netdiag --wifi-only          # "is it the WiFi?" without the full battery
 netdiag --redact             # before pasting output into a forum thread
 netdiag --monitor | jq -c .status    # watch the rules a program would see
 netdiag --history | jq .networks     # which networks have I been on?
+netdiag --speed-only         # "how fast is it *right now*?"
 sudo netdiag                 # unlocks RSSI/noise/channel + mtr per-hop
 ```
+
+### Watching a run happen
+
+A default run takes about a minute. `--progress` reports what it is doing
+while it does it, as one JSON object per line on **file descriptor 3**:
+
+```sh
+netdiag --progress 3>&1 >/dev/null | jq -c 'select(.t=="phase")'
+{"t":"phase","name":"gateway","state":"start"}
+{"t":"phase","name":"gateway","state":"done","rc":0,"ms":2043}
+{"t":"phase","name":"wifi_scan","state":"skip","why":"not on wifi"}
+```
+
+fd 3 rather than stdout, which stays exactly one JSON object under
+`--json`, and rather than stderr, which is captured per-check while the
+parallel batch runs and so would not surface until each check finished.
+A `plan` event first names the phases the mode will attempt; there is no
+percentage, because `--json` produces nothing until the end and there
+would be nothing for a percentage to be a percentage *of*.
+
+Without the flag, fd 3 is not written to at all.
+
+### Reading past runs
+
+`~/net-diag/baseline.jsonl` keeps the complete JSON of every run.
+`--history` lists them and `--show` opens one, scored against every other
+run on the same network:
+
+```sh
+netdiag --history | jq -r '.runs[0].id'
+2026-08-12T00:15:37Z.a4f81c02
+netdiag --show=2026-08-12T00:15:37Z.a4f81c02 | jq -r '.comparison.metrics.gateway_rtt_ms.summary'
+7.6 ms — typical for this network (median 4.6 ms across 1,913 checks).
+```
+
+An id is the timestamp plus eight hex of the record's content hash. A
+timestamp alone will not do: two runs can finish in the same second, and
+in a real store they do.
 
 ### Sharing a report
 
@@ -209,12 +260,12 @@ a real `netdiag --redact` run:
   ⚠  WiFi channel        crowded · 6 neighbouring networks
 
   ✓  Network             en0 · WiFi 5GHz ch52
-  ✓  Router              192.168.15.1 · 0% loss · 3.9 ms · ±0.8 ms jitter
+  ✓  Router              192.168.15.1 · 0% loss · 7.6 ms · ±4.3 ms jitter
   ✓  Internet            TELEFONICA BRASIL S.A ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 57 ms · ±1.3 ms jitter
+  ✓  Latency             1.1.1.1 · 55 ms · ±1.2 ms jitter
   ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
-  ✓  Speed               155.4 Mbps down · 113.4 Mbps up · 123.5 ms
   ✓  DNS                 working
+  ✓  IPv6                working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Router config       UPnP disabled (safer default)
   ✓  Hosts file          clean (only macOS defaults)
@@ -231,6 +282,9 @@ a real `netdiag --redact` run:
     all interfere with each other. Switch to a less-crowded channel in
     your router's WiFi settings (good 5 GHz choices most routers don't
     pick automatically: 149, 153, 157, 161).
+
+── Speed test ──
+  ✓ Down 415.6 Mbps · Up 237.6 Mbps · 7.825 ms (jitter 1.712 ms)
 ```
 
 `--expert` adds every underlying measurement section (RSSI, full DNS,
@@ -350,12 +404,25 @@ expert without asking anyone to declare which they are:
 | Layer | Content |
 |---|---|
 | Menu bar | health dot, country flag, optionally the public IP |
-| Dropdown | one plain sentence, current network, VPN badge, Run button |
-| Dashboard | report-card rows plus the CLI's diagnosis prose |
-| Expert | raw measurements, rule IDs, hop tables, live sparklines, raw JSON |
+| Dropdown | one plain sentence, current network, VPN badge, Run button, on-demand speed and latency tests |
+| Dashboard | **Status** (report card + diagnosis prose, and the live phase list while a check runs) · **Live** (gateway RTT, internet RTT and router loss over the last hour) · **History** (charts over every run) · **Networks** (per-network stats, rename, merge, and every stored check) |
+| Expert | raw measurements, rule IDs, hop tables, sparklines, raw JSON |
 
 The expert layer is a disclosure whose open/closed state persists — never
 a mode chosen at first launch.
+
+Charts draw gaps as gaps. The monitor pauses for system sleep, for
+display sleep, and for the whole duration of every scan; a line drawn
+straight across a pause would claim measurements that were never taken.
+The gap threshold comes from the cadence each sample reports about
+itself, so it stays correct when the cadence changes.
+
+**Distribution.** Right now the app is a local build — `make -C gui run`
+— and it signs with the self-signed identity described below. Shipping it
+to anyone else needs a Developer ID and notarization, which is not done
+yet: an unsigned or ad-hoc-signed `.app` downloaded from the internet is
+blocked by Gatekeeper and is genuinely hostile to a non-technical user.
+Until that lands, build it from a clone.
 
 **Signing.** `make identity` creates a stable self-signed identity in your
 keychain (one interactive keychain prompt). This matters more than it
@@ -387,10 +454,15 @@ Full schema in [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md). Sample at
 
 Shipped: modular `lib/*.sh` (v0.3.0), NAT/WAN topology (v0.3.0),
 plain-English diagnoses and the Report card (v0.4.0), per-network
-baselines and `--redact` (v0.5.0), a one-line installer (v0.5.3).
+baselines and `--redact` (v0.5.0), a one-line installer (v0.5.3),
+packet-loss diagnosis (v0.6.0), `--monitor` / `--history` and the
+menu-bar app (v0.7.0), `--show` and run browsing (v0.8.0), `--progress`,
+`--speed-only` and the Live tab (v0.9.0).
 
 Next:
 
+- Developer ID signing + notarization, so the app can be handed to
+  someone who did not build it
 - Homebrew tap (`brew install godigi/netdiag/netdiag`)
 - Apple Private Relay detection
 - Captive-DNS detection (resolver returning A records for `.invalid`)

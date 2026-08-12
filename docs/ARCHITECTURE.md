@@ -1,6 +1,6 @@
 # Architecture
 
-## Current shape (v0.7.0)
+## Current shape (v0.9.0)
 
 `bin/netdiag` is a ~230-line orchestrator. Every section lives in its
 own `lib/*.sh` module with a `Reads / Writes / Entry` header comment.
@@ -45,11 +45,13 @@ helpers/emit_json.py         # bash → JSON
 helpers/baseline.py          # historical median / regression detector
 helpers/summary.py           # --summary aggregation
 helpers/history.py           # --history: network identity + grouping
+                             # --show: one run + its comparison (it judges,
+                             #   so its cutoffs come from lib/thresholds.sh)
 helpers/monitor_sample.py    # one --monitor sample → one JSON line
 gui/                         # SwiftUI menu-bar client (SwiftPM, macOS 14+)
 ```
 
-## The CLI/GUI split (v0.7.0)
+## The CLI/GUI split (v0.9.0)
 
 `gui/` is a **client**. It renders; it does not decide.
 
@@ -58,7 +60,10 @@ CLI (bash + Python) — owns every measurement and every threshold
 ├── netdiag --json         full scan, ~60 fields
 ├── netdiag --history      normalized, network-grouped history
 ├── netdiag --monitor      streaming JSONL, one compact sample per line
-└── lib/thresholds.sh      cutoffs shared by diagnosis.sh and monitor.sh
+├── netdiag --show=ID      one stored run + how it compares to its network
+├── netdiag --progress     phase events on fd 3 while a run happens
+└── lib/thresholds.sh      cutoffs shared by diagnosis.sh, monitor.sh
+                           and helpers/history.py
 
 GUI (SwiftUI) — owns rendering, OS events, and alert policy only
 ├── consumes the three modes above
@@ -87,7 +92,7 @@ a default:
    would break parity with a scan; the app reads `status.icmp_filtered`
    and declines to notify. Same facts, one place to decide each thing.
 
-## Bash vs Python helper — decision (v0.2.0, unchanged)
+## Bash vs Python helper — decision (v0.2.0, amended v0.8.0)
 
 Bash for orchestration + per-check probes; Python helpers under
 `helpers/` for anything that needs structured JSON construction or
@@ -105,6 +110,22 @@ The split's rationale stands:
    selection in bash is painful.
 3. **Per-hop `mtr` JSON** — `jq` inline is fine; small enough not to
    need Python.
+
+**Amendment (v0.8.0): a fourth reason, and a new obligation.**
+`--show` scores a run against every other run on its network — sorting a
+metric's whole population, taking a median and p10/p90, and computing a
+percentile rank with **ties averaged**. That is `statistics` and a sort in
+Python; in bash it is a hand-rolled numeric sort per metric per run.
+
+The obligation is the part worth stating. Deciding whether a number is
+good is what `lib/thresholds.sh` exists to own, so `helpers/history.py`
+became the **third** file bound by that rule, alongside `lib/diagnosis.sh`
+and `lib/monitor.sh`. Its two cutoffs reach Python through the
+environment, and the helper **refuses to start** if they are unset rather
+than carrying a default — a default is a second home for a number that
+has exactly one, and the two diverge silently the first time either is
+tuned. `tests/test_thresholds.bats` fails the build on an inline numeric
+cutoff in any of the three.
 
 **Runtime requirement:** Python 3 (system `/usr/bin/python3` on macOS
 14+ is fine; no extra packages).
