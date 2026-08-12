@@ -14,6 +14,7 @@ final class NetdiagCoordinator {
     let monitor = MonitorStream()
     let events = NetworkEventWatcher()
     let history = HistoryStore()
+    let details = RunDetailStore()
     let alerts = AlertEngine()
     let watcher = WatcherControl()
 

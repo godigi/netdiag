@@ -13,6 +13,11 @@ import Foundation
 /// strong — the router itself is misbehaving. Try rebooting it (unplug for
 /// 30 seconds, plug back in)." — and the app renders it verbatim. Nothing
 /// in this target composes a sentence about a network.
+///
+/// Decoding is lenient throughout (see the extensions at the foot of this
+/// file). This type no longer reads only the run that just finished: since
+/// `--show`, it also reads records written by every netdiag going back to
+/// v0.1, most of which predate half the keys named here.
 struct RunSnapshot: Decodable, Sendable {
     var version: String?
     var timestamp: String?
@@ -124,11 +129,15 @@ struct RunSnapshot: Decodable, Sendable {
         var answer: String?
         var ok: Bool = false
         var id: String { "\(resolver ?? "?")-\(name ?? "?")" }
+
+        enum CodingKeys: String, CodingKey { case resolver, name, answer, ok }
     }
 
     struct Traceroute: Decodable, Sendable {
         var target: String?
         var hops: [Hop] = []
+
+        enum CodingKeys: String, CodingKey { case target, hops }
 
         struct Hop: Decodable, Sendable, Identifiable {
             var n: Int?
@@ -300,6 +309,8 @@ struct RunSnapshot: Decodable, Sendable {
         var summary: String = ""
         var id: String { "\(rule ?? "?")-\(summary.prefix(24))" }
 
+        enum CodingKeys: String, CodingKey { case severity, rule, summary }
+
         var health: Health {
             switch severity {
             case "critical": return .critical
@@ -316,6 +327,128 @@ struct RunSnapshot: Decodable, Sendable {
     }
 
     var date: Date { ISO8601DateFormatter().date(from: timestamp ?? "") ?? Date() }
+}
+
+// MARK: - Lenient decoding
+//
+// Every stored property below is read through `lenient`, so an absent key
+// yields the default written beside the property rather than throwing.
+// Written in extensions rather than in the type bodies on purpose: an
+// initializer declared in a struct's body suppresses its memberwise
+// initializer, and `= .init()` on the properties above depends on it.
+//
+// The `try?` in `lenient` also contains the blast radius. A single odd
+// record — a hop table where a number arrived as a string — degrades that
+// one field to its default instead of failing the whole check, which is
+// the difference between a gap in a table and a check that will not open.
+
+extension RunSnapshot {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = c.lenient(.version)
+        timestamp = c.lenient(.timestamp)
+        interfaceInfo = c.lenient(.interfaceInfo, .init())
+        network = c.lenient(.network, .init())
+        wifi = c.lenient(.wifi)
+        gateway = c.lenient(.gateway, .init())
+        internetLatency = c.lenient(.internetLatency, .init())
+        publicInfo = c.lenient(.publicInfo, .init())
+        dns = c.lenient(.dns, [])
+        traceroute = c.lenient(.traceroute, .init())
+        bufferbloat = c.lenient(.bufferbloat, .init())
+        mtu = c.lenient(.mtu, .init())
+        ipv6 = c.lenient(.ipv6, .init())
+        vpn = c.lenient(.vpn, .init())
+        tcpReach = c.lenient(.tcpReach, [])
+        wifiScan = c.lenient(.wifiScan)
+        wifiDisconnects = c.lenient(.wifiDisconnects)
+        speedtest = c.lenient(.speedtest)
+        ntp = c.lenient(.ntp, .init())
+        duplicateIPs = c.lenient(.duplicateIPs, [])
+        dhcp = c.lenient(.dhcp, .init())
+        mtr = c.lenient(.mtr, .init())
+        timings = c.lenient(.timings, .init())
+        diagnosis = c.lenient(.diagnosis, [])
+        mostLikelyRootCause = c.lenient(.mostLikelyRootCause)
+    }
+}
+
+extension RunSnapshot.DNSCheck {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        resolver = c.lenient(.resolver)
+        name = c.lenient(.name)
+        answer = c.lenient(.answer)
+        ok = c.lenient(.ok, false)
+    }
+}
+
+extension RunSnapshot.Traceroute {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = c.lenient(.target)
+        hops = c.lenient(.hops, [])
+    }
+}
+
+extension RunSnapshot.Traceroute.Hop {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        n = c.lenient(.n)
+        ip = c.lenient(.ip)
+        responded = c.lenient(.responded, false)
+        rttMs = c.lenient(.rttMs)
+        lossPct = c.lenient(.lossPct)
+        avgMs = c.lenient(.avgMs)
+    }
+}
+
+extension RunSnapshot.IPv6 {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.lenient(.available, false)
+        globalAddr = c.lenient(.globalAddr)
+        pingLossPct = c.lenient(.pingLossPct)
+        aaaaOk = c.lenient(.aaaaOk, false)
+        tcpV6Ok = c.lenient(.tcpV6Ok, false)
+    }
+}
+
+extension RunSnapshot.TCPReach {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        host = c.lenient(.host)
+        port = c.lenient(.port)
+        ok = c.lenient(.ok, false)
+        elapsedMs = c.lenient(.elapsedMs)
+    }
+}
+
+extension RunSnapshot.MTR {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hops = c.lenient(.hops, [])
+        firstLossyHop = c.lenient(.firstLossyHop)
+    }
+}
+
+extension RunSnapshot.Timings {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        totalS = c.lenient(.totalS)
+        budgetS = c.lenient(.budgetS)
+        overBudget = c.lenient(.overBudget, false)
+        phases = c.lenient(.phases, [:])
+    }
+}
+
+extension RunSnapshot.Diagnosis {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        severity = c.lenient(.severity, "info")
+        rule = c.lenient(.rule)
+        summary = c.lenient(.summary, "")
+    }
 }
 
 /// A completed run plus the things the process, not the JSON, tells us.

@@ -5,6 +5,10 @@ enum NetdiagError: LocalizedError {
     case scriptError(String)
     case badJSON(String)
     case cancelled
+    /// `--show` could not resolve that id. Not a failure of the tool: the
+    /// run store rolls over into an archive and is eventually pruned, so a
+    /// list held in memory can outlive a record on disk.
+    case runNotFound
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +19,7 @@ enum NetdiagError: LocalizedError {
         case .scriptError(let s):  return "netdiag couldn't complete the check: \(s)"
         case .badJSON(let s):      return "netdiag returned something unreadable: \(s)"
         case .cancelled:           return "Check cancelled."
+        case .runNotFound:         return "That check is no longer in your history — it may have been pruned."
         }
     }
 }
@@ -108,6 +113,26 @@ struct NetdiagRunner {
             throw NetdiagError.badJSON(String(out.prefix(200)))
         }
         return doc
+    }
+
+    /// `netdiag --show=<id>`, decoded, with the bytes kept alongside.
+    ///
+    /// Exit 3 is read here as "that id is gone". The CLI uses 3 for both a
+    /// malformed argument and an unknown id, and the two cannot be told
+    /// apart from the status alone — but the app only ever passes back an
+    /// id that `--history` handed it, so the malformed branch is
+    /// unreachable from the UI while the pruned one is reached by simply
+    /// leaving the window open long enough.
+    static func show(id: String) async throws -> RunDetail {
+        let (out, _, status) = try await execute(arguments: ["--show=\(id)"])
+        if status == 3 { throw NetdiagError.runNotFound }
+        if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
+        guard let data = out.data(using: .utf8),
+              var detail = try? JSONDecoder().decode(RunDetail.self, from: data) else {
+            throw NetdiagError.badJSON(String(out.prefix(200)))
+        }
+        detail.rawJSON = out
+        return detail
     }
 
     // MARK: - Process plumbing

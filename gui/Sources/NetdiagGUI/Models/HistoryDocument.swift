@@ -96,6 +96,18 @@ struct HistoryDocument: Decodable, Sendable {
 
     struct Run: Decodable, Sendable, Identifiable {
         var ts: String?
+        /// The CLI's handle for this run — `<timestamp>.<8 hex>` — and the
+        /// only thing `--show` accepts. `ts` alone will not do:
+        /// helpers/history.py dedups on (timestamp, canonical JSON)
+        /// precisely because two runs can land in the same second, and when
+        /// they do a timestamp names neither of them.
+        ///
+        /// Optional because the app and the CLI are installed separately
+        /// and their versions skew. A netdiag older than the one that
+        /// introduced `--show` stamps no id, and a run without one can be
+        /// listed but not opened — see RunListView, which says so rather
+        /// than offering a row that would fail.
+        var runID: String?
         var networkID: String = ""
         var version: String?
         var severity: String = "ok"
@@ -108,12 +120,18 @@ struct HistoryDocument: Decodable, Sendable {
 
         enum CodingKeys: String, CodingKey {
             case ts, version, severity, rules, metrics
+            case runID = "id"
             case networkID = "network_id"
             case diagnosisCount = "diagnosis_count"
             case rootCause = "root_cause"
         }
 
-        var id: String { "\(ts ?? "")-\(networkID)" }
+        /// Identity for SwiftUI, which is not the same question as "what
+        /// does `--show` accept". Falls back to the composite this type
+        /// used before the CLI stamped ids, so a list built from an older
+        /// netdiag still has stable row identity instead of a run of
+        /// duplicate empty strings.
+        var id: String { runID ?? "\(ts ?? "")-\(networkID)" }
         var date: Date { ISO8601DateFormatter().date(from: ts ?? "") ?? .distantPast }
 
         var health: Health {

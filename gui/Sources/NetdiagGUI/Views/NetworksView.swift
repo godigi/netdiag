@@ -18,18 +18,26 @@ struct NetworksView: View {
     private var store: HistoryStore { coordinator.history }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                if store.mergedNetworks.isEmpty {
-                    Text("No networks recorded yet. Run a check to start building history.")
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 20)
+        // The stack lives inside the tab rather than around it, so browsing
+        // into a network's history leaves the tab bar — and whatever Spec 2
+        // decides about the window's overall shape — untouched.
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if store.mergedNetworks.isEmpty {
+                        Text("No networks recorded yet. Run a check to start building history.")
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 20)
+                    }
+                    ForEach(store.mergedNetworks) { net in
+                        row(net)
+                    }
                 }
-                ForEach(store.mergedNetworks) { net in
-                    row(net)
-                }
+                .padding(16)
             }
-            .padding(16)
+            .navigationDestination(for: NetworkRoute.self) { route in
+                RunListView(networkID: route.networkID)
+            }
         }
         .task { if store.document.networks.isEmpty { await store.load() } }
         .sheet(item: $mergeSource) { source in
@@ -74,6 +82,13 @@ struct NetworksView: View {
                             .help("Grouped by inference — these runs predate network identity, or were bridged by matching gateway and ISP.")
                     }
                     Spacer()
+                    // The card has said "1,915 checks" since the tab
+                    // existed; this is the affordance that makes the number
+                    // lead somewhere.
+                    NavigationLink(value: NetworkRoute(networkID: net.id)) {
+                        Text("Browse checks")
+                    }
+                    .buttonStyle(.link)
                     Button("Rename") {
                         editingID = net.id
                         draftName = store.displayName(for: net.id)
