@@ -19,8 +19,8 @@
 
 # ── 18. Dual-WAN / load-balancing probe ─────────────────────────────────
 wan_load_balancing_run() {
-  [ "$QUICK" -eq 0 ]     || return 0
-  [ "$PUBLIC_OK" -eq 1 ] || return 0
+  [ "$QUICK" -eq 0 ]     || { progress_skip "--quick"; return 0; }
+  [ "$PUBLIC_OK" -eq 1 ] || { progress_skip "no internet to probe"; return 0; }
 
   hdr "WAN load-balancing probe"
   local tmp i resp asn ip
@@ -159,7 +159,7 @@ _wan_count_rfc1918_chain() {
 
 # ── 20. UPnP / NAT-PMP status ───────────────────────────────────────────
 wan_upnp_run() {
-  [ "$QUICK" -eq 0 ] || return 0
+  [ "$QUICK" -eq 0 ] || { progress_skip "--quick"; return 0; }
 
   hdr "UPnP / NAT-PMP status"
   # (a) Prefer miniupnpc's upnpc -s — gives device name + URL when present.

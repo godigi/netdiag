@@ -66,7 +66,7 @@ internet_ping_parse() {
 internet_ping_run() {
   # --quick budget: the gateway-side ping already gives a latency number;
   # skip the 2 s internet probe.
-  [ "$QUICK" -eq 0 ] || return 0
+  [ "$QUICK" -eq 0 ] || { progress_skip "--quick"; return 0; }
   hdr "Internet latency"
 
   # Both targets probed concurrently, so wall-clock is one probe's worth

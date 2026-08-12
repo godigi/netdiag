@@ -15,6 +15,7 @@
 #   launch_parallel <name> <fn>  — fan out a check; results collected later
 #   collect_parallel             — fan in: print buffers, source variable files
 #   setvar <name> <value>        — persist a var across the parallel boundary
+#   progress_*                   — the --progress event stream on fd 3
 
 # ── Colours ──────────────────────────────────────────────────────────────
 # Suppressed under --json or --quiet (stdout consumers don't want them).
@@ -178,6 +179,126 @@ progress_spin_stop() {
   fi
   progress_clear
 }
+
+# ── Progress events (fd 3) ───────────────────────────────────────────────
+# A second progress channel, and deliberately not a second spinner: the
+# block above paints a caption for a person on stderr, this one emits one
+# JSON object per line for a program (the menu-bar app, a wrapper script).
+#
+# It goes on fd 3 rather than stderr because launch_parallel runs each
+# parallel check in a subshell that does `exec 1>"$out" 2>&1`. A parallel
+# check's progress written to stderr lands inside that per-check buffer,
+# where nobody reads it until the check finishes — which is the exact
+# moment progress stops being worth having. fd 3 survives that redirect.
+# It cannot go on stdout either: --json promises exactly one object there.
+#
+# bin/netdiag points fd 3 at stderr under --progress and at /dev/null
+# otherwise. The PROGRESS guard below is not redundant with that: the bats
+# suite sources this file directly, without bin/netdiag, and there fd 3 was
+# never opened at all — an unguarded write would print "Bad file
+# descriptor" for every phase of every test.
+#
+# Every event is emitted with a single printf of a short line. A write to a
+# pipe is atomic only up to PIPE_BUF (512 bytes on macOS) and all the
+# parallel subshells share this one fd, so an event assembled from two
+# writes could interleave with another check's and produce a line that
+# parses as neither.
+PROGRESS="${PROGRESS:-0}"
+progress_emit() {
+  [ "${PROGRESS:-0}" -eq 1 ] || return 0
+  printf '%s\n' "$1" >&3
+}
+
+# A bash string as a JSON string literal: clamp first, then escape.
+#
+# Clamping is the PIPE_BUF rule — a `why` carrying a diagnosis-length
+# sentence would push its event past the atomic-write limit and let it
+# interleave with a parallel check's. Clamping *after* escaping would be
+# worse than not clamping at all: the cut can land between a backslash and
+# the character it escapes, and the line stops being JSON.
+PROGRESS_TEXT_MAX=120
+progress_json_str() {
+  local s="${1:0:$PROGRESS_TEXT_MAX}"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  # A raw control character is not legal inside a JSON string, and a raw
+  # newline would additionally split one event into two unparseable lines.
+  s="${s//[[:cntrl:]]/ }"
+  printf '"%s"' "$s"
+}
+
+# The phases each mode will attempt, in the order it attempts them.
+#
+# A declared list drifts from the code the first time a check is added, so
+# tests/test_progress.bats asserts both directions: every name bin/netdiag
+# passes to run_timed or launch_parallel appears in some mode's plan, and
+# every name in a plan is one bin/netdiag actually passes.
+#
+# full and quick declare the same phases on purpose. --quick does not skip
+# a *call site*: bufferbloat_run, mtr_run and the rest are invoked either
+# way and return early, so they report `skip` with a reason. Dropping them
+# from the plan would hide that they were considered, and "17 of 25" would
+# stop adding up.
+progress_plan_phases() {
+  case "$1" in
+    full|quick)
+      printf '%s\n' iface vpn wifi gateway arp netid dhcp public \
+        dns ipv6 tcp_reach ntp hosts wifi_scan wifi_disconnect \
+        wan_lb wan_upnp parallel_batch internet_ping bufferbloat mtu \
+        traceroute nat mtr speedtest ;;
+    mtu-only)   printf '%s\n' iface netid public mtu ;;
+    wifi-only)  printf '%s\n' iface wifi netid wifi_scan wifi_disconnect ;;
+    speed-only) printf '%s\n' iface gateway arp wifi netid public speedtest ;;
+  esac
+}
+
+# A plan, not a percentage. --json produces nothing until the very end, so
+# there is no quantity a percentage could be a percentage of; a named list
+# of phases lets a consumer say "17 of 25, testing under load", which is
+# true, where a progress bar would not be.
+progress_plan() {
+  local mode="$1" phases="" p
+  # Phase names are internal identifiers ([a-z_]), so they need no
+  # escaping — progress_json_str is for free text like a skip reason.
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    phases+="${phases:+,}\"$p\""
+  done < <(progress_plan_phases "$mode")
+  progress_emit "{\"t\":\"plan\",\"phases\":[$phases],\"mode\":\"$mode\"}"
+}
+
+progress_phase_start() {
+  progress_emit "{\"t\":\"phase\",\"name\":\"$1\",\"state\":\"start\"}"
+}
+progress_phase_done() {
+  progress_emit "{\"t\":\"phase\",\"name\":\"$1\",\"state\":\"done\",\"rc\":$2,\"ms\":$3}"
+}
+progress_phase_skip() {
+  progress_emit "{\"t\":\"phase\",\"name\":\"$1\",\"state\":\"skip\",\"why\":$(progress_json_str "$2")}"
+}
+progress_run_done() {
+  progress_emit "{\"t\":\"run\",\"state\":\"done\",\"exit\":$1}"
+}
+
+# Sub-progress inside one phase. Every field is nullable and an unmeasured
+# one is null, never 0 — a speed test that has not reached the download
+# stage has no throughput, which is a different fact from 0 Mbps.
+progress_speed() {
+  progress_emit "{\"t\":\"speed\",\"stage\":$(progress_json_str "$1"),\"progress\":${2:-null},\"mbps\":${3:-null},\"ms\":${4:-null}}"
+}
+
+# Called by a check that decided not to do any work, so its phase resolves
+# as `skip` with a reason instead of a `done` in 0 ms — which reads as
+# "measured, instantly" rather than "never ran".
+#
+# It records only the reason. The name belongs to whichever wrapper is
+# running the check, and having the check name itself would be a second
+# copy of a string that already has an owner, free to drift from it.
+NETDIAG_PHASE_SKIP=""
+progress_skip() {
+  NETDIAG_PHASE_SKIP="${1:-skipped}"
+}
+
 ok()   { say "  ${C_GRN}✓${C_RESET} $*"; }
 warn() { say "  ${C_YEL}⚠${C_RESET} $*"; }
 bad()  { say "  ${C_RED}✗${C_RESET} $*"; }
@@ -338,16 +459,37 @@ loss_below() {
 TIMING_LINES=""
 RUN_STARTED_AT="$EPOCHREALTIME"
 
+# Wall-clock since $1, as "<seconds to 2dp> <whole milliseconds>". One awk
+# for both because the callers want both and a second fork per phase would
+# be pure overhead: the log wants seconds, the progress stream wants ms.
+_elapsed_pair() {
+  awk -v a="$1" -v b="$EPOCHREALTIME" 'BEGIN{d=b-a; printf "%.2f %d", d, d*1000+0.5}'
+}
+
 # run_timed <phase-name> <command…> — run it, record wall-clock, preserve
 # the command's exit status so callers see no behavioural difference.
+#
+# Also the first of the two places the --progress stream comes from.
+# Instrumenting the wrapper rather than the checks covers every check at
+# once, including the ones added after this was written, which is the
+# failure it exists to prevent: a new check that nobody remembers to
+# instrument shows up as a gap the UI renders as "didn't run".
 run_timed() {
   local name="$1"; shift
-  local t0 rc
+  local t0 rc secs ms
+  NETDIAG_PHASE_SKIP=""
+  progress_phase_start "$name"
   t0="$EPOCHREALTIME"
   "$@"
   rc=$?
-  TIMING_LINES+="${name}|$(awk -v a="$t0" -v b="$EPOCHREALTIME" \
-    'BEGIN{printf "%.2f", b-a}')"$'\n'
+  read -r secs ms < <(_elapsed_pair "$t0")
+  TIMING_LINES+="${name}|${secs}"$'\n'
+  if [ -n "$NETDIAG_PHASE_SKIP" ]; then
+    progress_phase_skip "$name" "$NETDIAG_PHASE_SKIP"
+  else
+    progress_phase_done "$name" "$rc" "$ms"
+  fi
+  NETDIAG_PHASE_SKIP=""
   return "$rc"
 }
 
@@ -433,6 +575,7 @@ launch_parallel() {
   # false positives — shellcheck can't see the indirect "$fn" dispatch.
   # SC2030 / SC2031 on NETDIAG_PAR_OUT/PAR_VARS are by design: they're
   # scoped to the subshell on purpose so each check writes its own files.
+  progress_phase_start "$name"
   # shellcheck disable=SC2030
   (
     NETDIAG_PAR_OUT="$PAR_TMP/$name.out"
@@ -440,6 +583,11 @@ launch_parallel() {
     : >"$NETDIAG_PAR_OUT"
     : >"$NETDIAG_PAR_VARS"
     exec 1>"$NETDIAG_PAR_OUT" 2>&1
+    # fd 3 is deliberately NOT part of the redirect above, which is the
+    # whole reason the progress stream is on it: this check's result is
+    # announced the moment it lands, not when collect_parallel gets round
+    # to replaying its buffer.
+    NETDIAG_PHASE_SKIP=""
     # shellcheck disable=SC2329,SC2317
     say()  { printf '%s\n' "$*"; }
     # shellcheck disable=SC2329,SC2317
@@ -454,7 +602,18 @@ launch_parallel() {
     info() { say "  ${C_DIM}·${C_RESET} $*"; }
     # shellcheck disable=SC2329,SC2317
     log_pipe() { cat; }
+    _par_t0="$EPOCHREALTIME"
     "$fn"
+    _par_rc=$?
+    # Seconds are discarded here. TIMING_LINES lives in the orchestrator
+    # and this is a subshell, so a row appended here would vanish; the
+    # parallel_batch phase already accounts for this check's wall-clock.
+    read -r _ _par_ms < <(_elapsed_pair "$_par_t0")
+    if [ -n "$NETDIAG_PHASE_SKIP" ]; then
+      progress_phase_skip "$name" "$NETDIAG_PHASE_SKIP"
+    else
+      progress_phase_done "$name" "$_par_rc" "$_par_ms"
+    fi
   ) &
   PAR_PIDS+=("$!")
 }

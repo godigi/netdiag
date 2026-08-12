@@ -6,8 +6,8 @@ environment variables (NETDIAG_* prefix). Fields that weren't set
 become JSON null.
 
 Top-level keys follow the order specified in docs/JSON-SCHEMA.md:
-  version, timestamp, interface, wifi, gateway, public, dns, traceroute,
-  per_hop, bufferbloat, mtu, ipv6, vpn, tcp_reach, wifi_scan,
+  version, timestamp, run_mode, interface, wifi, gateway, public, dns,
+  traceroute, per_hop, bufferbloat, mtu, ipv6, vpn, tcp_reach, wifi_scan,
   wifi_disconnects, speedtest, ntp, duplicate_ips, dhcp, mtr, wan,
   baseline, diagnosis, most_likely_root_cause, netdiag_extras
 
@@ -301,6 +301,12 @@ def main() -> None:
     data: dict = {
         "version": _env("VERSION") or "0.5.0",
         "timestamp": _env("TIMESTAMP"),
+        # How much of the battery this run actually attempted. Null only
+        # when this helper is invoked by hand — bin/netdiag always sets it.
+        # Without it a --quick run and a full one are the same record, and
+        # a --speed-only spot check counted toward a network's check total
+        # while having formed no opinion about the network at all.
+        "run_mode": _env("RUN_MODE"),
         "interface": {
             "name": _env("INTERFACE"),
             "ip": _env("LOCAL_IP"),

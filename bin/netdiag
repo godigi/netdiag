@@ -56,14 +56,26 @@ _netdiag_on_exit() {
   # prompt. Guarded because the trap is installed before lib/common.sh is
   # sourced, so an early failure can reach here with the function undefined.
   command -v progress_spin_stop >/dev/null 2>&1 && progress_spin_stop
-  [ "$NETDIAG_COMPLETED" -eq 1 ] && exit "$rc"
-  [ "$rc" -eq 0 ] && exit 0
-  [ "$rc" -eq 3 ] && exit 3
-  # 128+N means killed by signal N — Ctrl-C (130) or SIGTERM (143) is the
-  # user stopping the run, not a defect. Same status, no alarming message.
-  [ "$rc" -gt 128 ] && exit 3
-  printf 'netdiag: aborted unexpectedly (status %d)\n' "$rc" >&2
-  exit 3
+  # The status is settled first and reported once, rather than exiting from
+  # each branch, so the --progress stream's closing event can carry it. A
+  # consumer renders every phase still unresolved at that point as "didn't
+  # run"; without the event on the abort paths, a run killed with Ctrl-C
+  # would spin in the UI forever.
+  local final
+  if [ "$NETDIAG_COMPLETED" -eq 1 ]; then
+    final="$rc"
+  elif [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
+    final="$rc"
+  elif [ "$rc" -gt 128 ]; then
+    # 128+N means killed by signal N — Ctrl-C (130) or SIGTERM (143) is the
+    # user stopping the run, not a defect. Same status, no alarming message.
+    final=3
+  else
+    printf 'netdiag: aborted unexpectedly (status %d)\n' "$rc" >&2
+    final=3
+  fi
+  command -v progress_run_done >/dev/null 2>&1 && progress_run_done "$final"
+  exit "$final"
 }
 trap _netdiag_on_exit EXIT
 
@@ -85,7 +97,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-NETDIAG_VERSION="0.8.0"
+NETDIAG_VERSION="0.9.0"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
@@ -112,10 +124,19 @@ QUIET=0
 # --expert keeps every detailed section visible (RSSI specifics, DNS
 # per-resolver results, DHCP lease detail, full traceroute, etc.).
 EXPERT=0
-# Focused runs: "" (full battery), "mtu", or "wifi". Runs only the
+# Focused runs: "" (full battery), "mtu", "wifi", or "speed". Runs only the
 # prerequisites for one section, then the Report card + diagnoses over
 # whatever it produced.
 FOCUS=""
+# Which of the five shapes of run this is, recorded on the emitted and the
+# stored record as `run_mode`. Without it every record looks alike: a
+# --quick run and a full one are indistinguishable in history, so "1,986
+# checks" on a network counted spot checks that measured almost nothing.
+RUN_MODE=""
+# --progress opens fd 3 and streams one JSON event per line as the run
+# moves through its phases. Off by default and free when off: see the
+# fd 3 section of lib/common.sh for why not stdout and why not stderr.
+PROGRESS=0
 # --redact masks the values that identify a person or a place (public IP,
 # SSID, BSSID, IPv6 prefix, gateway MAC, city) on stdout and in --json,
 # so a report can be pasted into a forum or ticket. The local log keeps
@@ -124,6 +145,14 @@ REDACT=0
 LOG_OVERRIDE=""
 BASELINE=1
 NO_BASELINE=0
+# Appending this run to ~/net-diag/baseline.jsonl and *comparing* it
+# against the runs already there are two decisions, not one, and they were
+# stuck together in NO_BASELINE. --quick has always appended without
+# comparing; --speed-only needs the same, and could not have it — the
+# FOCUS block sets NO_BASELINE=1, which suppressed the append too and left
+# the store's sparsest metric (7 throughput samples in 1,986 runs) with no
+# cheap way to grow.
+HISTORY_APPEND=1
 WATCH=0
 WATCH_INTERVAL_S=300
 SUMMARY=0
@@ -190,10 +219,15 @@ while [ "$#" -gt 0 ]; do
     --redact)         REDACT=1 ;;
     --mtu-only)       FOCUS="mtu" ;;
     --wifi-only)      FOCUS="wifi" ;;
+    # --speed-only implies an explicit --speed: the whole point is "answer
+    # this one question now", and leaving SPEED_EXPLICIT unset would let a
+    # stray --quick silently turn the run into a no-op that still exited 0.
+    --speed-only)     FOCUS="speed"; SPEED=1; SPEED_EXPLICIT=1 ;;
+    --progress)       PROGRESS=1 ;;
     --log)            _take_value=1 ;;
     --log=*)          LOG_OVERRIDE="${1#--log=}" ;;
     --baseline)       BASELINE=1 ;;
-    --no-baseline)    NO_BASELINE=1 ;;
+    --no-baseline)    NO_BASELINE=1; HISTORY_APPEND=0 ;;
     --watch)          WATCH=1 ;;
     --watch=*)        WATCH=1; WATCH_INTERVAL_S="${1#--watch=}" ;;
     --summary)        SUMMARY=1 ;;
@@ -225,8 +259,8 @@ English. Optionally launches gping against the discovered hops for live
 monitoring at the end.
 
 Usage: netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
-               [--json] [--quiet] [--expert] [--log PATH]
-               [--mtu-only | --wifi-only]
+               [--json] [--quiet] [--expert] [--progress] [--log PATH]
+               [--mtu-only | --wifi-only | --speed-only]
 
 Positional:
   TARGET            hostname/IP to add to ping, DNS, TCP reach, and a second
@@ -257,10 +291,21 @@ Flags:
                     the report is safe to paste into a forum or ticket.
                     The log file on disk keeps full detail. Implies
                     compact output (--expert is ignored).
+  --progress        stream one JSON progress event per line on fd 3 (which
+                    is pointed at stderr) as the run moves through its
+                    phases: the plan, each phase starting and finishing,
+                    and the speed test's own stages. stdout is untouched,
+                    so --json --progress still emits exactly one object.
+                    See docs/JSON-SCHEMA.md for the event reference.
   --mtu-only        run only the path-MTU probe (plus the interface and
                     public-reach checks it depends on)
   --wifi-only       run only the WiFi checks: link quality, neighbourhood
                     scan, and disconnect history
+  --speed-only      run only the speed test (plus the interface, gateway
+                    and public-reach checks it depends on). Recorded in
+                    history as a speed-only run, so it adds a throughput
+                    reading without counting as a check of your network's
+                    health.
   --log PATH        write the human-readable log to PATH (default
                     ~/net-diag/<timestamp>.log)
   --baseline        compare this run against medians of the last 10 runs
@@ -326,7 +371,38 @@ fi
 if [ -n "$FOCUS" ] && [ "$WATCH" -eq 0 ] && [ "$SUMMARY" -eq 0 ]; then
   case "$FOCUS" in
     mtu)  [ "$QUICK" -eq 0 ] || { printf 'netdiag: --mtu-only and --quick conflict (--quick skips the MTU probe)\n' >&2; exit 3; } ;;
+    # Same shape as the conflict above: a run whose only job is the speed
+    # test, told not to run the speed test, would do nothing at all and
+    # still exit 0 — a success status over an empty report.
+    speed) [ "$NO_SPEED" -eq 0 ] || { printf 'netdiag: --speed-only and --no-speed conflict (nothing would be measured)\n' >&2; exit 3; } ;;
   esac
+fi
+
+# The mode name is the one recorded on the run and the one the progress
+# plan is drawn from, so it is derived once, here, rather than re-derived
+# by each consumer from the flags it happens to remember to check.
+if [ -n "$FOCUS" ]; then
+  RUN_MODE="${FOCUS}-only"
+elif [ "$QUICK" -eq 1 ]; then
+  RUN_MODE="quick"
+else
+  RUN_MODE="full"
+fi
+
+# ── Progress channel (fd 3) ────────────────────────────────────────────────
+# Opened before anything can emit — every mode below inherits it, including
+# the ones that exit early. An emitter writing to an fd that was never
+# opened prints "Bad file descriptor" on stderr for every event, which
+# would break the promise that --progress off leaves stderr untouched.
+#
+# /dev/null rather than leaving it closed for the same reason. If stderr
+# itself is closed (`netdiag --progress 2>&-`) the dup below fails, later
+# writes fail silently, and the run continues: progress must never be able
+# to fail a check.
+if [ "$PROGRESS" -eq 1 ]; then
+  exec 3>&2
+else
+  exec 3>/dev/null
 fi
 
 LOG_DIR="$HOME/net-diag"
@@ -476,22 +552,56 @@ tell "${C_DIM}log: $LOG${C_RESET}"
 if [ -n "$FOCUS" ]; then
   NO_GPING=1
   NO_BASELINE=1
+  # NO_BASELINE above suppresses the *comparison* only: a partial run isn't
+  # comparable to a full one. Whether it is also unrecordable is a separate
+  # question, and run_mode is what changed the answer for --speed-only — a
+  # record tagged speed-only can no longer be mistaken for a check of the
+  # network's health, so appending it can't poison the medians full runs
+  # are measured against, and its throughput reading is exactly the number
+  # the store has least of. --mtu-only and --wifi-only stay unrecorded,
+  # which is the behaviour their existing records were written under.
+  case "$FOCUS" in
+    speed) : ;;
+    *)     HISTORY_APPEND=0 ;;
+  esac
+  progress_plan "$RUN_MODE"
   case "$FOCUS" in
     mtu)
-      iface_run
-      netid_run      # best-effort: no GW_MAC here, falls back to gateway IP
-      public_run     # mtu_run gates on PUBLIC_OK
-      mtu_run
+      run_timed iface  iface_run
+      run_timed netid  netid_run   # best-effort: no GW_MAC, falls back to gateway IP
+      run_timed public public_run  # mtu_run gates on PUBLIC_OK
+      run_timed mtu    mtu_run
       ;;
     wifi)
-      iface_run
-      wifi_run       # sets IS_WIFI, which the two scans below gate on
-      netid_run
+      run_timed iface iface_run
+      run_timed wifi  wifi_run     # sets IS_WIFI, which the two scans below gate on
+      run_timed netid netid_run
       launch_parallel wifi_scan       wifi_scan_run
       launch_parallel wifi_disconnect wifi_disconnect_run
       progress_spin_start "Scanning WiFi neighbourhood"
       collect_parallel
       progress_spin_stop
+      ;;
+    speed)
+      run_timed iface   iface_run
+      # Everything between iface and speedtest is here for the *record*,
+      # not the report, and costs about 4 s against a 30 s test.
+      #
+      # gateway_run refreshes the ARP entry arp_run then reads GW_MAC out
+      # of, and GW_MAC is the join key that lands this run in the same
+      # history group as the full runs on this network. Without it netid
+      # falls back to the gateway IP and the throughput sample this mode
+      # exists to contribute is invisible to the network it was measured
+      # on. wifi_run is here for the other half of that identity: netid
+      # reads IS_WIFI, so leaving it out recorded a WiFi network as
+      # "wired via 192.168.15.1" — measured, on this machine, before it
+      # was added.
+      run_timed gateway gateway_run
+      run_timed arp     arp_run
+      run_timed wifi    wifi_run
+      run_timed netid   netid_run
+      run_timed public  public_run   # speedtest_run gates on PUBLIC_OK
+      run_timed speedtest speedtest_run
       ;;
   esac
   headline_run
@@ -503,7 +613,12 @@ fi
 
 # Each phase is wrapped in run_timed so the run can report where its
 # wall-clock actually went — see the `timings` object in --json output and
-# the Timing section under --expert.
+# the Timing section under --expert. The same two wrappers feed the
+# --progress event stream, so the order below is the order the plan
+# declares in lib/common.sh and a phase added here must be added there too
+# (tests/test_progress.bats fails the build otherwise).
+progress_plan "$RUN_MODE"
+
 run_timed iface      iface_run
 run_timed vpn        vpn_run
 run_timed wifi       wifi_run

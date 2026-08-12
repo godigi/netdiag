@@ -10,8 +10,8 @@
 # Entry:  mtu_run
 
 mtu_run() {
-  [ "$QUICK" -eq 0 ]     || return 0
-  [ "$PUBLIC_OK" -eq 1 ] || return 0
+  [ "$QUICK" -eq 0 ]     || { progress_skip "--quick"; return 0; }
+  [ "$PUBLIC_OK" -eq 1 ] || { progress_skip "no internet to probe"; return 0; }
 
   hdr "Path MTU (DF-set probe to 1.1.1.1)"
   # Three packets per size, not one. ping exits 0 if *any* reply arrives, so

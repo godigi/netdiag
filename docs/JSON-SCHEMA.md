@@ -27,6 +27,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 |-----|------|-------|
 | `version` | string | netdiag version that produced this run |
 | `timestamp` | string | ISO 8601, UTC |
+| `run_mode` | string | how much of the battery this run attempted — see below |
 | `interface` | object | active interface, IP, gateway, gateway MAC, `type` (`wifi`/`wired`) |
 | `network` | object | `id` + human `label` identifying which network this is — scopes the baseline |
 | `wifi` | object | SSID, BSSID, security; `rssi`/`noise`/`snr`/`channel`/`phy`/`tx_rate` are `null` without `sudo` |
@@ -55,6 +56,43 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `diagnosis` | array | `severity` (`info`/`warn`/`critical`), `rule`, `summary` |
 | `most_likely_root_cause` | string | the highest-severity diagnosis summary, first by insertion order |
 | `netdiag_extras` | object | `arp_gw_incomplete`, plus `target*` keys when a positional TARGET was given |
+
+## `run_mode`
+
+Which shape of run produced this record. A closed set:
+
+| value | flags | counts as a check? |
+|---|---|---|
+| `full` | none | yes |
+| `quick` | `--quick` | yes |
+| `speed-only` | `--speed-only` | no |
+| `mtu-only` | `--mtu-only` | no |
+| `wifi-only` | `--wifi-only` | no |
+
+Every record looked alike before v0.9.0, which is why "1,986 checks" on a
+network overstated what had actually been measured: a `--quick` run skips
+bufferbloat, mtr, the speed test, the loss probe and the WiFi scan, and a
+focused run skips almost everything.
+
+A **partial mode** — anything ending `-only` — contributes its measurements
+and nothing else. `helpers/history.py` counts its metrics into
+`metric_samples`, and excludes it from `check_count`, `counts.checks` and
+`severity_counts`. A speed test is a measurement, not an opinion about the
+network's health.
+
+The suffix is the rule rather than a list of the three that exist today,
+because every focused mode comes from the same `FOCUS` mechanism and every
+`FOCUS` flag is named `--<section>-only`. A list would go stale the day a
+`--dns-only` landed, and it would go stale silently, by counting the new
+mode as a full check.
+
+**`null` on every record written before v0.9.0**, and absence decodes as
+"unknown, treat as a check" — those runs were full or quick ones, and
+reclassifying them would rewrite two months of history.
+
+`--speed-only` is the one focused mode that *is* recorded. `--mtu-only` and
+`--wifi-only` still write no history record, which is the behaviour their
+existing records were written under.
 
 ## `wan`
 
@@ -125,6 +163,135 @@ The JSON object does not carry the exit code; read it from the process.
 
 ---
 
+# `netdiag --progress` event stream
+
+`netdiag --progress` reports its own progress as it runs: one JSON object
+per line, **on file descriptor 3**, which the CLI points at stderr. The
+run's own output is unaffected — `--json --progress` still writes exactly
+one object to stdout.
+
+```console
+$ netdiag --quick --progress 2>&1 >/dev/null | head -4
+{"t":"plan","phases":["iface","vpn","wifi","gateway", …],"mode":"quick"}
+{"t":"phase","name":"iface","state":"start"}
+{"t":"phase","name":"iface","state":"done","rc":0,"ms":19}
+{"t":"phase","name":"vpn","state":"start"}
+```
+
+## Why fd 3
+
+Not stdout: acceptance criterion 2 is that `netdiag --json | jq .` always
+succeeds, so stdout carries one object and nothing else.
+
+Not stderr either, and this is the part that is not obvious.
+`launch_parallel` runs each parallel check in a subshell that does
+`exec 1>"$out" 2>&1`, capturing **both** streams into a per-check buffer. A
+parallel check writing progress to stderr writes it into that file, where
+nobody reads it until the check finishes — which is the exact moment
+progress stops being worth having. fd 3 survives that redirect, so a check
+announces its result the instant it lands.
+
+fd 3 is opened for every run: at stderr under `--progress`, at `/dev/null`
+without it. A consumer reads stderr and ignores lines that do not parse,
+the same way it already tolerates noise on the `--monitor` stream.
+
+## Events
+
+| `t` | when | fields |
+|---|---|---|
+| `plan` | once, before the first phase | `phases[]` in attempt order, `mode` (the `run_mode` above) |
+| `phase` … `start` | a check begins | `name` |
+| `phase` … `done` | a check finishes | `name`, `rc` (the check's own exit status), `ms` (wall-clock, whole milliseconds) |
+| `phase` … `skip` | a check declined to run | `name`, `why` (free text, clamped to 120 characters) |
+| `speed` | sub-progress inside the speed test | `stage`, `progress`, `mbps`, `ms` — all nullable |
+| `run` … `done` | last, always | `exit` (the process's exit code) |
+
+```json
+{"t":"plan","phases":["iface","vpn","wifi","gateway"],"mode":"full"}
+{"t":"phase","name":"gateway","state":"start"}
+{"t":"phase","name":"gateway","state":"done","rc":0,"ms":2043}
+{"t":"phase","name":"wifi_scan","state":"skip","why":"not on wifi"}
+{"t":"speed","stage":"download","progress":0.42,"mbps":180.3,"ms":null}
+{"t":"run","state":"done","exit":1}
+```
+
+## A plan, not a percentage
+
+`--json` produces nothing until the very end, so there is no quantity a
+percentage could be a percentage *of*. The `plan` event names the phases
+this mode will attempt and each resolves to `done` or `skip`, so "17 of 25,
+testing under load" is true where a progress bar would not be.
+
+`full` and `quick` declare the **same** phases. `--quick` does not skip a
+call site — `bufferbloat_run`, `mtr_run` and the rest are invoked either
+way and return early — so under `--quick` they report `skip` with
+`why: "--quick"`. A phase that resolved as `done` in 0 ms would read as
+"measured, instantly", which is the opposite of what happened.
+
+The plan is a declared list, and a declared list drifts from the code the
+first time a check is added. `tests/test_progress.bats` asserts both
+directions: every name `bin/netdiag` passes to `run_timed` or
+`launch_parallel` appears in some mode's plan, and every planned name is
+one `bin/netdiag` actually runs.
+
+## Lines stay short
+
+Every event is emitted with a single `printf` of a line well under 512
+bytes. Writes to a pipe are atomic only up to `PIPE_BUF` (512 on macOS) and
+all the parallel subshells share this one fd, so an event assembled from
+two writes could interleave with another check's and produce a line that
+parses as neither. Free-text fields (`why`, `stage`) are clamped before
+they are escaped — clamping afterwards can cut between a backslash and the
+character it escapes.
+
+## Speed-test sub-progress
+
+Ookla's CLI streams, so `lib/speedtest.sh` runs it as
+`speedtest --format=jsonl --progress=yes` and translates each update:
+
+```
+{"type":"ping","ping":{"jitter":0.0,"latency":27.942,"progress":0.200}}
+  → {"t":"speed","stage":"ping","progress":0.200,"mbps":null,"ms":27.942}
+```
+
+`progress` is a fraction of that stage, not of the test. `mbps` is the
+running throughput, `ms` the latency, and both are `null` in stages that do
+not measure them — never `0`.
+
+**Only `type`, `progress`, `bandwidth` and `latency` are forwarded.** This
+is a security boundary, not tidiness: Ookla's first line is `testStart` and
+it carries `interface.internalIp`, which on a dual-stack Mac is the
+machine's **public IPv6 address** — a value that identifies a household the
+way a NATed v4 address does not. `externalIp`, `macAddr` and the test
+server's address are on the same line.
+
+The translation is therefore deny-by-default. Four values are extracted by
+name and a new object is built from them; nothing is passed through and
+nothing is filtered out, because a filter has to enumerate what is
+dangerous and is wrong the day Ookla adds a field. Both extractions are
+shape-constrained as well: the numeric one matches `"key":<number>` only,
+so a string can never satisfy it whatever it is named, and the stage
+accepts only `[A-Za-z]`. `tests/test_progress.bats` feeds it a fixture
+containing an `internalIp` and asserts nothing resembling it reaches fd 3.
+
+Under `speedtest-cli` there is no stream. The stage is announced with **no
+progress fraction** and the result arrives at the end; a UI shows an
+indeterminate stage rather than inventing motion.
+
+## Error handling
+
+| case | behaviour |
+|---|---|
+| `--progress` with nobody reading | fd 3 goes to stderr like any other diagnostic output |
+| `--progress` with stderr closed | the dup fails, writes fail silently, the run continues — progress must never be able to fail a check |
+| a malformed line | consumers skip lines that do not parse, as on the `--monitor` stream |
+| Ookla absent, `speedtest-cli` present | stage announced, no `progress` fraction, result at the end |
+| neither present | the `speedtest` phase emits `skip`, `why: "no speedtest CLI installed"` |
+| a planned phase that never reports | after the `run` event, treat it as "didn't run" rather than still running |
+| `--progress` not passed | **nothing** is written to fd 3, and stderr is byte-for-byte what it was without the flag |
+
+---
+
 # `netdiag --monitor` sample schema
 
 A **separate, smaller shape** from a full run — not a subset of it by
@@ -141,7 +308,7 @@ it would accumulate forever.
 ```jsonc
 {
   "schema": 1,
-  "version": "0.8.0",
+  "version": "0.9.0",
   "ts": "2026-08-11T16:20:51Z",
   "seq": 42,
   "refreshed": ["fast"],          // which cadence tiers ran this cycle
@@ -267,15 +434,17 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
   "sources": {"live": "…/baseline.jsonl", "archive": "…/baseline-archive.jsonl"},
   "counts":  {"records_read": 1972, "unparseable_dropped": 0,
               "duplicates_dropped": 0, "redacted_dropped": 11,
-              "runs": 1961, "networks": 4},
+              "runs": 1961, "checks": 1958, "networks": 4},
   "metrics": [{"key": "gateway_rtt_ms", "label": "Gateway RTT", "unit": "ms",
                "direction": "lower_is_better", "samples": 1959}],
   "networks": [{"id": "mac:10:98:5f:…", "label": "…", "synthesized": false,
                 "bridged_from": [], "first_seen": "…", "last_seen": "…",
-                "run_count": 35, "gateways": [], "isps": [], "ssids": [],
+                "run_count": 35, "check_count": 32,
+                "gateways": [], "isps": [], "ssids": [],
                 "metric_samples": {}, "severity_counts": {}}],
   "runs": [{"id": "2026-08-11T20:51:19Z.a3f9c1d2", "ts": "…",
             "network_id": "mac:10:98:5f:…", "version": "0.6.1",
+            "run_mode": "full",
             "severity": "warn", "diagnosis_count": 1, "rules": ["M1"],
             "root_cause": "…", "metrics": {"gateway_rtt_ms": 3.4}}]
 }
@@ -311,6 +480,12 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
   case: in the store this was written against, `gateway_rtt_ms` has 1,959
   samples and `wifi.rssi` has 1. A chart that omits the count presents a
   single reading as a trend.
+- **`run_count` counts records; `check_count` counts checks.** They differ
+  by the partial runs — see [`run_mode`](#run_mode). `severity_counts` and
+  `counts.checks` follow `check_count`; `metric_samples` and
+  `metrics[].samples` follow `run_count`, because a partial run's *numbers*
+  are exactly why it was stored. `runs[].run_mode` is `null` on records
+  written before v0.9.0; treat that as a check.
 - **A run's `metrics` omits what was not measured.** Absent, never zero —
   the same distinction the full schema draws, and for the same reason.
 - **Redacted records are dropped and counted.** A run recorded with
@@ -336,7 +511,7 @@ does not.
 ```jsonc
 {
   "schema": 1,
-  "version": "0.8.0",                    // netdiag rendering the view, not
+  "version": "0.9.0",                    // netdiag rendering the view, not
                                          // the one that recorded the run
                                          // (that is run.version)
   "id": "2026-08-11T20:51:19Z.a3f9c1d2",
@@ -345,6 +520,7 @@ does not.
   "context": {
     "network_id": "mac:10:98:5f:…",
     "runs_on_network": 1915,
+    "checks_on_network": 1908,
     "position": 1843,
     "first_seen": "2026-05-30T07:55:33Z",
     "last_seen":  "2026-08-11T20:51:19Z"
@@ -374,6 +550,11 @@ sentence, the way `diagnosis[].summary` is.
 - **The comparison population is every run on that network**, not a recent
   window. One rule with nothing to configure; a consumer that wants a
   recent view narrows its own charts.
+- **The population includes partial runs**, which is deliberate: a
+  `--speed-only` run exists precisely to thicken the throughput sample.
+  `context.checks_on_network` is the same population minus those, so a UI
+  can say "1,915 runs, 1,908 checks" instead of implying every stored
+  record examined the whole network.
 - **`context.network_id` is the grouped key** — the same string
   `--history` reports in `networks[].id` and `runs[].network_id`, so the
   two join. It is not the raw `network.id` from the record: grouping is

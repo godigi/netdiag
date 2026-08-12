@@ -14,7 +14,7 @@ ntp_run() {
   # sntp -t 3 dominates the parallel batch at ~3-5 s; skip under --quick
   # so the run hits its 8 s spec budget. Clock drift > 30 s is a critical
   # rule but the default mode catches it.
-  [ "$QUICK" -eq 0 ] || return 0
+  [ "$QUICK" -eq 0 ] || { progress_skip "--quick"; return 0; }
   hdr "NTP / time sync"
   local ntp_out drift_abs
   ntp_out="$(with_timeout 5 sntp -t 3 time.apple.com 2>/dev/null || true)"

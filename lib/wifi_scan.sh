@@ -13,8 +13,8 @@
 # Entry:  wifi_scan_run
 
 wifi_scan_run() {
-  [ "$IS_WIFI" -eq 1 ] || return 0
-  [ "$QUICK" -eq 0 ]   || return 0
+  [ "$IS_WIFI" -eq 1 ] || { progress_skip "not on wifi"; return 0; }
+  [ "$QUICK" -eq 0 ]   || { progress_skip "--quick"; return 0; }
 
   hdr "WiFi neighborhood"
   local sp_out

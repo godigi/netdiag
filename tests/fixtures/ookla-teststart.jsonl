@@ -1,0 +1,1 @@
+{"type":"testStart","timestamp":"2026-08-12T03:45:06Z","isp":"Example Telecom","interface":{"internalIp":"2001:db8::dead:beef","name":"en0","macAddr":"CA:54:39:8F:E5:9A","isVpn":false,"externalIp":"203.0.113.7"},"server":{"id":71337,"host":"speedtest.example.invalid","port":8080,"name":"Example Speedtest Host","location":"Springfield","country":"Exampleland","ip":"203.0.113.99"}}

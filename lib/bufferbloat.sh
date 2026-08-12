@@ -14,10 +14,13 @@
 # Entry:  bufferbloat_run
 
 bufferbloat_run() {
-  [ "$QUICK" -eq 0 ]          || return 0
-  [ "$NO_BUFFERBLOAT" -eq 0 ] || return 0
-  [ -n "$GATEWAY" ]           || return 0
-  [ "$PUBLIC_OK" -eq 1 ]      || return 0
+  # A gate that returns before hdr() prints nothing at all, so without
+  # these the --progress stream reports the phase as done in 0 ms — which
+  # a reader takes for "measured, instantly" rather than "never ran".
+  [ "$QUICK" -eq 0 ]          || { progress_skip "--quick"; return 0; }
+  [ "$NO_BUFFERBLOAT" -eq 0 ] || { progress_skip "--no-bufferbloat"; return 0; }
+  [ -n "$GATEWAY" ]           || { progress_skip "no gateway"; return 0; }
+  [ "$PUBLIC_OK" -eq 1 ]      || { progress_skip "no internet to load"; return 0; }
 
   hdr "Bufferbloat (loaded vs idle latency)"
 

@@ -41,7 +41,7 @@ traceroute_run() {
   # --quick budget can't accommodate the 18-hop default traceroute. The
   # side effect: NAT-1 (double-NAT) won't fire under --quick because it
   # needs TRACE_LINES. Acceptable trade for hitting the 8 s budget.
-  [ "$QUICK" -eq 0 ] || return 0
+  [ "$QUICK" -eq 0 ] || { progress_skip "--quick"; return 0; }
   hdr "Traceroute to 1.1.1.1"
   local trace_out parsed line ip
   trace_out="$(with_timeout 25 traceroute -n -q 1 -w 2 -m 18 1.1.1.1 2>/dev/null)"

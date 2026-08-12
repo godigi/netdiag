@@ -22,16 +22,20 @@ headline_run() {
   # logical grouping in the code (network → router → internet → …) holds.
   local _bad_rows=() _warn_rows=() _ok_rows=() _neutral_rows=()
 
-  # In a focused run (--mtu-only / --wifi-only) most checks never execute,
-  # so their rows would report module defaults — "IPv6 not available",
-  # "Hosts file clean" — that were never actually measured. Emit only the
-  # rows belonging to the focused section.
+  # In a focused run (--mtu-only / --wifi-only / --speed-only) most checks
+  # never execute, so their rows would report module defaults — "IPv6 not
+  # available", "Hosts file clean" — that were never actually measured.
+  # Emit only the rows belonging to the focused section.
   _focus_allows() {
     [ -n "$FOCUS" ] || return 0
     case "$FOCUS:$1" in
-      mtu:Network|mtu:Internet|mtu:"Packet size") return 0 ;;
-      wifi:Network|wifi:"WiFi channel")           return 0 ;;
-      *)                                          return 1 ;;
+      mtu:Network|mtu:Internet|mtu:"Packet size")        return 0 ;;
+      wifi:Network|wifi:"WiFi channel")                  return 0 ;;
+      # Router earns its place in a speed-only run: gateway_run is what
+      # refreshes the ARP entry the record's network identity comes from,
+      # so it really was measured and hiding it would be the lie.
+      speed:Network|speed:Router|speed:Internet|speed:Speed) return 0 ;;
+      *)                                                 return 1 ;;
     esac
   }
 

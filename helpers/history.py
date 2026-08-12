@@ -10,10 +10,21 @@ never have to reimplement network identity to do it.
 
     {"networks": [{"id": "...", "label": "...", "synthesized": true,
                    "first_seen": "...", "last_seen": "...",
-                   "run_count": 412, ...}],
-     "runs":     [{"ts": "...", "network_id": "...", "severity": "warn",
-                   "diagnosis_count": 2, "root_cause": "...",
+                   "run_count": 412, "check_count": 405, ...}],
+     "runs":     [{"ts": "...", "network_id": "...", "run_mode": "full",
+                   "severity": "warn", "diagnosis_count": 2,
+                   "root_cause": "...",
                    "metrics": {"gateway_rtt_ms": 3.4}}]}
+
+Not every stored run is a check
+───────────────────────────────
+`--speed-only` answers one question and forms no opinion about the
+network, so counting it alongside a full run overstates what was actually
+examined. `run_mode` (v0.9.0+) separates them: partial modes contribute
+their *metrics* — that is the whole reason to store them, throughput being
+the sparsest series here — but not severity or incident counts. Records
+written before it existed carry no `run_mode` and count as checks, which
+is what they were.
 
 Grouping is the whole substance of this file
 ────────────────────────────────────────────
@@ -125,6 +136,33 @@ METRICS: list[tuple[str, str, str, str, str]] = [
 ]
 
 SEVERITY_ORDER = {"info": 1, "warn": 2, "critical": 3}
+
+# The suffix that marks a run as partial. Every focused mode comes from the
+# same FOCUS mechanism in bin/netdiag, and every FOCUS flag is named
+# --<section>-only, so the suffix is the rule — a list of the three that
+# exist today would go stale the day a --dns-only lands, and it would go
+# stale silently, by counting the new mode as a full check.
+PARTIAL_MODE_SUFFIX = "-only"
+
+
+def is_check(rec: dict) -> bool:
+    """True when this run is a check of the network, not a spot reading.
+
+    Takes a stored record or one of the run rows built from it — both carry
+    `run_mode` under that name, deliberately, so there is one predicate
+    rather than one per shape.
+
+    A --speed-only run measures throughput and forms no opinion about the
+    network's health, so counting it as a check overstates how much was
+    actually examined — which is the whole reason `run_mode` exists.
+
+    Absent on every record written before v0.9.0, and absence has to mean
+    "unknown, treat as a check": those 1,986 runs were full or quick ones,
+    and reclassifying them would rewrite two months of history the moment
+    this shipped.
+    """
+    mode = rec.get("run_mode")
+    return not (isinstance(mode, str) and mode.endswith(PARTIAL_MODE_SUFFIX))
 
 # How much of the digest an id carries. Eight hex characters is short
 # enough to read off a screen and retype, and long enough that the runs it
@@ -371,6 +409,10 @@ def build_run(rid: str, rec: dict, key: str) -> dict:
         "ts": rec.get("timestamp"),
         "network_id": key,
         "version": rec.get("version"),
+        # Null on records written before v0.9.0. A consumer filtering a
+        # chart to real checks reads this; it must not read the absence as
+        # a mode of its own.
+        "run_mode": rec.get("run_mode"),
         "severity": sev,
         "diagnosis_count": faults,
         "rules": rules,
@@ -646,6 +688,12 @@ def build_detail(target: str, assigned: list[tuple[str, dict, str]],
             # what reconciles four eras of netdiag's identity scheme.
             "network_id": key,
             "runs_on_network": len(network_runs),
+            # The comparison population below is every run, partial ones
+            # included — a --speed-only run exists precisely to thicken the
+            # throughput sample. This is the same population minus those,
+            # so a UI can say "1,915 runs, 1,908 checks" instead of
+            # implying every stored record examined the whole network.
+            "checks_on_network": sum(1 for r in network_runs if is_check(r)),
             "position": position,
             "first_seen": group.get("first_seen"),
             "last_seen": group.get("last_seen"),
@@ -680,11 +728,18 @@ def main() -> None:
     for rid, rec in records:
         key, synth = group_key(rec)
         g = groups.setdefault(key, {
-            "run_count": 0, "synthesized": False, "first_seen": None, "last_seen": None,
+            "run_count": 0, "check_count": 0,
+            "synthesized": False, "first_seen": None, "last_seen": None,
             "gateways": [], "isps": [], "channels": [], "ssids": [], "labels": [],
             "metric_samples": {}, "severity_counts": {},
         })
         g["run_count"] += 1
+        # run_count is every stored record; check_count is the ones that
+        # examined the network. They are both reported because they answer
+        # different questions, and reporting only the first is what let a
+        # UI say "1,986 checks" over a store that included spot readings.
+        if is_check(rec):
+            g["check_count"] += 1
         g["synthesized"] = g["synthesized"] or synth
         ts = rec.get("timestamp")
         if ts:
@@ -706,6 +761,7 @@ def main() -> None:
         for weak_key, mac_key in bridges.items():
             src, dst = groups.pop(weak_key), groups[mac_key]
             dst["run_count"] += src["run_count"]
+            dst["check_count"] += src["check_count"]
             dst["synthesized"] = True
             dst.setdefault("bridged_from", []).append(weak_key)
             for f in ("gateways", "isps", "channels", "ssids", "labels"):
@@ -735,11 +791,19 @@ def main() -> None:
         runs = runs[-args.limit:]
 
     global_samples: dict[str, int] = {}
+    checks = 0
     for run in runs:
         g = groups.get(run["network_id"])
         if g is None:
             continue
-        g["severity_counts"][run["severity"]] = g["severity_counts"].get(run["severity"], 0) + 1
+        # A partial run contributes its measurements and nothing else. Its
+        # severity describes the two or three checks it happened to run, so
+        # folding it into the network's severity history would let a
+        # --speed-only reading vote on whether the network was healthy that
+        # day — a question it never asked.
+        if is_check(run):
+            checks += 1
+            g["severity_counts"][run["severity"]] = g["severity_counts"].get(run["severity"], 0) + 1
         for mk in run["metrics"]:
             g["metric_samples"][mk] = g["metric_samples"].get(mk, 0) + 1
             global_samples[mk] = global_samples.get(mk, 0) + 1
@@ -754,6 +818,7 @@ def main() -> None:
             "first_seen": g["first_seen"],
             "last_seen": g["last_seen"],
             "run_count": g["run_count"],
+            "check_count": g["check_count"],
             "gateways": g["gateways"],
             "isps": g["isps"],
             "ssids": g["ssids"],
@@ -773,6 +838,10 @@ def main() -> None:
             "duplicates_dropped": stats["duplicates"],
             "redacted_dropped": stats["redacted"],
             "runs": len(runs),
+            # Of those runs, the ones that examined the network rather than
+            # answering one question about it. "runs" is every row emitted
+            # below; the difference is the partial ones.
+            "checks": checks,
             "networks": len(networks),
         },
         "metrics": [

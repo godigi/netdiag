@@ -124,7 +124,7 @@ parse_mtr_tsv() {
 }
 
 mtr_run() {
-  [ "$QUICK" -eq 0 ] || return 0
+  [ "$QUICK" -eq 0 ] || { progress_skip "--quick"; return 0; }
 
   if command -v mtr >/dev/null 2>&1 && sudo -n true 2>/dev/null && command -v jq >/dev/null 2>&1; then
     hdr "Continuous loss to 1.1.1.1 (mtr -j -c 60 -i 0.2)"

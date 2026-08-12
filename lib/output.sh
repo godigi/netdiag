@@ -25,6 +25,7 @@ build_json() {
 
   NETDIAG_VERSION="$NETDIAG_VERSION" \
   NETDIAG_TIMESTAMP="$TIMESTAMP_ISO" \
+  NETDIAG_RUN_MODE="${RUN_MODE:-}" \
   NETDIAG_INTERFACE="$INTERFACE" \
   NETDIAG_LOCAL_IP="${LOCAL_IP:-}" \
   NETDIAG_GATEWAY="$GATEWAY" \
@@ -256,19 +257,21 @@ output_run() {
 
   # Baseline comparison: compare current JSON to history, surface any
   # regressions, then rebuild the JSON so they appear in its diagnosis array.
-  if [ "$NO_BASELINE" -eq 0 ] && [ "$BASELINE" -eq 1 ]; then
+  #
+  # Comparing and appending are separate conditions. --quick skips the
+  # *comparison* per the spec's 8 s budget: it costs two python3 starts plus
+  # a full parse of baseline.jsonl, which is the most expensive thing left
+  # in a quick run. It still appends below, so the launchd watcher — which
+  # runs --quick — keeps building the history that full runs are measured
+  # against. --speed-only is the same trade for a different reason: its
+  # numbers are worth storing and its verdict is not worth comparing.
+  if [ "$NO_BASELINE" -eq 0 ] && [ "$BASELINE" -eq 1 ] && [ "$QUICK" -eq 0 ]; then
     mkdir -p "$LOG_DIR"
-    # --quick skips the *comparison* per the spec's 8 s budget: it costs two
-    # python3 starts plus a full parse of baseline.jsonl, which is the most
-    # expensive thing left in a quick run. The snapshot is still appended
-    # below, so the launchd watcher — which runs --quick — keeps building
-    # the history that full runs are measured against.
-    if [ "$QUICK" -eq 0 ]; then
-      baseline_out="$(python3 "$HELPERS_DIR/baseline.py" \
-        --history "$LOG_DIR/baseline.jsonl" --current "$json_tmp" --n 10 2>/dev/null || true)"
-      BASELINE_JSON="$baseline_out"
-      if [ -n "$baseline_out" ]; then
-        baseline_lines="$(printf '%s' "$baseline_out" | python3 -c "
+    baseline_out="$(python3 "$HELPERS_DIR/baseline.py" \
+      --history "$LOG_DIR/baseline.jsonl" --current "$json_tmp" --n 10 2>/dev/null || true)"
+    BASELINE_JSON="$baseline_out"
+    if [ -n "$baseline_out" ]; then
+      baseline_lines="$(printf '%s' "$baseline_out" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 for r in d.get('regressions', []):
@@ -282,19 +285,23 @@ for r in d.get('regressions', []):
     elif kind == 'change':
         print(f'{label} changed: \"{cur}\" (was previously \"{med}\")')
 ")"
-        if [ -n "$baseline_lines" ]; then
-          while IFS= read -r reg; do
-            [ -z "$reg" ] && continue
-            add_diag warn BL-1 "Something changed since your last runs: $reg"
-            DIAGNOSIS_LINES+="warn|BL-1|Something changed since your last runs: $reg"$'\n'
-            warn "Something changed since your last runs: $reg"
-          done <<<"$baseline_lines"
-          # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
-          build_json_private > "$json_tmp"
-        fi
+      if [ -n "$baseline_lines" ]; then
+        while IFS= read -r reg; do
+          [ -z "$reg" ] && continue
+          add_diag warn BL-1 "Something changed since your last runs: $reg"
+          DIAGNOSIS_LINES+="warn|BL-1|Something changed since your last runs: $reg"$'\n'
+          warn "Something changed since your last runs: $reg"
+        done <<<"$baseline_lines"
+        # Rebuild JSON now that DIAGNOSIS_LINES has the regressions.
+        build_json_private > "$json_tmp"
       fi
     fi
-    # Append final snapshot to history (one record per run).
+  fi
+  # Append final snapshot to history (one record per run). Every record
+  # carries run_mode, so a consumer can tell a full check from a spot one
+  # instead of counting them alike.
+  if [ "$HISTORY_APPEND" -eq 1 ]; then
+    mkdir -p "$LOG_DIR"
     python3 -c "import json; print(json.dumps(json.load(open('$json_tmp'))))" \
       >> "$LOG_DIR/baseline.jsonl" 2>/dev/null || true
     prune_history "$LOG_DIR/baseline.jsonl" "$NETDIAG_KEEP_HISTORY"

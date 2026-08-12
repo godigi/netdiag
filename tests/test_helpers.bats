@@ -39,7 +39,7 @@ print(json.dumps(d, ensure_ascii=False))
 @test "emit_json: every documented top-level key is present" {
   run emit
   [ "$status" -eq 0 ]
-  for key in version timestamp interface network wifi gateway internet_latency \
+  for key in version timestamp run_mode interface network wifi gateway internet_latency \
              public dns traceroute per_hop bufferbloat mtu ipv6 vpn tcp_reach \
              wifi_scan wifi_disconnects speedtest ntp duplicate_ips dhcp mtr \
              wan hosts_file timings baseline diagnosis most_likely_root_cause \
@@ -48,6 +48,16 @@ print(json.dumps(d, ensure_ascii=False))
 import json,sys; print('yes' if '$key' in json.load(sys.stdin) else 'no')")"
     [ "$got" = "yes" ] || { echo "missing top-level key: $key"; return 1; }
   done
+}
+
+@test "emit_json: run_mode is carried through, and is null when unset" {
+  # Null rather than a "full" default: this helper is also run by hand and
+  # from the bats suite, and a default would let a record claim it was a
+  # full check when nothing ever said so.
+  run emit NETDIAG_RUN_MODE=speed-only
+  [ "$(printf '%s' "$output" | jq_get run_mode)" = '"speed-only"' ]
+  run emit
+  [ "$(printf '%s' "$output" | jq_get run_mode)" = "null" ]
 }
 
 @test "emit_json: wifi/wifi_scan are null on a wired run" {

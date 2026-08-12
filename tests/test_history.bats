@@ -333,6 +333,70 @@ assert d['runs'] == [] and d['networks'] == []
   [ "$output" = '"2026-01-01T00:00:00Z"' ]
 }
 
+# ── run_mode: not every stored run is a check ────────────────────────────
+# A --speed-only run measures throughput and forms no opinion about the
+# network. Counting it as a check is what let "1,986 checks" describe a
+# store full of spot readings.
+
+@test "a partial run contributes its metrics" {
+  # This is the entire point of storing it: throughput is the sparsest
+  # series in the store, and --speed-only is the cheap way to thicken it.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"run_mode":"speed-only","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"speedtest":{"down_mbps":331.3}'
+  run hpy 'import json,sys; m={x["key"]:x["samples"] for x in json.load(sys.stdin)["metrics"]}; print(m["speed_down_mbps"])'
+  [ "$output" = "1" ]
+}
+
+@test "a partial run does not vote on the network's severity" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"run_mode":"full","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"diagnosis":[{"severity":"warn","rule":"G3","summary":"x"}]'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"run_mode":"speed-only","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"diagnosis":[{"severity":"critical","rule":"G2","summary":"x"}]'
+  run hget networks.0.severity_counts
+  [ "$output" = '{"warn": 1}' ] || [ "$output" = '{"warn":1}' ]
+}
+
+@test "run_count counts every record and check_count only the real checks" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"run_mode":"full","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"run_mode":"quick","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-03T00:00:00Z '"run_mode":"speed-only","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-04T00:00:00Z '"run_mode":"mtu-only","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget networks.0.run_count
+  [ "$output" = "4" ]
+  run hget networks.0.check_count
+  [ "$output" = "2" ]
+  run hget counts.checks
+  [ "$output" = "2" ]
+}
+
+@test "a record with no run_mode still counts as a check" {
+  # 1,986 records predate the field. Absence has to decode as "unknown,
+  # treat as a check" or shipping this would have rewritten two months of
+  # history into spot readings.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"diagnosis":[{"severity":"warn","rule":"G3","summary":"x"}]'
+  run hget networks.0.check_count
+  [ "$output" = "1" ]
+  run hget networks.0.severity_counts
+  [ "$output" = '{"warn": 1}' ] || [ "$output" = '{"warn":1}' ]
+  run hget runs.0.run_mode
+  [ "$output" = "null" ]
+}
+
+@test "a future --dns-only would be recognised as partial without a code change" {
+  # The rule is the -only suffix, not a list of the three modes that exist
+  # today: a list goes stale silently, by counting a new partial mode as a
+  # full check.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"run_mode":"dns-only","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget networks.0.check_count
+  [ "$output" = "0" ]
+}
+
+@test "--show separates the runs on a network from the checks on it" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"run_mode":"full","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"run_mode":"speed-only","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run bash -c "THRESH_COMPARE_MIN_SAMPLES=5 THRESH_COMPARE_TAIL_PCTL=10 \
+    python3 '$HELPERS/history.py' --history '$LIVE' --show 2026-01-01T00:00:00Z \
+    | python3 -c 'import json,sys; c=json.load(sys.stdin)[\"context\"]; print(c[\"runs_on_network\"], c[\"checks_on_network\"])'"
+  [ "$output" = "2 1" ]
+}
+
 # ── CLI surface ──────────────────────────────────────────────────────────
 
 @test "--history emits one parseable object and exits 0" {
