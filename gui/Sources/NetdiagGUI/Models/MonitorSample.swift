@@ -187,4 +187,14 @@ enum Health: Sendable {
         case .critical: return "xmark.circle.fill"
         }
     }
+
+    /// What VoiceOver reads for the menu-bar item. The dot carries the whole
+    /// state of the app in one glyph, so it needs words as well as a colour.
+    var accessibilityLabel: String {
+        switch self {
+        case .healthy:  return "Network healthy"
+        case .warning:  return "Network warning"
+        case .critical: return "Network problem"
+        }
+    }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// netdiag.app — a menu-bar client for the netdiag CLI.
 ///
@@ -119,8 +120,7 @@ struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            Image(systemName: coordinator.currentHealth.symbol)
-                .foregroundStyle(tint)
+            Image(nsImage: Self.dot(for: coordinator.currentHealth))
             if style != .dotOnly,
                let flag = Flag.emoji(forISOCode: countryISO) {
                 Text(flag)
@@ -139,13 +139,42 @@ struct MenuBarLabel: View {
         }
     }
 
-    private var tint: Color {
-        switch coordinator.currentHealth {
-        case .healthy:  return .green
-        case .warning:  return .yellow
-        case .critical: return .red
+    /// The health dot, as a *non-template* NSImage.
+    ///
+    /// This is not the obvious way to write it, and the obvious way is
+    /// broken. `Image(systemName:).foregroundStyle(.green)` inside a
+    /// MenuBarExtra label renders grey: SwiftUI hands the label to an
+    /// NSStatusItem, which treats an SF Symbol as a template image and
+    /// throws the colour away so the icon can invert with the menu bar. A
+    /// status dot whose entire job is to be green, amber or red cannot be a
+    /// template, so the symbol is rasterised here with an explicit palette
+    /// colour and `isTemplate = false`.
+    ///
+    /// Colour is never the only signal — the three symbols differ in shape
+    /// as well, which is what makes the state readable to someone who can't
+    /// distinguish red from green.
+    @MainActor
+    private static func dot(for health: Health) -> NSImage {
+        if let cached = dotCache[health.symbol] { return cached }
+        let colour: NSColor
+        switch health {
+        case .healthy:  colour = .systemGreen
+        case .warning:  colour = .systemYellow
+        case .critical: colour = .systemRed
         }
+        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [colour]))
+        let image = NSImage(systemSymbolName: health.symbol,
+                            accessibilityDescription: health.accessibilityLabel)?
+            .withSymbolConfiguration(config) ?? NSImage()
+        image.isTemplate = false
+        dotCache[health.symbol] = image
+        return image
     }
+
+    /// Rebuilt only when health changes, not on every menu-bar redraw.
+    @MainActor
+    private static var dotCache: [String: NSImage] = [:]
 
     private var countryISO: String? {
         coordinator.monitor.latest?.publicInfo.countryISO
