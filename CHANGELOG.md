@@ -4,6 +4,52 @@ All notable changes to `netdiag` are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-11
+
+Makes the run history readable. `~/net-diag/baseline.jsonl` already held the
+complete JSON of every check ever run — 1,986 finished reports, each with
+its own diagnosis prose — and the app could open exactly one of them: the
+most recent. Now you can open any of them, and see how it compares to what
+is normal for that network.
+
+### Added
+
+- **`netdiag --show=<id>`** — one stored run in full, plus a `comparison`
+  block scoring each of its metrics against every other run on the same
+  network: median, p10/p90, percentile, and a verdict. ~0.14 s against a
+  1,986-record store.
+- **Stable run ids** on `--history` output: the timestamp, a dot, and eight
+  hex characters of the record's content hash. `ts` alone cannot address a
+  run — `helpers/history.py` has always deduped on *(timestamp, content)*
+  precisely because two runs can land in the same second.
+- **`THRESH_COMPARE_MIN_SAMPLES` and `THRESH_COMPARE_TAIL_PCTL`** in
+  `lib/thresholds.sh`. One symmetric tail rather than a "worse" and a
+  "better" percentile: a directional pair reads correctly for latency and
+  inverts for throughput, where the *low* percentile is the bad one.
+- **App: browse every check on a network** — Networks → Browse checks → a
+  run, showing the same report card as the Status tab plus the comparison.
+
+### Fixed
+
+- The menu-bar health dot rendered grey in every state. `MenuBarExtra` hands
+  its label to an `NSStatusItem`, which template-renders SF Symbols and
+  discards `foregroundStyle` — so the one glyph carrying the app's whole
+  status said nothing. Now rasterised with an explicit palette colour.
+- Stored records are decoded leniently. Swift's synthesized `Decodable`
+  throws on a missing key rather than using the default beside the property,
+  and only **60 of 1,986** stored records carry `network` or `timings` — the
+  rest predate those fields. A strict decode opened 3% of the history and
+  called the remainder corrupt.
+
+### Notes
+
+- `helpers/history.py` is now the third file `tests/test_thresholds.bats`
+  guards against inline numeric cutoffs, alongside `lib/diagnosis.sh` and
+  `lib/monitor.sh`. It judges now, so it lives under the same rule.
+- Percentile ranks average ties. Counting them as "at or below" puts a
+  0 %-loss run — the usual case — at the 100th percentile of a
+  lower-is-better metric and calls a flawless check *worse than usual*.
+
 ## [0.7.0] - 2026-08-11
 
 Adds a native macOS menu-bar app, and the two CLI surfaces it is built on.

@@ -37,10 +37,25 @@ of them is reachable from the UI.
 
 ## Two facts that make this small
 
-**Stored records are the same shape as `--json`.** `output_run` writes
-`baseline.jsonl` with the same `build_json` that produces `--json` output,
-so Swift's existing `RunSnapshot` decoder reads a two-month-old record with
-no new model code. Verified by comparing the key sets.
+**Stored records are the same shape as `--json`** — *for records written by
+a recent netdiag.* `output_run` writes `baseline.jsonl` with the same
+`build_json` that produces `--json` output, so the sections line up.
+
+> **Corrected during implementation.** The original draft went further and
+> claimed `RunSnapshot` would therefore read a two-month-old record with no
+> new model code, "verified by comparing the key sets". That verification
+> compared one record — the newest — and the newest record is by definition
+> written by today's schema. Across the real store, **60 of 1,986 records
+> have `network` or `timings`**; 1,923 have no `internet_latency`, 1,854 no
+> `traceroute`. Swift's synthesized `Decodable` throws `keyNotFound` rather
+> than falling back to the default beside a property, so a strict decode
+> opens 3% of the history and reports the rest as corrupt.
+>
+> Every model that reads a *stored* record therefore decodes leniently
+> (`Support/LenientDecoding.swift`): absent, null, or wrong-typed means "the
+> netdiag that wrote this did not record that", which is what the property's
+> default already says. This is the schema-drift cost of a store that spans
+> versions, and it will apply to every future field too.
 
 **The run list needs no new CLI work.** `HistoryStore` already calls
 `NetdiagRunner.history(limit: 0)`, and `--history` already returns per-run

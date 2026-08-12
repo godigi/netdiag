@@ -16,11 +16,12 @@ Grown from a ~300-line bash starter into a modular `lib/*.sh` CLI with 14 diagno
   - Two checks must **not** be parallelised, because both measure a property of a quiet link: `internet_ping_run` (packet loss / latency) and `bufferbloat_run` (which saturates the link deliberately). Running the loss probe inside the parallel batch made it report 30% loss on a healthy network.
 - **Read-only:** never modify routing, DNS, WiFi, or ARP state.
 - **shellcheck-clean** at default severity. `# shellcheck disable=...` only with justification.
-- **Thresholds live in `lib/thresholds.sh`, nowhere else.** Two things now
-  judge a network — `lib/diagnosis.sh` (one verdict per scan) and
-  `lib/monitor.sh` (one every few seconds) — and if they drift the app
-  shows a green dot over a red report. `tests/test_thresholds.bats` fails
-  the build on an inline numeric cutoff in either file.
+- **Thresholds live in `lib/thresholds.sh`, nowhere else.** Three things now
+  judge a network — `lib/diagnosis.sh` (one verdict per scan),
+  `lib/monitor.sh` (one every few seconds) and `helpers/history.py` (one per
+  metric, per stored run) — and if they drift the app shows a green dot over
+  a red report. `tests/test_thresholds.bats` fails the build on an inline
+  numeric cutoff in any of the three.
 - **The GUI holds no diagnostic logic.** `gui/` renders what the CLI
   decides: rule IDs come from `status.rules`, prose comes from
   `diagnosis[].summary` verbatim. If a change would put a threshold or a
@@ -33,16 +34,23 @@ netdiag [TARGET] [--quick] [--quiet] [--json] [--expert] [--redact]
         [--gping] [--no-gping] [--no-bufferbloat]
         [--speed] [--no-speed] [--mtu-only] [--wifi-only]
         [--baseline] [--no-baseline] [--log PATH] [-h|--help]
-netdiag --watch[=SEC] | --summary[=HOURS] | --history[=N]
+netdiag --watch[=SEC] | --summary[=HOURS] | --history[=N] | --show=ID
 netdiag --monitor [--monitor-fast-interval SEC] [--monitor-degraded-interval SEC]
                   [--monitor-medium-interval SEC] [--monitor-slow-interval SEC]
                   [--monitor-count N]
 netdiag --install-watcher | --uninstall-watcher
 ```
 
-`--history` and `--monitor` exist for the GUI (see below) but are ordinary
-CLI surface: both are documented in `docs/JSON-SCHEMA.md`, both are covered
-by bats, and neither requires the app.
+`--history`, `--show` and `--monitor` exist for the GUI (see below) but are
+ordinary CLI surface: all three are documented in `docs/JSON-SCHEMA.md`, all
+three are covered by bats, and none requires the app.
+
+`--show=ID` returns one stored run in full plus a `comparison` block judging
+each metric against every other run on the same network. The judging is why
+`helpers/history.py` is now a **third** file bound by the thresholds rule
+below — it decides whether a number is good, so its cutoffs live in
+`lib/thresholds.sh` like every other cutoff, reaching Python through the
+environment.
 
 `--monitor` is the machine-readable sibling of `--watch`, not a duplicate
 of it: `--watch` re-runs `--quick` and prints prose for a person, while
