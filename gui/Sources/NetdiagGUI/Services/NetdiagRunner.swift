@@ -31,11 +31,12 @@ enum NetdiagError: LocalizedError {
 /// function that owns its process for the length of one call and hands back
 /// an immutable result has none.
 ///
-/// `--json` only emits at the very end of a run, so there is no partial
-/// output to stream and therefore no meaningful progress percentage. The UI
-/// shows an indeterminate spinner with an elapsed timer, and offers
-/// `--quick` (~8 s) beside the full run (~30 s without the speed test,
-/// ~65-115 s with it, depending on which speedtest CLI is installed).
+/// `--json` still only emits at the very end of a run — that is acceptance
+/// criterion 2, `netdiag --json | jq .`, and it is why there is no partial
+/// result to stream. What *does* stream is the fd-3 progress protocol from
+/// `docs/design/watching-it-happen.md`: the CLI points fd 3 at stderr under
+/// `--progress` and announces a plan and one event per phase, which this
+/// file parses as it arrives and hands to a `ScanProgress`.
 struct NetdiagRunner {
 
     enum Depth {
@@ -50,12 +51,18 @@ struct NetdiagRunner {
         /// connection that is already failing makes the user's situation
         /// worse in the middle of whatever they were doing.
         case alertTriggered
+        /// One question, answered on its own: `--speed-only`. Its record is
+        /// a *measurement*, not an opinion about the network's health, so
+        /// the caller must not adopt it as the current report — see Part B
+        /// of docs/design/watching-it-happen.md.
+        case speedOnly
 
         var arguments: [String] {
             switch self {
             case .full:           return ["--json", "--no-gping"]
             case .quick:          return ["--json", "--no-gping", "--quick"]
             case .alertTriggered: return ["--json", "--no-gping", "--no-bufferbloat", "--no-speed"]
+            case .speedOnly:      return ["--json", "--no-gping", "--speed-only"]
             }
         }
 
@@ -67,19 +74,49 @@ struct NetdiagRunner {
             case .full:           return "about a minute"
             case .quick:          return "about 10 seconds"
             case .alertTriggered: return "about 30 seconds"
+            case .speedOnly:      return "about 30 seconds"
             }
         }
     }
 
-    /// Run and decode. Cancellation terminates the child: a scan the user
-    /// abandoned must not go on saturating the link, and must not go on
-    /// holding the monitor paused.
+    /// Run and decode, reporting progress as it happens.
+    ///
+    /// Cancellation terminates the child: a scan the user abandoned must not
+    /// go on saturating the link, and must not go on holding the monitor
+    /// paused.
     static func run(depth: Depth, target: String? = nil,
-                    extraArguments: [String] = []) async throws -> RunResult {
+                    extraArguments: [String] = [],
+                    progress: ScanProgress? = nil) async throws -> RunResult {
         var args = depth.arguments + extraArguments
         if let target, !target.isEmpty { args.append(target) }
+
+        // Ordering matters, so events go through an AsyncStream rather than
+        // one hop-to-the-main-actor Task per line. The stream buffers FIFO;
+        // a task per line does not, and a `done` overtaking its `start`
+        // leaves a finished phase rendered as running.
+        var continuation: AsyncStream<String>.Continuation?
+        var pump: Task<Void, Never>?
+        if let progress, await supportsProgress() {
+            args.append("--progress")
+            let (stream, sink) = AsyncStream.makeStream(of: String.self)
+            continuation = sink
+            pump = Task { @MainActor in
+                for await line in stream { progress.ingest(line: line) }
+            }
+        }
+
         let started = Date()
-        let (out, _, status) = try await execute(arguments: args)
+        let (out, _, status) = try await execute(arguments: args,
+                                                 stderrLines: continuation)
+        // Every event is applied before the caller sees the result, so the
+        // view never renders a finished run over a half-filled phase list.
+        await pump?.value
+
+        // Cancelling terminates the child, which returns here as an
+        // ordinary signal status with no JSON on stdout. Saying so as
+        // `CancellationError` is what lets the coordinator tell "the user
+        // pressed Cancel" apart from "netdiag emitted garbage".
+        try Task.checkCancellation()
 
         if status == 3 {
             throw NetdiagError.scriptError(out.isEmpty ? "exit status 3" : String(out.prefix(400)))
@@ -90,6 +127,26 @@ struct NetdiagRunner {
         }
         return RunResult(snapshot: snapshot, rawJSON: out, exitCode: status,
                          startedAt: started, finishedAt: Date())
+    }
+
+    /// Does the installed CLI understand `--progress`?
+    ///
+    /// Asked because the app bundle and the CLI are installed separately —
+    /// `BinaryLocator` resolves whatever `netdiag` is on the machine, which
+    /// may be older than this build. `bin/netdiag` answers an unknown flag
+    /// with exit 3, so sending it unconditionally would turn every scan on
+    /// such a machine into "netdiag couldn't complete the check".
+    ///
+    /// `--progress --help` rather than grepping the help text: the flag is
+    /// machine-facing and may reasonably go undocumented, but a version that
+    /// parses it exits 0 and a version that doesn't exits 3. Costs one
+    /// process, once, for the life of the app.
+    private static func supportsProgress() async -> Bool {
+        await ProgressSupport.shared.value {
+            guard let (_, _, status) = try? await execute(
+                arguments: ["--progress", "--help"]) else { return false }
+            return status == 0
+        }
     }
 
     /// `netdiag --redact --json`, for "Copy shareable report". The point of
@@ -143,7 +200,15 @@ struct NetdiagRunner {
     /// after `waitUntilExit`: netdiag can emit a few hundred KB of JSON,
     /// which is more than a pipe buffer holds, and reading afterwards
     /// deadlocks the moment it is.
-    private static func execute(arguments: [String]) async throws -> (String, String, Int32) {
+    ///
+    /// `stderrLines` reuses that same drain rather than adding a reader.
+    /// Progress that arrived only after `waitUntilExit` would be a list of
+    /// results for a run that had already finished — the moment progress
+    /// stops being progress.
+    private static func execute(
+        arguments: [String],
+        stderrLines: AsyncStream<String>.Continuation? = nil
+    ) async throws -> (String, String, Int32) {
         guard let binary = BinaryLocator.resolve() else { throw NetdiagError.binaryNotFound }
 
         let process = Process()
@@ -156,13 +221,19 @@ struct NetdiagRunner {
         process.standardError = errPipe
 
         let collector = OutputCollector()
+        let splitter = stderrLines.map { sink in
+            LineSplitter { line in _ = sink.yield(line) }
+        }
         outPipe.fileHandleForReading.readabilityHandler = { handle in
             let d = handle.availableData
             if !d.isEmpty { collector.appendOut(d) }
         }
         errPipe.fileHandleForReading.readabilityHandler = { handle in
             let d = handle.availableData
-            if !d.isEmpty { collector.appendErr(d) }
+            if !d.isEmpty {
+                collector.appendErr(d)
+                splitter?.feed(d)
+            }
         }
 
         return try await withTaskCancellationHandler {
@@ -175,7 +246,14 @@ struct NetdiagRunner {
                     // is silently truncated and the decode fails on a run
                     // that actually succeeded.
                     collector.appendOut(outPipe.fileHandleForReading.availableData)
-                    collector.appendErr(errPipe.fileHandleForReading.availableData)
+                    let tail = errPipe.fileHandleForReading.availableData
+                    collector.appendErr(tail)
+                    splitter?.feed(tail)
+                    // The final `run done` event can land in that tail, so
+                    // flush before closing: a consumer that never sees it
+                    // is a consumer whose phase rows never stop spinning.
+                    splitter?.flush()
+                    stderrLines?.finish()
                     continuation.resume(returning: (collector.stdoutString,
                                                     collector.stderrString,
                                                     proc.terminationStatus))
@@ -183,12 +261,68 @@ struct NetdiagRunner {
                 do {
                     try process.run()
                 } catch {
+                    stderrLines?.finish()
                     continuation.resume(throwing: NetdiagError.scriptError(error.localizedDescription))
                 }
             }
         } onCancel: {
             if process.isRunning { process.terminate() }
         }
+    }
+}
+
+/// Remembers one answer for the life of the process.
+///
+/// An actor rather than a `static var` because `supportsProgress()` can be
+/// asked from two runs at once — the alert-triggered scan and a scan the
+/// user started overlap by design — and two concurrent probes would spawn
+/// two children to learn the same thing.
+private actor ProgressSupport {
+    static let shared = ProgressSupport()
+    private var cached: Bool?
+
+    func value(_ probe: @Sendable () async -> Bool) async -> Bool {
+        if let cached { return cached }
+        let answer = await probe()
+        cached = answer
+        return answer
+    }
+}
+
+/// Reassembles whole lines from arbitrary pipe chunks.
+///
+/// A read boundary lands wherever the kernel puts it, so `{"t":"phase"` and
+/// `,"state":"done"}` routinely arrive as two callbacks. Handing each chunk
+/// to a JSON decoder would drop both halves of every event unlucky enough
+/// to straddle one.
+private final class LineSplitter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private let sink: @Sendable (String) -> Void
+
+    init(sink: @escaping @Sendable (String) -> Void) { self.sink = sink }
+
+    func feed(_ data: Data) {
+        guard !data.isEmpty else { return }
+        var lines: [String] = []
+        lock.lock()
+        buffer.append(data)
+        while let index = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+            let line = buffer[buffer.startIndex..<index]
+            buffer.removeSubrange(buffer.startIndex...index)
+            if let text = String(data: line, encoding: .utf8) { lines.append(text) }
+        }
+        lock.unlock()
+        for line in lines { sink(line) }
+    }
+
+    /// The last line of a stream has no trailing newline to end it.
+    func flush() {
+        lock.lock()
+        let rest = buffer
+        buffer = Data()
+        lock.unlock()
+        if let text = String(data: rest, encoding: .utf8), !text.isEmpty { sink(text) }
     }
 }
 

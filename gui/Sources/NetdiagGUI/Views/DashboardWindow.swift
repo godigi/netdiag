@@ -1,21 +1,25 @@
 import SwiftUI
 
-/// The main window: report card, history, networks.
+/// Declared outside the view so the coordinator can ask for one. The
+/// dropdown's "Latency test" has to open the Live tab, and the window it
+/// wants may not exist at the moment it asks.
+enum DashboardTab: String, CaseIterable, Identifiable {
+    case report = "Status"
+    case live = "Live"
+    case history = "History"
+    case networks = "Networks"
+    var id: String { rawValue }
+}
+
+/// The main window: report card, live stream, history, networks.
 struct DashboardWindow: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
-    @State private var tab = Tab.report
-
-    enum Tab: String, CaseIterable, Identifiable {
-        case report = "Status"
-        case history = "History"
-        case networks = "Networks"
-        var id: String { rawValue }
-    }
+    @State private var tab = DashboardTab.report
 
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(DashboardTab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -25,11 +29,22 @@ struct DashboardWindow: View {
 
             switch tab {
             case .report:   DashboardView()
+            case .live:     LiveView()
             case .history:  HistoryView()
             case .networks: NetworksView()
             }
         }
-        .task { await coordinator.history.load() }
+        .task {
+            // Both paths are needed: `.task` catches a request made while
+            // the window did not exist yet, `onChange` catches one made
+            // while it was already open behind another app.
+            if let requested = coordinator.consumeRequestedTab() { tab = requested }
+            await coordinator.history.load()
+        }
+        .onChange(of: coordinator.requestedTab) { _, new in
+            guard new != nil, let requested = coordinator.consumeRequestedTab() else { return }
+            tab = requested
+        }
     }
 }
 
@@ -49,6 +64,11 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+
+                if coordinator.isScanning {
+                    ScanProgressView(progress: coordinator.progress)
+                    Divider()
+                }
 
                 if let run = coordinator.latestRun {
                     RunReportView(snapshot: run.snapshot, showRuleIDs: expertExpanded)
@@ -79,11 +99,20 @@ struct DashboardView: View {
             Spacer()
             if coordinator.isScanning {
                 HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    // No percentage: --json emits only at the very end, so
-                    // there is nothing to be a percentage *of*. An elapsed
-                    // timer and an honest estimate beat a fake bar.
-                    Text(elapsedLabel).monospacedDigit().font(.caption)
+                    // The elapsed seconds stay even now that the phase list
+                    // exists: the list says how far along the run is
+                    // through a *declared* set of checks, and says nothing
+                    // about how long the rest will take. The counter is the
+                    // only honest thing to put next to it.
+                    //
+                    // Driven by a TimelineView because nothing else ticks
+                    // once a second — during a scan the monitor is paused,
+                    // so a counter recomputed on observation alone would
+                    // sit frozen at whatever second the last event landed.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(elapsedLabel(at: context.date))
+                            .monospacedDigit().font(.caption)
+                    }
                     Button("Cancel") { coordinator.cancelScan() }
                 }
             } else {
@@ -95,9 +124,9 @@ struct DashboardView: View {
         }
     }
 
-    private var elapsedLabel: String {
-        let elapsed = Int(Date().timeIntervalSince(coordinator.scanStartedAt ?? Date()))
-        return "\(elapsed)s"
+    private func elapsedLabel(at now: Date) -> String {
+        let elapsed = Int(now.timeIntervalSince(coordinator.scanStartedAt ?? now))
+        return "\(max(elapsed, 0))s"
     }
 
     private var emptyState: some View {

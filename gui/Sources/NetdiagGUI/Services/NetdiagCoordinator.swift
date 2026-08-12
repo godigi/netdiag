@@ -17,12 +17,24 @@ final class NetdiagCoordinator {
     let details = RunDetailStore()
     let alerts = AlertEngine()
     let watcher = WatcherControl()
+    /// The run in flight, phase by phase. Reset at the start of every run
+    /// and fed from the child's fd-3 stream as it arrives.
+    let progress = ScanProgress()
 
     private(set) var latestRun: RunResult?
     private(set) var isScanning = false
     private(set) var scanStartedAt: Date?
     private(set) var scanKind: String = ""
     private(set) var lastRunError: String?
+    /// The last `--speed-only` result, kept apart from `latestRun`. A speed
+    /// test measures one thing and diagnoses nothing, so letting it become
+    /// the current report would replace a full diagnosis with a card that
+    /// has no verdict on it — Part B of the spec, in the app's own terms.
+    private(set) var latestSpeedTest: RunSnapshot.Speedtest?
+    private(set) var latestSpeedTestAt: Date?
+    /// A tab another surface has asked the dashboard to show. Consumed by
+    /// `DashboardWindow`, which may not exist yet at the moment of asking.
+    var requestedTab: DashboardTab?
     /// Set while a scan started *by an alert* is in flight. The loop guard:
     /// a scan started this way must never start another. Without it, a
     /// scan's own bufferbloat and speed phases can raise the very alert
@@ -129,6 +141,22 @@ final class NetdiagCoordinator {
     // MARK: - Scans
 
     func runScan(depth: NetdiagRunner.Depth, reason: String, target: String? = nil) {
+        launch(depth: depth, reason: reason, target: target, adoptAsReport: true)
+    }
+
+    /// The dropdown's "Speed test": `--speed-only`, with the same live
+    /// progress a full scan shows.
+    ///
+    /// `adoptAsReport: false` is the whole difference. A speed-only run
+    /// carries a measurement and no diagnosis, so it neither replaces the
+    /// report card nor reaches the alert engine — a fast link is not
+    /// evidence that nothing is wrong.
+    func runSpeedTest() {
+        launch(depth: .speedOnly, reason: "speed test", target: nil, adoptAsReport: false)
+    }
+
+    private func launch(depth: NetdiagRunner.Depth, reason: String,
+                        target: String?, adoptAsReport: Bool) {
         guard !isScanning else {
             log.debug("scan already running, ignoring request: \(reason, privacy: .public)")
             return
@@ -137,6 +165,7 @@ final class NetdiagCoordinator {
         scanStartedAt = Date()
         scanKind = reason
         lastRunError = nil
+        progress.reset()
 
         // Both halves matter. Pausing the monitor keeps the scan's speed
         // test and bufferbloat probe from poisoning the samples and
@@ -158,17 +187,27 @@ final class NetdiagCoordinator {
                 self.scanWasAlertTriggered = false
                 self.alerts.scanInProgress = false
                 self.monitor.resume(reason: "a check is running")
+                // Whatever happened — a clean exit, a crash, Cancel — the
+                // child is gone, so no phase can report again. Without this
+                // a cancelled run leaves its rows spinning forever.
+                self.progress.processEnded(exit: nil)
             }
             do {
-                let result = try await NetdiagRunner.run(depth: depth, target: target)
+                let result = try await NetdiagRunner.run(depth: depth, target: target,
+                                                         progress: self.progress)
                 guard !Task.isCancelled else { return }
-                self.latestRun = result
-                self.alerts.evaluate(run: result.snapshot)
+                if adoptAsReport {
+                    self.latestRun = result
+                    self.alerts.evaluate(run: result.snapshot)
+                } else {
+                    self.latestSpeedTest = result.snapshot.speedtest
+                    self.latestSpeedTestAt = Date()
+                }
                 // The run appended itself to baseline.jsonl, so the charts
                 // and the network list are one record out of date until
                 // this reload.
                 await self.history.load()
-                self.log.info("scan finished in \(result.duration, format: .fixed(precision: 1))s, exit \(result.exitCode)")
+                self.log.info("\(reason, privacy: .public) finished in \(result.duration, format: .fixed(precision: 1))s, exit \(result.exitCode)")
             } catch is CancellationError {
                 self.log.debug("scan cancelled")
             } catch {
@@ -181,6 +220,31 @@ final class NetdiagCoordinator {
     func cancelScan() {
         scanTask?.cancel()
         scanTask = nil
+    }
+
+    // MARK: - Latency test
+
+    /// The dropdown's "Latency test". Deliberately not a check: it asks the
+    /// monitor already running to sample faster for a minute and shows the
+    /// result live. Spawning a second `netdiag --monitor` would put two
+    /// probers on the link one of them is trying to measure.
+    func startLatencyTest() {
+        requestedTab = .live
+        guard Defaults.monitoringEnabled, monitor.isRunning else {
+            // The Live tab explains the off state itself, which is why this
+            // still opens it rather than silently doing nothing.
+            log.debug("latency test asked for while monitoring is off")
+            return
+        }
+        monitor.beginBurst(interval: Defaults.latencyTestInterval,
+                           duration: Defaults.latencyTestDuration)
+    }
+
+    func stopLatencyTest() { monitor.endBurst() }
+
+    func consumeRequestedTab() -> DashboardTab? {
+        defer { requestedTab = nil }
+        return requestedTab
     }
 
     /// An alert fired. Run a scan so the notification can be replaced with

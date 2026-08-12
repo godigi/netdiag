@@ -44,12 +44,14 @@ struct ExpertPanel: View {
             if samples.count < 2 {
                 Text("Collecting samples…").font(.caption).foregroundStyle(.secondary)
             } else {
-                sparkline("Gateway RTT (ms)", samples.compactMap { s in
-                    s.gateway.rttAvgMs.map { (s.timestamp, $0) }
-                })
-                sparkline("Gateway loss (%)", samples.compactMap { s in
-                    s.gateway.lossPct.map { (s.timestamp, $0) }
-                })
+                // Through MonitorSeries so a pause reads as a break rather
+                // than as a straight line between the last sample before it
+                // and the first one after. The Live tab draws the same data
+                // full size, with the gaps shaded and named.
+                sparkline("Gateway RTT (ms)",
+                          MonitorSeries.build(samples, tier: "fast") { $0.gateway.rttAvgMs })
+                sparkline("Gateway loss (%)",
+                          MonitorSeries.build(samples, tier: "fast") { $0.gateway.lossPct })
             }
         }
     }
@@ -61,14 +63,21 @@ struct ExpertPanel: View {
     }
 
     @ViewBuilder
-    private func sparkline(_ title: String, _ points: [(Date, Double)]) -> some View {
+    private func sparkline(_ title: String, _ series: MonitorSeries.Result) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            if points.isEmpty {
+            if series.isEmpty {
                 Text("no data").font(.caption2).foregroundStyle(.tertiary)
             } else {
-                Chart(points, id: \.0) { point in
-                    LineMark(x: .value("Time", point.0), y: .value(title, point.1))
+                Chart {
+                    ForEach(Array(series.segments.enumerated()), id: \.offset) { index, segment in
+                        ForEach(segment) { point in
+                            LineMark(x: .value("Time", point.date),
+                                     y: .value(title, point.value),
+                                     series: .value("segment", index))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
                 }
                 .chartXAxis(.hidden)
                 .chartYAxis { AxisMarks(position: .leading) }

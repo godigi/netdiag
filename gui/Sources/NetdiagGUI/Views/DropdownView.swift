@@ -51,9 +51,11 @@ struct DropdownView: View {
     /// Why the app is not currently watching, when it is not. A stopped
     /// indicator with no explanation reads as a broken app.
     private var statusDetail: String? {
-        if coordinator.isScanning {
-            let elapsed = Int(Date().timeIntervalSince(coordinator.scanStartedAt ?? Date()))
-            return "Running a check… (\(elapsed)s)"
+        // The scanning case is handled by the progress line in `actions`,
+        // which reports phases rather than a bare elapsed count.
+        if coordinator.isScanning { return nil }
+        if coordinator.monitor.isBursting {
+            return "Latency test running — sampling every \(Defaults.latencyTestInterval)s."
         }
         if let reason = coordinator.monitor.pauseReason {
             return "Paused — \(reason)."
@@ -120,23 +122,41 @@ struct DropdownView: View {
     private var actions: some View {
         VStack(spacing: 2) {
             if coordinator.isScanning {
-                Button {
-                    coordinator.cancelScan()
-                } label: {
-                    HStack {
+                // Same ScanProgress the dashboard renders as a grid, in the
+                // one line this panel has room for.
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
-                        Text("Cancel check")
-                        Spacer()
+                        ScanProgressLine(progress: coordinator.progress)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
                     }
+                    Button("Cancel") { coordinator.cancelScan() }
+                        .controlSize(.small)
                 }
-                .buttonStyle(.plain)
                 .padding(.horizontal, 12).padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 dropdownButton("Check my connection", icon: "stethoscope") {
                     coordinator.runScan(depth: .full, reason: "you asked")
                 }
                 dropdownButton("Quick check", icon: "bolt") {
                     coordinator.runScan(depth: .quick, reason: "you asked")
+                }
+                // One question at a time, for when a full check is more
+                // than the user wants to wait for.
+                dropdownButton(speedTestTitle, icon: "speedometer") {
+                    coordinator.runSpeedTest()
+                }
+                dropdownButton("Latency test", icon: "waveform.path.ecg") {
+                    // No child process: this speeds up the monitor already
+                    // running and shows it live. A second monitor would
+                    // contend with the first for the link being measured.
+                    coordinator.startLatencyTest()
+                    openWindow(id: WindowID.dashboard)
+                    NSApp.activate(ignoringOtherApps: true)
                 }
             }
 
@@ -184,6 +204,15 @@ struct DropdownView: View {
     }
 
     // MARK: - Derived values
+
+    /// Carries the last result once there is one, so pressing it a second
+    /// time is an informed choice. A speed is a measurement and nothing
+    /// more — no grade, no colour, no opinion about whether it is enough.
+    private var speedTestTitle: String {
+        guard let speed = coordinator.latestSpeedTest,
+              let down = speed.downMbps else { return "Speed test" }
+        return String(format: "Speed test — last: %.0f Mbps down", down)
+    }
 
     private var tint: Color {
         switch coordinator.currentHealth {

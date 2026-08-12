@@ -50,11 +50,17 @@ final class MonitorStream {
     /// this process runs for days: at the 10 s cadence 360 samples is an
     /// hour, which is as far back as a live sparkline is worth reading.
     private(set) var recent: [MonitorSample] = []
+    /// When the on-demand latency test's faster cadence expires, or nil
+    /// when there isn't one. Public so the Live tab can say out loud that
+    /// what it is drawing is temporary.
+    private(set) var burstUntil: Date?
 
     private var process: Process?
     private var readTask: Task<Void, Never>?
     private var restartAttempts = 0
     private var pauseHolders: Set<String> = []
+    private var burstInterval: Int?
+    private var burstTimer: Task<Void, Never>?
 
     private let log = Logger(subsystem: "me.brianfreeman.netdiag", category: "monitor")
     private static let recentCapacity = 360
@@ -72,10 +78,16 @@ final class MonitorStream {
         }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
+        // A burst overrides the degraded tier as well as the fast one.
+        // Leaving degraded at its own setting would make a struggling link
+        // sample *slower* during a latency test than a healthy one — the
+        // opposite of what the user asked for by starting the test.
+        let fast = burstInterval ?? Defaults.fastInterval
+        let degraded = burstInterval ?? Defaults.degradedInterval
         proc.arguments = [
             "--monitor",
-            "--monitor-fast-interval",     String(Defaults.fastInterval),
-            "--monitor-degraded-interval", String(Defaults.degradedInterval),
+            "--monitor-fast-interval",     String(fast),
+            "--monitor-degraded-interval", String(degraded),
             "--monitor-medium-interval",   String(Defaults.mediumInterval),
             "--monitor-slow-interval",     String(Defaults.slowInterval),
         ]
@@ -123,12 +135,76 @@ final class MonitorStream {
         isPaused = false
         pauseHolders.removeAll()
         pauseReason = nil
+        // Stopping is the end of the test too. A burst cadence that
+        // survived into the next `start()` would be a faster sample rate
+        // the user never asked for, with nothing on screen to explain it.
+        burstTimer?.cancel()
+        burstTimer = nil
+        burstInterval = nil
+        burstUntil = nil
     }
 
+    /// Same child, new arguments. Both the pause holders and any burst
+    /// window are carried across, because `stop()` clears state that the
+    /// *reasons* for it outlive: a cadence change applied mid-scan would
+    /// otherwise hand back a running monitor probing the link that scan is
+    /// measuring, and cancel a latency test the user is watching.
     func restart() {
+        let holders = pauseHolders
+        let interval = burstInterval
+        let until = burstUntil
         stop()
+        burstInterval = interval
+        burstUntil = until
         restartAttempts = 0
         start()
+        for reason in holders { pause(reason: reason) }
+    }
+
+    // MARK: - Burst cadence
+    //
+    // The dropdown's "Latency test" is this and nothing else. It does not
+    // shell out: a second `netdiag --monitor` would contend with this one
+    // for the very link it was started to measure, and the two would report
+    // each other's traffic as latency.
+
+    var isBursting: Bool { burstUntil != nil }
+
+    /// Sample the fast tier faster, for a bounded window.
+    ///
+    /// A restart rather than a signal, because the intervals are
+    /// command-line arguments — the same path `applyCadenceSettings` uses.
+    func beginBurst(interval: Int, duration: TimeInterval) {
+        guard isRunning else { return }
+        burstInterval = interval
+        burstUntil = Date().addingTimeInterval(duration)
+        restart()
+
+        burstTimer?.cancel()
+        burstTimer = Task { [weak self] in
+            // `Task.sleep` measures on the continuous clock, which keeps
+            // counting while the Mac is asleep — so a machine that sleeps
+            // mid-test wakes with the deadline already past and restores
+            // immediately, rather than owing the user the remainder.
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled else { return }
+            self?.endBurst()
+        }
+    }
+
+    /// Restore the configured cadence. Idempotent, and reachable from four
+    /// directions — the timer, a user pressing stop, the next sample's
+    /// deadline check, and monitoring being switched off — because a fast
+    /// cadence that outlives its window is a battery cost the user never
+    /// agreed to and would have no way to find.
+    func endBurst() {
+        guard burstUntil != nil else { return }
+        burstUntil = nil
+        burstInterval = nil
+        burstTimer?.cancel()
+        burstTimer = nil
+        guard isRunning else { return }
+        restart()
     }
 
     // MARK: - Pause / resume
@@ -198,6 +274,11 @@ final class MonitorStream {
         // A sample proves the process is alive and producing, which is the
         // only evidence that matters for backoff.
         restartAttempts = 0
+        // Backstop for the burst deadline. The timer is the normal path;
+        // this catches the case where it was lost with a cancelled task
+        // tree, which would otherwise leave the machine sampling every two
+        // seconds indefinitely.
+        if let until = burstUntil, Date() >= until { endBurst() }
         latest = sample
         recent.append(sample)
         if recent.count > Self.recentCapacity {

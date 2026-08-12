@@ -152,10 +152,14 @@ struct MonitorSample: Decodable, Sendable {
         /// The global suppressor for every loss alert — see AlertEngine.
         var icmpFiltered: Bool = false
         var degraded: Bool = false
+        /// SIGUSR1 suspended probing. Every measurement in such a sample is
+        /// carried over from before the pause, so a chart must not plot it
+        /// and an alert must not fire on it.
+        var paused: Bool = false
         var cadenceS: Int?
 
         enum CodingKeys: String, CodingKey {
-            case severity, rules, degraded
+            case severity, rules, degraded, paused
             case icmpFiltered = "icmp_filtered"
             case cadenceS = "cadence_s"
         }
@@ -170,6 +174,25 @@ struct MonitorSample: Decodable, Sendable {
         case "warn":     return .warning
         default:         return .healthy
         }
+    }
+}
+
+/// Lenient, in an extension so the memberwise initializer survives — the
+/// same discipline `RunSnapshot` uses, for a sharper reason. Swift's
+/// synthesized decode throws `keyNotFound` rather than falling back to the
+/// default written beside a property, so a netdiag one version behind on
+/// any one of these keys would fail the decode of the *whole* sample and
+/// stop the menu-bar indicator dead. `status.paused` is the current
+/// example: it did not exist before the pause protocol.
+extension MonitorSample.Status {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        severity = c.lenient(.severity, "ok")
+        rules = c.lenient(.rules, [])
+        icmpFiltered = c.lenient(.icmpFiltered, false)
+        degraded = c.lenient(.degraded, false)
+        paused = c.lenient(.paused, false)
+        cadenceS = c.lenient(.cadenceS)
     }
 }
 

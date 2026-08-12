@@ -80,6 +80,16 @@ enum Defaults {
         v == 0 ? fallback : min(max(v, lo), hi)
     }
 
+    /// The on-demand latency test: how fast to sample, and for how long.
+    ///
+    /// Not persisted and not a preference — a bounded window the user opts
+    /// into per press. Two seconds is the CLI's own floor for
+    /// `--monitor-fast-interval`, not a number chosen here; going below it
+    /// would have the monitor reject its arguments and exit at startup.
+    /// Neither value decides whether anything is good or bad.
+    static let latencyTestInterval = 2
+    static let latencyTestDuration: TimeInterval = 60
+
     static var pauseOnDisplaySleep: Bool {
         get { d.bool(forKey: Key.pauseOnDisplaySleep) }
         set { d.set(newValue, forKey: Key.pauseOnDisplaySleep) }
