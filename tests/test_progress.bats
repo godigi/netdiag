@@ -360,6 +360,11 @@ print(d[\"run_mode\"])
 
 @test "--progress off leaves stderr empty on a non-tty" {
   run bash -c "'$NETDIAG' --quick --json --no-baseline --log /dev/null 2>&1 >/dev/null"
-  [ "$status" -eq 0 ]
+  # Not `-eq 0`. Zero means "this network is healthy", which is a fact about
+  # wherever the test runs, not about the code under test — a CI runner that
+  # legitimately reports a warning exits 1 and would fail a test that has
+  # nothing to do with diagnosis. 3 is the one that would mean netdiag
+  # itself broke.
+  [ "$status" -ne 3 ]
   [ -z "$output" ]
 }

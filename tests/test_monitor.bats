@@ -429,22 +429,45 @@ start_monitor() {
 alive() { ps -o stat= -p "$1" >/dev/null 2>&1; }
 samples() { wc -l < "$BATS_TEST_TMPDIR/stream.jsonl" | tr -d ' '; }
 
+# Wait for a condition, up to $1 seconds. Returns 1 if it never held.
+#
+# Sleeping a fixed number of seconds and then asserting encodes the speed of
+# the machine that wrote the test. A GitHub runner is slower than a laptop
+# and its "gateway" is virtualised, so the first cycle — a real ping plus a
+# DNS lookup — can take longer than the cadence it was given. Three tests
+# here failed in CI for exactly that reason and passed locally every time.
+# Polling keeps the assertion (it did happen) without the assumption (within
+# n seconds on this hardware).
+wait_until() {
+  local timeout="$1"; shift
+  local deadline=$(( SECONDS + timeout ))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if "$@"; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+have_samples() { [ "$(samples)" -ge "${1:-1}" ]; }
+not_alive()    { ! alive "$1"; }
+
 @test "SIGUSR1 suspends probing and SIGUSR2 resumes it" {
   local pid; pid="$(start_monitor)"
-  sleep 5
+  wait_until 30 have_samples 1 || { echo "monitor produced no samples at all"; kill -9 "$pid"; return 1; }
   local before; before="$(samples)"
-  [ "$before" -ge 1 ]
 
   kill -USR1 "$pid"
   sleep 6
   local paused; paused="$(samples)"
-  # At most one in-flight cycle plus the pause marker. Certainly not three
-  # more, which is what 6 s at a 2 s cadence would produce unpaused.
+  # Still a fixed sleep, and it has to be: this asserts that samples *stop*,
+  # and there is no event to wait for when the expected behaviour is
+  # silence. The bound stays generous — at most one in-flight cycle plus the
+  # pause marker, against the three more that 6 s at a 2 s cadence would
+  # produce unpaused.
   [ $((paused - before)) -le 2 ]
 
   kill -USR2 "$pid"
-  sleep 6
-  [ "$(samples)" -gt "$paused" ]
+  wait_until 30 have_samples $((paused + 1)) || { echo "monitor never resumed"; kill -9 "$pid"; return 1; }
   kill -TERM "$pid" 2>/dev/null || true
 }
 
@@ -470,19 +493,19 @@ samples() { wc -l < "$BATS_TEST_TMPDIR/stream.jsonl" | tr -d ' '; }
 }
 
 @test "SIGTERM stops the monitor promptly, paused or not" {
+  # "Promptly" is bounded by the longest probe a cycle can be inside when
+  # the signal lands, not by a number that felt right on a laptop.
   local pid; pid="$(start_monitor)"
-  sleep 4
+  wait_until 30 have_samples 1 || { echo "monitor produced no samples at all"; kill -9 "$pid"; return 1; }
   kill -TERM "$pid"
-  sleep 2
-  alive "$pid" && { echo "monitor ignored SIGTERM"; kill -9 "$pid"; return 1; }
+  wait_until 15 not_alive "$pid" || { echo "monitor ignored SIGTERM"; kill -9 "$pid"; return 1; }
 
   pid="$(start_monitor)"
-  sleep 4
+  wait_until 30 have_samples 1 || { echo "monitor produced no samples at all"; kill -9 "$pid"; return 1; }
   kill -USR1 "$pid"
   sleep 2
   kill -TERM "$pid"
-  sleep 2
-  alive "$pid" && { echo "paused monitor ignored SIGTERM"; kill -9 "$pid"; return 1; }
+  wait_until 15 not_alive "$pid" || { echo "paused monitor ignored SIGTERM"; kill -9 "$pid"; return 1; }
   return 0
 }
 
