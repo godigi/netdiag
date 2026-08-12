@@ -141,7 +141,7 @@ it would accumulate forever.
 ```jsonc
 {
   "schema": 1,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "ts": "2026-08-11T16:20:51Z",
   "seq": 42,
   "refreshed": ["fast"],          // which cadence tiers ran this cycle
@@ -274,11 +274,28 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
                 "bridged_from": [], "first_seen": "…", "last_seen": "…",
                 "run_count": 35, "gateways": [], "isps": [], "ssids": [],
                 "metric_samples": {}, "severity_counts": {}}],
-  "runs": [{"ts": "…", "network_id": "mac:10:98:5f:…", "version": "0.6.1",
+  "runs": [{"id": "2026-08-11T20:51:19Z.a3f9c1d2", "ts": "…",
+            "network_id": "mac:10:98:5f:…", "version": "0.6.1",
             "severity": "warn", "diagnosis_count": 1, "rules": ["M1"],
             "root_cause": "…", "metrics": {"gateway_rtt_ms": 3.4}}]
 }
 ```
+
+- **`id` addresses a run; `ts` does not.** Timestamps have one-second
+  resolution and back-to-back runs collide, which is why the store already
+  deduplicates on *(timestamp, canonical JSON)* rather than on the
+  timestamp alone. An id is that same pair made printable: the timestamp, a
+  dot, and the first 8 hex characters of the SHA-256 of those same
+  canonical bytes. Byte-identical records collapse to one run and therefore
+  to one id, so an id always names exactly one run. `ts` is unchanged and
+  still there.
+  Parse an id by splitting on the **last** dot — the suffix is fixed-width
+  hex, and the rule stays correct if timestamps ever gain sub-second
+  precision. The separator is `.` and not `#` because under zsh with
+  `EXTENDED_GLOB` (the default in many setups) an unquoted `--show=…#…` is
+  a glob pattern and fails with "no matches found".
+  Redacted records are dropped before ids are handed out, so a run recorded
+  with `--redact` has no id and cannot be opened with `--show`.
 
 - **Grouping is not exact-string matching on `network.id`.** Records
   predating `lib/netid.sh` carry no id at all, and the id of the *same*
@@ -301,3 +318,132 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
   other redacted run on every other network, so it can never join a real
   group. (`lib/output.sh` stopped producing them in v0.7.0; these are the
   historical ones.)
+
+---
+
+# `netdiag --show=<id>` schema
+
+`netdiag --show=ID` emits one **stored** run: the record exactly as it was
+written, where it sits in that network's history, and how each of its
+metrics compares to every other run on the same network. One JSON object on
+stdout, exit 0.
+
+The id comes from `--history`. A bare timestamp is also accepted, because
+that is what a person has in front of them in a log filename — it resolves
+when it names exactly one run, and exits 3 listing the candidates when it
+does not.
+
+```jsonc
+{
+  "schema": 1,
+  "version": "0.8.0",                    // netdiag rendering the view, not
+                                         // the one that recorded the run
+                                         // (that is run.version)
+  "id": "2026-08-11T20:51:19Z.a3f9c1d2",
+  "run": { /* the complete stored record — every key of the --json schema
+              above, unmodified */ },
+  "context": {
+    "network_id": "mac:10:98:5f:…",
+    "runs_on_network": 1915,
+    "position": 1843,
+    "first_seen": "2026-05-30T07:55:33Z",
+    "last_seen":  "2026-08-11T20:51:19Z"
+  },
+  "comparison": {
+    "metrics": {
+      "gateway_rtt_ms": {
+        "value": 3.745, "median": 3.21, "p10": 2.90, "p90": 8.40,
+        "percentile": 62, "n": 1900,
+        "direction": "lower_is_better",
+        "verdict": "typical",
+        "summary": "3.7 ms — typical for this network (median 3.2 ms across 1,900 checks)."
+      }
+    }
+  }
+}
+```
+
+`run` decodes with the same model as a `--json` run — stored records are
+written by the same `build_json`, so a two-month-old record needs no
+special case. `context` holds plain facts and no judgement. `comparison`
+holds the judgement, and `summary` is rendered verbatim: it is the CLI's
+sentence, the way `diagnosis[].summary` is.
+
+## Definitions
+
+- **The comparison population is every run on that network**, not a recent
+  window. One rule with nothing to configure; a consumer that wants a
+  recent view narrows its own charts.
+- **`context.network_id` is the grouped key** — the same string
+  `--history` reports in `networks[].id` and `runs[].network_id`, so the
+  two join. It is not the raw `network.id` from the record: grouping is
+  what reconciles four eras of netdiag's identity scheme.
+- **`context.runs_on_network` counts every run; a metric's `n` counts the
+  ones that recorded it.** They differ, and the gap is the point — 1,915
+  checks but only 38 bufferbloat readings.
+- **`context.position` is 1-based, chronological, oldest first.**
+- **`percentile`, `median`, `p10` and `p90` are computed on the raw value
+  ascending**, with no direction applied. Ties are averaged, so a metric
+  that reads 0.0 % in every run sits at the 50th percentile rather than the
+  100th. Direction is applied when deriving `verdict`, and only there.
+- **`p10`/`p90` are the edges of the band the verdict was drawn from.**
+  They follow `THRESH_COMPARE_TAIL_PCTL`; the key names are written for its
+  default of 10, so a UI shading "normal for this network" shades exactly
+  what was judged.
+- **`value` is `null` when this run did not measure the metric**, never
+  `0` — the same distinction the full schema draws, and for the same
+  reason.
+
+## `verdict`
+
+A closed set, so a UI can style it without parsing prose:
+
+| verdict | meaning |
+|---|---|
+| `typical` | inside the normal band for this network |
+| `better` | in the tail on the good side |
+| `worse` | in the tail on the bad side |
+| `best` | the best value in the sample |
+| `worst` | the worst value in the sample |
+| `insufficient_data` | fewer than `THRESH_COMPARE_MIN_SAMPLES` readings |
+| `not_measured` | this run did not record the metric |
+
+`not_measured` wins over `insufficient_data`: a metric this run never
+recorded says so, whether or not the network has enough history behind it.
+`percentile` is `null` for both.
+
+Both cutoffs live in [`lib/thresholds.sh`](../lib/thresholds.sh) and reach
+`helpers/history.py` through the environment; the helper refuses to run
+without them rather than carrying a default. One symmetric tail rather than
+a "better" and a "worse" percentile, because for throughput the *low*
+percentile is the bad end, and a cutoff whose meaning flips per metric is
+one that eventually gets applied the wrong way round:
+
+```
+lower tail  = percentile <= TAIL_PCTL
+upper tail  = percentile >= 100 - TAIL_PCTL
+lower_is_better  → lower tail is "better", upper tail is "worse"
+higher_is_better → lower tail is "worse",  upper tail is "better"
+```
+
+`best` and `worst` replace `better` and `worse` only when the value is the
+extreme of the sample, so a network whose every run measured the same value
+stays `typical`.
+
+The metrics compared are exactly the ones `--history` charts — the same
+table, which already states a `direction` per metric. `comparison` is
+always present: when a metric has too few readings every entry says
+`insufficient_data` rather than the block going missing, so "no comparison"
+and "too few checks" cannot render as the same thing.
+
+## Errors
+
+| case | behaviour |
+|---|---|
+| id not found in the live store or the archive | exit `3`, reason on stderr |
+| a bare timestamp matching more than one run | exit `3`, candidate ids listed on stderr |
+| missing or empty `--show` argument | exit `3` — a usage error |
+| record written with `--redact` | it has no id, so it is unreachable by construction |
+
+Exit `2` is never used here: it is reserved for a real diagnosis, so a
+wrapper can keep telling a mistyped id apart from a broken network.

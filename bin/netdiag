@@ -85,7 +85,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-NETDIAG_VERSION="0.7.0"
+NETDIAG_VERSION="0.8.0"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
@@ -133,6 +133,12 @@ SUMMARY_WINDOW_HOURS=24
 # recent window. HISTORY_LIMIT caps it to the N most recent runs.
 HISTORY=0
 HISTORY_LIMIT=0
+# --show opens one stored run by the id --history gave it: the whole
+# record, plus how each of its metrics compares to every other run on the
+# same network. A reading without that context ("3.7 ms") tells nobody
+# whether their network is behaving.
+SHOW=0
+SHOW_ID=""
 # --monitor: the machine-readable sibling of --watch. Streams one compact
 # JSON object per line until stopped. Three cadence tiers, each overridable
 # so the GUI's Settings sliders have something to drive.
@@ -151,9 +157,15 @@ _take_value=0
 # state from _take_value so `--log --monitor-count 5` can't silently
 # consume the wrong argument.
 _take_monitor=""
+# Same reasoning for `--show <id>`: its own state, so a dangling --log
+# never swallows the run id and vice versa.
+_take_show=0
 while [ "$#" -gt 0 ]; do
   if [ "$_take_value" -eq 1 ]; then
     LOG_OVERRIDE="$1"; _take_value=0; shift; continue
+  fi
+  if [ "$_take_show" -eq 1 ]; then
+    SHOW_ID="$1"; _take_show=0; shift; continue
   fi
   if [ -n "$_take_monitor" ]; then
     case "$_take_monitor" in
@@ -188,6 +200,8 @@ while [ "$#" -gt 0 ]; do
     --summary=*)      SUMMARY=1; SUMMARY_WINDOW_HOURS="${1#--summary=}" ;;
     --history)        HISTORY=1 ;;
     --history=*)      HISTORY=1; HISTORY_LIMIT="${1#--history=}" ;;
+    --show)           SHOW=1; _take_show=1 ;;
+    --show=*)         SHOW=1; SHOW_ID="${1#--show=}" ;;
     --monitor)        MONITOR=1 ;;
     --monitor-fast-interval)      _take_monitor=FAST ;;
     --monitor-fast-interval=*)    MONITOR_FAST_INTERVAL="${1#*=}" ;;
@@ -262,6 +276,12 @@ Modes (exit after running, don't run the normal check battery):
                            object — networks grouped by identity, one
                            compact row per run — for charting. N caps it to
                            the N most recent runs. Reads the archive too.
+  --show=ID                emit one stored run as JSON: the complete record
+                           as it was written, where it sits in that
+                           network's history, and how each of its metrics
+                           compares to every other run on the same network.
+                           IDs come from --history; a bare timestamp works
+                           when it names exactly one run.
   --monitor                stream one compact JSON object per line, one per
                            sample, until stopped. The machine-readable
                            sibling of --watch (which re-runs --quick and
@@ -292,6 +312,9 @@ if [ "$_take_value" -eq 1 ]; then
 fi
 if [ -n "$_take_monitor" ]; then
   printf 'netdiag: --monitor interval flag expects a value\n' >&2; exit 3
+fi
+if [ "$_take_show" -eq 1 ]; then
+  printf 'netdiag: --show expects a run id (see --history)\n' >&2; exit 3
 fi
 # Section bodies stream out as each module runs — before later modules have
 # discovered everything that needs masking. Rather than emit a partially
@@ -335,6 +358,29 @@ if [ "$HISTORY" -eq 1 ]; then
   python3 "$HELPERS_DIR/history.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --limit "$HISTORY_LIMIT"
+  exit 0
+fi
+if [ "$SHOW" -eq 1 ]; then
+  # An empty id is a usage error like any other: exit 3, never 2, so a
+  # wrapper can still tell "you typed it wrong" from "your network is
+  # broken". Whether the id names a real run is history.py's question.
+  if [ -z "$SHOW_ID" ]; then
+    printf 'netdiag: --show expects a run id (see --history)\n' >&2; exit 3
+  fi
+  # This is the one mode where history.py judges rather than reports, so
+  # it is the one mode that needs the cutoffs. They go through the
+  # environment like every other helper's input, and the helper refuses to
+  # start without them — a Python default would be a second home for a
+  # number that has exactly one.
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL NETDIAG_VERSION
+  # An unknown id, a missing store, or a helper that crashed are all "3":
+  # python's own argparse exits 2, which would read as a critical
+  # diagnosis to anything watching the status.
+  python3 "$HELPERS_DIR/history.py" \
+    --history "$LOG_DIR/baseline.jsonl" \
+    --show "$SHOW_ID" || exit 3
   exit 0
 fi
 if [ "$WATCH" -eq 1 ]; then

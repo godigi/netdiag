@@ -1,11 +1,12 @@
 #!/usr/bin/env bats
 #
 # lib/thresholds.sh is the single source of truth for every number a
-# diagnosis fires on. Two consumers now read it — lib/diagnosis.sh (one
-# verdict per scan) and lib/monitor.sh (one verdict every few seconds) —
-# and the failure mode this file guards is them drifting apart: a menu-bar
-# dot that says "unstable" over a report that says "healthy" discredits
-# both, and the user has no way to tell which lied.
+# diagnosis fires on. Three consumers now read it — lib/diagnosis.sh (one
+# verdict per scan), lib/monitor.sh (one verdict every few seconds) and
+# helpers/history.py (one verdict per stored run, in --show) — and the
+# failure mode this file guards is them drifting apart: a menu-bar dot that
+# says "unstable" over a report that says "healthy" discredits both, and
+# the user has no way to tell which lied.
 
 setup() {
   REPO="${BATS_TEST_DIRNAME}/.."
@@ -39,7 +40,8 @@ setup() {
            THRESH_NTP_DRIFT_CRIT_S THRESH_NTP_DRIFT_WARN_S \
            THRESH_DHCP_LEASE_WARN_S THRESH_BUFFERBLOAT_A_MS \
            THRESH_BUFFERBLOAT_B_MS THRESH_BUFFERBLOAT_C_MS \
-           THRESH_BUFFERBLOAT_D_MS; do
+           THRESH_BUFFERBLOAT_D_MS THRESH_COMPARE_MIN_SAMPLES \
+           THRESH_COMPARE_TAIL_PCTL; do
     [ -n "${!v:-}" ] || { echo "undefined threshold: $v"; return 1; }
   done
 }
@@ -57,6 +59,51 @@ setup() {
   run grep -nE '(loss_at_least|loss_below) "\$[A-Z_]+" [0-9]+|-lt -?[1-9][0-9]* \]|-ge -?[1-9][0-9]* \]|-gt -?[1-9][0-9]* \]' \
     "$REPO/lib/diagnosis.sh"
   [ "$status" -ne 0 ] || { echo "inline cutoff in diagnosis.sh:"; echo "$output"; return 1; }
+}
+
+@test "helpers/history.py carries no inline numeric cutoff either" {
+  # --show judges a stored run against its network's history, so this file
+  # is now the third thing in the project that decides whether a number is
+  # normal. It reads THRESH_COMPARE_* from the environment; the regression
+  # this catches is a cutoff creeping back in as a Python literal, where
+  # nothing in lib/thresholds.sh would ever reflect a change to it.
+  #
+  # Same shape as the bash guard: a comparison operator against a bare
+  # number. Zero is excluded for the same reason — `if n > 0` asks "did we
+  # measure anything?", not "is this past a cutoff" — and a comparison
+  # against a named constant is exactly what this test wants to see.
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$REPO/helpers/history.py"
+  [ "$status" -ne 0 ] || { echo "inline cutoff in history.py:"; echo "$output"; return 1; }
+}
+
+@test "the guard would actually catch a cutoff planted in history.py" {
+  # A grep-based guard is only as good as its pattern, and a pattern that
+  # matches nothing passes for the wrong reason. Plant one and prove it.
+  cp "$REPO/helpers/history.py" "$BATS_TEST_TMPDIR/planted.py"
+  printf '\nif False:\n    pass  # if percentile >= 90:\n' >> "$BATS_TEST_TMPDIR/planted.py"
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$BATS_TEST_TMPDIR/planted.py"
+  [ "$status" -eq 0 ]
+}
+
+@test "helpers/history.py refuses to judge without the thresholds" {
+  # A default in the Python would be a second home for a number that has
+  # exactly one, and a stale second copy still produces a plausible
+  # verdict — the failure nobody notices.
+  printf '{"timestamp":"2026-01-01T00:00:00Z","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}}\n' \
+    > "$BATS_TEST_TMPDIR/baseline.jsonl"
+  run env -u THRESH_COMPARE_MIN_SAMPLES -u THRESH_COMPARE_TAIL_PCTL \
+    python3 "$REPO/helpers/history.py" --history "$BATS_TEST_TMPDIR/baseline.jsonl" \
+    --show 2026-01-01T00:00:00Z
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"THRESH_COMPARE_MIN_SAMPLES"* ]]
+  [[ "$output" == *"lib/thresholds.sh"* ]]
+}
+
+@test "the comparison tail leaves a middle band" {
+  # At 50 or above the two tails meet and every value is simultaneously
+  # notable at both ends, so which verdict a run gets would come down to
+  # the order the branches happen to be written in.
+  [ "$THRESH_COMPARE_TAIL_PCTL" -lt 50 ]
 }
 
 # ── The two RSSI cutoffs really are different ────────────────────────────

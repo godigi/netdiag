@@ -129,6 +129,32 @@ THRESH_NTP_DRIFT_WARN_S=1
 # rebooting or out of addresses at that moment.
 THRESH_DHCP_LEASE_WARN_S=3600
 
+# ── Comparing one stored run against its network's history ───────────────
+# Read by helpers/history.py in --show mode, the only place a single past
+# run is judged against every other run on the same network. It is judgement
+# of the same kind the rules above make — "is this number normal here?" — so
+# it lives here, and bin/netdiag exports both values into the environment
+# before calling the helper. The helper refuses to run without them rather
+# than carrying a default: a stale default still produces a plausible
+# verdict, which is the worst way for a threshold to drift.
+#
+# Below this many samples of a metric, the spread is the sample's noise
+# rather than the network's character. The comparison says
+# insufficient_data instead of backing a confident "typical" with four
+# readings — the same refusal to guess that keeps "not measured" out of the
+# zero bucket everywhere else in this project.
+THRESH_COMPARE_MIN_SAMPLES=10
+
+# How wide the notable band is at each end of the distribution, in
+# percentile points: the outer tenth either way is remarked on, the middle
+# 80% is "typical". One symmetric cutoff rather than a separate "better"
+# and "worse" percentile, because a directional pair reads naturally for
+# latency and inverts for throughput — where the *low* percentile is the
+# bad end — and a number whose meaning flips per metric is one that will
+# eventually be applied the wrong way round. Direction is applied once,
+# when a tail is turned into a verdict.
+THRESH_COMPARE_TAIL_PCTL=10
+
 # ── Bufferbloat grading ──────────────────────────────────────────────────
 # Waveform/DSLReports cutoffs for added latency under load, in ms:
 # A < 5, B < 30, C < 60, D < 200, F ≥ 200. B1/B2 warn at grade C and go

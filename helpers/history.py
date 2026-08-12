@@ -57,20 +57,46 @@ group, so they are dropped and counted rather than shown as a phantom
 network. lib/output.sh stops producing them as of this release; these are
 the historical ones.
 
+One run, and what "normal" means for its network
+────────────────────────────────────────────────
+`--show ID` emits a single stored run instead of the whole store: the
+record exactly as it was written, where it sits in that network's history,
+and how each of its metrics compares to every other run on the same
+network. A reading on its own says nothing — "3.7 ms" needs "and this
+network usually does 3.2 ms" before anyone can act on it.
+
+The comparison population is every run on that network, never a recent
+window. One rule with nothing to configure, and the app's window picker
+already narrows the charts when a recent view is what's wanted.
+
+The two numbers that decide a verdict are deliberately absent from this
+file. They arrive from lib/thresholds.sh through the environment, because
+a cutoff that judges a network lives in exactly one place (CLAUDE.md), and
+a Python default would be a second copy of it that nobody would notice
+going stale.
+
 Inputs:
   --history PATH   live JSONL store (required)
   --archive PATH   rolled-over older records; defaults to the
                    `-archive.jsonl` sibling of --history, skipped if absent
   --limit N        keep only the N most recent runs (0 = all)
+  --show ID        emit one run instead of the store: full record, context
+                   and comparison. Accepts a bare timestamp when it names
+                   exactly one run. Needs THRESH_COMPARE_* in the
+                   environment; see docs/JSON-SCHEMA.md for the shape.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import os
+import statistics
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, NoReturn
 
 # macOS substitutes this when the caller lacks Location Services, and
 # --redact substitutes the other. Neither is a name; treating either as one
@@ -99,6 +125,42 @@ METRICS: list[tuple[str, str, str, str, str]] = [
 ]
 
 SEVERITY_ORDER = {"info": 1, "warn": 2, "critical": 3}
+
+# How much of the digest an id carries. Eight hex characters is short
+# enough to read off a screen and retype, and long enough that the runs it
+# has to separate — the handful that landed in the same wall-clock second —
+# will not collide.
+ID_HEX_CHARS = 8
+
+
+def fail(message: str) -> NoReturn:
+    """Refuse to answer, with the reason, and exit 3.
+
+    3 is netdiag's "the caller or the environment is wrong" status. 2 is
+    reserved for a real diagnosis, so a wrapper can keep telling "you typed
+    the id wrong" apart from "your network is broken".
+    """
+    print(f"history.py: {message}", file=sys.stderr)
+    sys.exit(3)
+
+
+def env_threshold(name: str) -> int:
+    """One cutoff from lib/thresholds.sh, or a loud failure.
+
+    No default on purpose. A default would be a second home for a number
+    CLAUDE.md says has exactly one, and the two would diverge the first
+    time the value in lib/thresholds.sh was tuned — silently, because a
+    stale cutoff still produces a plausible-looking verdict.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        fail(f"{name} is not set. It is defined in lib/thresholds.sh and "
+             f"exported by bin/netdiag before this helper runs.")
+    try:
+        return int(raw)
+    except ValueError:
+        fail(f"{name}={raw!r} is not a whole number. It is defined in "
+             f"lib/thresholds.sh.")
 
 
 def get_nested(d: Any, path: str) -> Any:
@@ -185,7 +247,34 @@ def is_redacted(rec: dict) -> bool:
     return False
 
 
-def load_records(paths: Iterable[Path]) -> tuple[list[dict], dict[str, int]]:
+def canonical(rec: dict) -> str:
+    """The exact byte form deduplication keys on.
+
+    An id hashes this and nothing else. If the two ever diverged, two
+    records the dedup step considers the same run could be handed different
+    ids, and an id would stop naming exactly one run — which is the only
+    property that makes it worth having.
+    """
+    return json.dumps(rec, sort_keys=True, separators=(",", ":"))
+
+
+def run_id(timestamp: str, canonical_json: str) -> str:
+    """The stable name of one run: timestamp, a dot, and a digest head.
+
+    `ts` alone cannot address a run — two runs land in the same second
+    often enough that dedup already keys on the record's bytes as well.
+
+    The separator is a dot rather than a '#': under zsh with EXTENDED_GLOB,
+    which many setups enable, an unquoted `--show=…#…` is a glob pattern
+    and fails with "no matches found", and this CLI has to work under both
+    shells. Ids split on the *last* dot, so a timestamp that grows
+    sub-second precision later still parses.
+    """
+    digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    return f"{timestamp}.{digest[:ID_HEX_CHARS]}"
+
+
+def load_records(paths: Iterable[Path]) -> tuple[list[tuple[str, dict]], dict[str, int]]:
     """Read every JSONL source, dropping duplicates and redacted records.
 
     Deduplication is on (timestamp, canonical JSON) rather than timestamp
@@ -199,7 +288,7 @@ def load_records(paths: Iterable[Path]) -> tuple[list[dict], dict[str, int]]:
     """
     stats = {"records_read": 0, "unparseable": 0, "duplicates": 0, "redacted": 0}
     seen: set[tuple[str, str]] = set()
-    out: list[dict] = []
+    out: list[tuple[str, dict]] = []
     for p in paths:
         if not p.exists():
             continue
@@ -220,14 +309,15 @@ def load_records(paths: Iterable[Path]) -> tuple[list[dict], dict[str, int]]:
                 if is_redacted(rec):
                     stats["redacted"] += 1
                     continue
-                key = (str(rec.get("timestamp") or ""),
-                       json.dumps(rec, sort_keys=True, separators=(",", ":")))
+                ts = str(rec.get("timestamp") or "")
+                blob = canonical(rec)
+                key = (ts, blob)
                 if key in seen:
                     stats["duplicates"] += 1
                     continue
                 seen.add(key)
-                out.append(rec)
-    out.sort(key=lambda r: str(r.get("timestamp") or ""))
+                out.append((run_id(ts, blob), rec))
+    out.sort(key=lambda pair: str(pair[1].get("timestamp") or ""))
     return out, stats
 
 
@@ -247,7 +337,7 @@ def run_severity(rec: dict) -> tuple[str, int, list[str]]:
         sev = d.get("severity")
         rank = SEVERITY_ORDER.get(sev, 0)
         worst = max(worst, rank)
-        if rank >= 2:
+        if rank >= SEVERITY_ORDER["warn"]:
             faults += 1
         rule = d.get("rule")
         if rule and rule not in rules:
@@ -256,15 +346,28 @@ def run_severity(rec: dict) -> tuple[str, int, list[str]]:
     return inv.get(worst, "ok"), faults, rules
 
 
-def build_run(rec: dict, key: str) -> dict:
+def metric_value(rec: dict, path: str) -> float | None:
+    """One metric as a number, or None when this run did not measure it.
+
+    A bool is not a measurement even though Python says it is an int:
+    `true` reaching a chart as 1 ms is a reading that never happened.
+    """
+    v = get_nested(rec, path)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return v
+
+
+def build_run(rid: str, rec: dict, key: str) -> dict:
     sev, faults, rules = run_severity(rec)
     metrics: dict[str, float] = {}
     for path, out_key, _label, _unit, _dir in METRICS:
-        v = get_nested(rec, path)
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
+        v = metric_value(rec, path)
+        if v is None:
             continue
         metrics[out_key] = v
     return {
+        "id": rid,
         "ts": rec.get("timestamp"),
         "network_id": key,
         "version": rec.get("version"),
@@ -328,12 +431,238 @@ def label_for(key: str, group: dict) -> str:
     return "Unknown network"
 
 
+# ── One run against its network's history (--show) ───────────────────────
+# Everything below runs only in --show mode. It is the only judgement this
+# file makes, which is why it is the only part that reads lib/thresholds.sh.
+
+
+def quantile(ordered: list[float], pct: float) -> float | None:
+    """The value `pct` of the way up the sorted sample, interpolated.
+
+    Interpolated rather than nearest-rank so the band edges move smoothly
+    as history accumulates: a nearest-rank quantile jumps by a whole order
+    statistic every time one run is added, and a "normal range" that
+    twitches on every scan is one nobody trusts.
+    """
+    if not ordered:
+        return None
+    pos = (len(ordered) - 1) * pct / 100
+    lo, hi = math.floor(pos), math.ceil(pos)
+    if lo == hi:
+        return ordered[lo]
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
+
+
+def percentile_rank(ordered: list[float], value: float) -> float:
+    """Where `value` sits in `ordered`, on a 0–100 scale, ties averaged.
+
+    Ties are averaged rather than counted as "at or below", because the
+    usual shape here is a metric that reads the same in nearly every run:
+    0.0% loss in 1,900 of 1,900 checks. Counting ties as below would put a
+    flawless run at the 100th percentile and, for a lower-is-better metric,
+    announce it as the worst thing that has ever happened on this network.
+    """
+    below = sum(1 for v in ordered if v < value)
+    tied = sum(1 for v in ordered if v == value)
+    return 100.0 * (below + tied / 2) / len(ordered)
+
+
+def format_value(v: float | None, unit: str) -> str | None:
+    """A measurement the way prose reads it: "3.7 ms", "-55 dBm", "0.4%".
+
+    Whole numbers lose the decimal — an RSSI is -55 dBm, not -55.0 dBm —
+    and only "%" closes up against its number, matching how the rest of
+    this project prints a percentage.
+    """
+    if v is None:
+        return None
+    text = f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}"
+    return f"{text}{unit}" if unit == "%" else f"{text} {unit}"
+
+
+def summary_for(verdict: str, value_text: str | None,
+                median_text: str | None, n: int) -> str:
+    """The sentence the app renders verbatim.
+
+    The prose lives here for the same reason the thresholds live in
+    lib/thresholds.sh: the GUI renders what the CLI decides. A second
+    wording in Swift would be a second verdict.
+    """
+    checks = f"{n:,} check" + ("" if n == 1 else "s")
+    if verdict == "not_measured":
+        if median_text is None:
+            return "Not measured in this check."
+        return f"Not measured in this check (median {median_text} across {checks})."
+    if verdict == "insufficient_data":
+        return f"{value_text} — only {checks} on this network so far, too few to compare."
+    if verdict == "best":
+        return f"{value_text} — the best of {checks} on this network (median {median_text})."
+    if verdict == "worst":
+        return f"{value_text} — the worst of {checks} on this network (median {median_text})."
+    if verdict == "better":
+        return f"{value_text} — better than usual for this network (median {median_text} across {checks})."
+    if verdict == "worse":
+        return f"{value_text} — worse than usual for this network (median {median_text} across {checks})."
+    return f"{value_text} — typical for this network (median {median_text} across {checks})."
+
+
+def judge_metric(value: float | None, samples: list[float], unit: str,
+                 direction: str, min_samples: int, tail_pctl: int) -> dict:
+    """One metric's verdict against the whole population of this network."""
+    ordered = sorted(samples)
+    n = len(ordered)
+    median = statistics.median(ordered) if ordered else None
+    percentile: int | None = None
+    # The upper tail is the lower one mirrored about the scale percentiles
+    # are stated on, so one threshold sets both ends and neither can be
+    # applied the wrong way round. 100 here is that scale, not a cutoff.
+    upper_pctl = 100 - tail_pctl
+
+    if value is None:
+        # Never a zero. "This run did not measure it" and "this run
+        # measured nothing" are different facts, and collapsing them is
+        # what produced false diagnoses in earlier versions of this tool.
+        verdict = "not_measured"
+    elif n < min_samples:
+        # percentile stays null: over a handful of readings it would state
+        # a precision the sample does not have, and a UI showing "12th
+        # percentile" next to "too few to compare" contradicts itself.
+        verdict = "insufficient_data"
+    else:
+        # Rank first, judge second. The percentile is computed on the raw
+        # value ascending with no notion of which end is good; `direction`
+        # is applied here and only here, where a tail becomes a verdict.
+        percentile = round(percentile_rank(ordered, value))
+        lower_tail = percentile <= tail_pctl
+        upper_tail = percentile >= upper_pctl
+        lower_is_better = direction == "lower_is_better"
+        if lower_tail:
+            verdict = "better" if lower_is_better else "worse"
+        elif upper_tail:
+            verdict = "worse" if lower_is_better else "better"
+        else:
+            verdict = "typical"
+        # best/worst only ever replace better/worse, so a network where
+        # every run measured the same value stays "typical": that reading
+        # is both the highest and the lowest, and picking either would be a
+        # coin flip presented as a finding.
+        best = ordered[0] if lower_is_better else ordered[-1]
+        worst = ordered[-1] if lower_is_better else ordered[0]
+        if verdict == "better" and value == best:
+            verdict = "best"
+        elif verdict == "worse" and value == worst:
+            verdict = "worst"
+
+    # p10/p90 are named for the default tail and follow it: they are the
+    # edges of the band the verdict was drawn from, so a UI shading "normal
+    # for this network" shades exactly what was judged.
+    return {
+        "value": value,
+        "median": median,
+        "p10": quantile(ordered, tail_pctl),
+        "p90": quantile(ordered, upper_pctl),
+        "percentile": percentile,
+        "n": n,
+        "direction": direction,
+        "verdict": verdict,
+        "summary": summary_for(verdict, format_value(value, unit),
+                               format_value(median, unit), n),
+    }
+
+
+def build_comparison(rec: dict, network_runs: list[dict],
+                     min_samples: int, tail_pctl: int) -> dict:
+    """Every metric in METRICS, this run against every run on its network.
+
+    Exactly that table, no second one: it already carries a direction per
+    metric, which is why the CLI rather than the GUI is the thing that
+    knows whether higher is better.
+    """
+    metrics: dict[str, dict] = {}
+    for path, out_key, _label, unit, direction in METRICS:
+        samples: list[float] = []
+        for other in network_runs:
+            v = metric_value(other, path)
+            if v is not None:
+                samples.append(v)
+        metrics[out_key] = judge_metric(metric_value(rec, path), samples,
+                                        unit, direction, min_samples, tail_pctl)
+    return {"metrics": metrics}
+
+
+def resolve_id(target: str, ids: list[str]) -> str:
+    """An exact id, or a bare timestamp that names exactly one run.
+
+    Typing a full id by hand is unpleasant and the timestamp is what a user
+    already has in front of them, in a log filename or a report header. An
+    ambiguous timestamp lists its candidates and picks nothing: silently
+    choosing one would show a report for a run nobody asked for, and
+    nothing in the output would give it away.
+    """
+    if target in ids:
+        return target
+    candidates = [rid for rid in ids if rid.rsplit(".", 1)[0] == target]
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        listed = "\n  ".join(candidates)
+        fail(f"{target} matches more than one run. Pick one:\n  {listed}")
+    fail(f"no run with id {target!r} in this history — it may have been "
+         f"pruned, or recorded with --redact (those carry no id).")
+
+
+def build_detail(target: str, assigned: list[tuple[str, dict, str]],
+                 groups: dict[str, dict]) -> dict:
+    """The --show object: one stored run, where it sits, how it compares.
+
+    Thresholds are read before the id is resolved, so a broken install says
+    so even when the id is wrong too.
+    """
+    min_samples = env_threshold("THRESH_COMPARE_MIN_SAMPLES")
+    tail_pctl = env_threshold("THRESH_COMPARE_TAIL_PCTL")
+
+    rid = resolve_id(target, [i for i, _rec, _key in assigned])
+    rec, key = next((r, k) for i, r, k in assigned if i == rid)
+
+    # `assigned` is chronological, oldest first, so the index is the
+    # position, and the network's runs are the comparison population.
+    network = [(i, r) for i, r, k in assigned if k == key]
+    network_runs = [r for _i, r in network]
+    position = [i for i, _r in network].index(rid) + 1
+    group = groups.get(key, {})
+
+    return {
+        "schema": 1,
+        # The version of netdiag rendering this view, not the one that
+        # recorded the run — that is run.version. Absent when the helper is
+        # invoked by hand: it labels the output, it does not decide
+        # anything, so it is not worth refusing to run over.
+        "version": os.environ.get("NETDIAG_VERSION") or None,
+        "id": rid,
+        "run": rec,
+        "context": {
+            # The grouped key, the same string --history reports for this
+            # network. A raw network.id would not join to it: grouping is
+            # what reconciles four eras of netdiag's identity scheme.
+            "network_id": key,
+            "runs_on_network": len(network_runs),
+            "position": position,
+            "first_seen": group.get("first_seen"),
+            "last_seen": group.get("last_seen"),
+        },
+        "comparison": build_comparison(rec, network_runs, min_samples, tail_pctl),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Normalized netdiag run history")
     ap.add_argument("--history", required=True, type=Path)
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--limit", type=int, default=0,
                     help="keep only the N most recent runs (0 = all)")
+    ap.add_argument("--show", metavar="ID", default=None,
+                    help="emit one run — record, context and comparison — "
+                         "instead of the whole store")
     args = ap.parse_args()
 
     archive = args.archive
@@ -347,8 +676,8 @@ def main() -> None:
     # Pass 1: assign every record a group and accumulate the evidence the
     # bridge heuristic needs.
     groups: dict[str, dict] = {}
-    assigned: list[tuple[dict, str]] = []
-    for rec in records:
+    assigned: list[tuple[str, dict, str]] = []
+    for rid, rec in records:
         key, synth = group_key(rec)
         g = groups.setdefault(key, {
             "run_count": 0, "synthesized": False, "first_seen": None, "last_seen": None,
@@ -367,7 +696,7 @@ def main() -> None:
             v = clean(get_nested(rec, path))
             if v and v not in g[field]:
                 g[field].append(v)
-        assigned.append((rec, key))
+        assigned.append((rid, rec, key))
 
     # Pass 2: bridge the weak groups that the evidence identifies, then
     # rewrite the affected assignments. Bridged groups inherit
@@ -386,13 +715,22 @@ def main() -> None:
             for bound, op in (("first_seen", min), ("last_seen", max)):
                 if src[bound]:
                     dst[bound] = src[bound] if dst[bound] is None else op(dst[bound], src[bound])
-        assigned = [(r, bridges.get(k, k)) for r, k in assigned]
+        assigned = [(i, r, bridges.get(k, k)) for i, r, k in assigned]
+
+    # --show wants one run in full, against the whole population of its
+    # network, so it answers here — before --limit, which exists to keep a
+    # chart's payload small and has nothing to say about a single record.
+    if args.show is not None:
+        json.dump(build_detail(args.show, assigned, groups), sys.stdout,
+                  separators=(",", ":"), default=str)
+        sys.stdout.write("\n")
+        return
 
     # Pass 3: emit runs and count samples per metric, per network. The
     # sample count is not decoration: `wifi.rssi` is populated in 1 of
     # 1,926 legacy records here, so a chart that plots it without saying
     # how thin it is presents a single reading as a trend.
-    runs = [build_run(rec, key) for rec, key in assigned]
+    runs = [build_run(rid, rec, key) for rid, rec, key in assigned]
     if args.limit and args.limit > 0:
         runs = runs[-args.limit:]
 
