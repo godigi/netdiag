@@ -105,6 +105,7 @@ Before refactoring past ~700 lines of bash, decide bash-modules vs bash+Python h
 
 1. Before writing code for a new chunk of work, produce a short plan (< 400 words) covering structure, bash/Python split, implementation order, and clarifying questions.
 2. After implementing, actually run `netdiag` on this machine and paste real output into `examples/sample-output.{txt,json}`. If running in a sandbox, say so explicitly.
+   - **Capture those with `--redact`, from stdout.** This repo is public, and a plain run puts the machine's public IPv6 address, ISP and city in the sample — an IPv6 address identifies a household the way a NATed v4 address does not. The trap: `--redact` masks stdout and JSON while the **local log deliberately keeps full detail**, so capturing via `--log` yields an unredacted file that looks like it worked. Use `netdiag --redact --json` and `netdiag --redact | sed $'s/\\x1b\\[[0-9;]*[mK]//g'`. The text sample is the default view, not `--expert`: `--redact` forces `EXPERT=0`, because the expert panel is where the identifying values live.
 3. Commits: one per logical feature group, clean history. Tag releases `v0.2.0+`.
 4. Don't push to GitHub or create the repo until the script runs and sample output looks sane.
 
