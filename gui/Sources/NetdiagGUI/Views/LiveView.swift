@@ -14,6 +14,7 @@ import Charts
 /// cadence without hardcoding either.
 struct LiveView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
+    @Environment(AppSettings.self) private var appSettings
 
     /// As far back as `recent` is bounded to hold at the default cadence.
     private static let window: TimeInterval = 3600
@@ -61,7 +62,7 @@ struct LiveView: View {
     /// and only one of them is the user's problem to fix.
     @ViewBuilder
     private var stateBanner: some View {
-        if !Defaults.monitoringEnabled {
+        if !appSettings.monitoringEnabled {
             banner("Monitoring is off",
                    "Nothing is being sampled, so this chart will not move. Resume monitoring from the menu-bar icon.",
                    systemImage: "pause.circle")
@@ -78,7 +79,7 @@ struct LiveView: View {
             HStack(spacing: 10) {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Latency test — sampling every \(Defaults.latencyTestInterval)s")
+                    Text("Latency test — sampling every \(appSettings.latencyTestInterval)s")
                         .font(.callout)
                     Text("Back to the usual cadence at \(until.formatted(date: .omitted, time: .standard)).")
                         .font(.caption).foregroundStyle(.secondary)
@@ -87,7 +88,7 @@ struct LiveView: View {
                 Button("Stop") { coordinator.stopLatencyTest() }
             }
             .padding(12)
-            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+            .cardStyle()
         }
     }
 
@@ -103,7 +104,7 @@ struct LiveView: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+        .cardStyle()
     }
 
     // MARK: - Current values
@@ -221,7 +222,7 @@ struct LiveView: View {
         VStack(alignment: .leading, spacing: 6) {
             Label(text, systemImage: "waveform.path.ecg")
                 .font(.callout)
-            Text(Defaults.monitoringEnabled
+            Text(appSettings.monitoringEnabled
                  ? "Samples appear here as the monitor takes them — the first one lands within a cycle."
                  : "Monitoring is off, so nothing is being sampled.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -229,7 +230,7 @@ struct LiveView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 160, alignment: .leading)
         .padding(14)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+        .cardStyle()
     }
 
     private func gapNote(_ count: Int) -> String {

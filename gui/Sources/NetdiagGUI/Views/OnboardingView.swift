@@ -12,6 +12,7 @@ import CoreLocation
 /// slowly without the background job.
 struct OnboardingView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
+    @Environment(AppSettings.self) private var appSettings
     @Environment(\.dismiss) private var dismiss
     @State private var locationManager = CLLocationManager()
 
@@ -64,7 +65,7 @@ struct OnboardingView: View {
                 Spacer(minLength: 12)
                 Button(coordinator.alerts.notificationsAuthorized
                        ? "Get started" : "Continue without alerts") {
-                    Defaults.hasOnboarded = true
+                    appSettings.hasOnboarded = true
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)

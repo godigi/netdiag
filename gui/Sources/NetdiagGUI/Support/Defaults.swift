@@ -2,6 +2,10 @@ import Foundation
 
 /// Every persisted preference, in one place.
 ///
+/// A key that any *view* reads must also be mirrored as a property on
+/// `AppSettings` — views observe that wrapper, never this enum directly,
+/// so an unmirrored key would render once and go stale.
+///
 /// Note what is *not* here: no thresholds. The cadence intervals below are
 /// how often to look, which is a preference; what counts as lossy is a
 /// judgement, and it lives in lib/thresholds.sh where the CLI can act on
@@ -9,7 +13,36 @@ import Foundation
 /// is wrong, it belongs in the CLI and this file should read it back.
 enum Defaults {
 
-    private static let d = UserDefaults.standard
+    /// `UserDefaults.standard`, with the registered fallbacks folded into
+    /// this lazy initializer instead of a separate `registerDefaults()`
+    /// call site.
+    ///
+    /// `AppSettings` snapshots these values into `@Observable` storage as
+    /// part of `NetdiagCoordinator`'s property-default phase, which Swift
+    /// runs *before* a custom `init()`'s body — i.e. before
+    /// `NetdiagApp.init()` could reach a separate registration call.
+    /// Registering here, on first touch of `d` itself, makes the order the
+    /// app happens to construct things in unable to matter: every getter
+    /// and setter below goes through `d`, so registration is guaranteed to
+    /// have already run by the time any of them do.
+    private static let d: UserDefaults = {
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: [
+            Key.monitoringEnabled: true,
+            Key.fastInterval: 10,
+            Key.degradedInterval: 5,
+            Key.mediumInterval: 60,
+            Key.slowInterval: 300,
+            Key.menuBarStyle: MenuBarStyle.dotAndFlag.rawValue,
+            Key.expertExpanded: false,
+            Key.pauseOnDisplaySleep: true,
+            Key.pauseOnBattery: false,
+            Key.scanOnNewNetwork: true,
+            Key.scanOnAlert: true,
+            Key.hasOnboarded: false,
+        ])
+        return defaults
+    }()
 
     private enum Key {
         static let monitoringEnabled  = "monitoringEnabled"
@@ -29,23 +62,6 @@ enum Defaults {
         static let scanOnNewNetwork   = "scanOnNewNetwork"
         static let scanOnAlert        = "scanOnAlert"
         static let disabledAlerts     = "disabledAlerts"
-    }
-
-    static func registerDefaults() {
-        d.register(defaults: [
-            Key.monitoringEnabled: true,
-            Key.fastInterval: 10,
-            Key.degradedInterval: 5,
-            Key.mediumInterval: 60,
-            Key.slowInterval: 300,
-            Key.menuBarStyle: MenuBarStyle.dotAndFlag.rawValue,
-            Key.expertExpanded: false,
-            Key.pauseOnDisplaySleep: true,
-            Key.pauseOnBattery: false,
-            Key.scanOnNewNetwork: true,
-            Key.scanOnAlert: true,
-            Key.hasOnboarded: false,
-        ])
     }
 
     // MARK: - Monitoring
@@ -170,12 +186,6 @@ enum Defaults {
     }
 
     static func isAlertEnabled(_ id: String) -> Bool { !disabledAlerts.contains(id) }
-
-    static func setAlert(_ id: String, enabled: Bool) {
-        var set = disabledAlerts
-        if enabled { set.remove(id) } else { set.insert(id) }
-        disabledAlerts = set
-    }
 }
 
 enum MenuBarStyle: String, CaseIterable, Identifiable {

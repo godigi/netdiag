@@ -127,7 +127,7 @@ struct NetworksView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+        .cardStyle()
     }
 
     private func stat(_ label: String, _ value: String, detail: String? = nil) -> some View {

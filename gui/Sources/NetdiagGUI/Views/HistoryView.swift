@@ -145,7 +145,7 @@ struct HistoryView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 200, alignment: .leading)
         .padding(14)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+        .cardStyle()
     }
 
     /// Why a metric is empty is usually a fact about how netdiag is being
@@ -193,7 +193,7 @@ struct HistoryView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
                     .padding(14)
-                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                    .cardStyle()
             } else {
                 Chart(buckets, id: \.key) { bucket in
                     ForEach(["critical", "warn", "ok"], id: \.self) { severity in

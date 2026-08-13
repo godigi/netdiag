@@ -2,18 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
-
-    @State private var monitoring = Defaults.monitoringEnabled
-    @State private var fast = Double(Defaults.fastInterval)
-    @State private var medium = Double(Defaults.mediumInterval)
-    @State private var slow = Double(Defaults.slowInterval)
-    @State private var pauseSleep = Defaults.pauseOnDisplaySleep
-    @State private var pauseBattery = Defaults.pauseOnBattery
-    @State private var scanNew = Defaults.scanOnNewNetwork
-    @State private var scanAlert = Defaults.scanOnAlert
-    @State private var style = Defaults.menuBarStyle
-    @State private var binaryPath = Defaults.binaryPath
-    @State private var disabledAlerts = Defaults.disabledAlerts
+    @Environment(AppSettings.self) private var appSettings
 
     var body: some View {
         TabView {
@@ -27,12 +16,12 @@ struct SettingsView: View {
     // MARK: - General
 
     private var general: some View {
-        Form {
+        @Bindable var appSettings = appSettings
+        return Form {
             Section("Monitoring") {
-                Toggle("Watch my connection continuously", isOn: $monitoring)
-                    .onChange(of: monitoring) { _, new in
+                Toggle("Watch my connection continuously", isOn: $appSettings.monitoringEnabled)
+                    .onChange(of: appSettings.monitoringEnabled) { _, new in
                         coordinator.setMonitoring(enabled: new)
-                        settingsChanged()
                     }
 
                 // Sliders drive the CLI's own --monitor-*-interval flags.
@@ -42,20 +31,20 @@ struct SettingsView: View {
                 // never disagree about it.
                 LabeledContent("Check the router every") {
                     HStack {
-                        Slider(value: $fast, in: 2...60, step: 1)
-                        Text("\(Int(fast))s").monospacedDigit().frame(width: 38)
+                        Slider(value: intervalBinding(\.fastInterval), in: 2...60, step: 1)
+                        Text("\(appSettings.fastInterval)s").monospacedDigit().frame(width: 38)
                     }
                 }
                 LabeledContent("Check DNS and Wi-Fi every") {
                     HStack {
-                        Slider(value: $medium, in: 15...600, step: 5)
-                        Text("\(Int(medium))s").monospacedDigit().frame(width: 44)
+                        Slider(value: intervalBinding(\.mediumInterval), in: 15...600, step: 5)
+                        Text("\(appSettings.mediumInterval)s").monospacedDigit().frame(width: 44)
                     }
                 }
                 LabeledContent("Check your public IP every") {
                     HStack {
-                        Slider(value: $slow, in: 60...1800, step: 30)
-                        Text("\(Int(slow))s").monospacedDigit().frame(width: 48)
+                        Slider(value: intervalBinding(\.slowInterval), in: 60...1800, step: 30)
+                        Text("\(appSettings.slowInterval)s").monospacedDigit().frame(width: 48)
                     }
                 }
                 Text("Faster checks notice problems sooner and use a little more battery. Your public IP is looked up from an outside service, so that one stays slow on purpose.")
@@ -64,39 +53,40 @@ struct SettingsView: View {
             }
 
             Section("Battery") {
-                Toggle("Pause while the display is asleep", isOn: $pauseSleep)
-                    .onChange(of: pauseSleep) { _, new in
-                        Defaults.pauseOnDisplaySleep = new; settingsChanged()
-                    }
-                Toggle("Pause on low battery", isOn: $pauseBattery)
-                    .onChange(of: pauseBattery) { _, new in
-                        Defaults.pauseOnBattery = new; settingsChanged()
-                    }
+                Toggle("Pause while the display is asleep", isOn: $appSettings.pauseOnDisplaySleep)
+                Toggle("Pause on low battery", isOn: $appSettings.pauseOnBattery)
             }
 
             Section("Menu bar") {
-                Picker("Show", selection: $style) {
+                Picker("Show", selection: $appSettings.menuBarStyle) {
                     ForEach(MenuBarStyle.allCases) { Text($0.label).tag($0) }
-                }
-                .onChange(of: style) { _, new in
-                    Defaults.menuBarStyle = new; settingsChanged()
                 }
             }
         }
         .formStyle(.grouped)
-        // Restart on commit rather than on every slider tick: each change
-        // respawns the monitor process, and dragging a slider would
-        // otherwise spawn one per pixel.
-        .onChange(of: fast) { _, new in Defaults.fastInterval = Int(new) }
-        .onChange(of: medium) { _, new in Defaults.mediumInterval = Int(new) }
-        .onChange(of: slow) { _, new in Defaults.slowInterval = Int(new) }
+        // The monitor restarts once, when the window closes, rather than
+        // once per slider tick: each restart respawns the process, and
+        // the intervals are command-line arguments it has no way to be
+        // told about mid-run.
         .onDisappear { coordinator.applyCadenceSettings() }
+    }
+
+    /// A `Binding<Double>` for a `Slider`, over one of `AppSettings`'s
+    /// `Int` cadence properties. Note `Defaults`' clamping is read-side
+    /// only — these sliders stay in range because their bounds sit inside
+    /// the clamp bounds, not because the write path clamps.
+    private func intervalBinding(_ keyPath: ReferenceWritableKeyPath<AppSettings, Int>) -> Binding<Double> {
+        Binding(
+            get: { Double(appSettings[keyPath: keyPath]) },
+            set: { appSettings[keyPath: keyPath] = Int($0) }
+        )
     }
 
     // MARK: - Alerts
 
     private var alerts: some View {
-        Form {
+        @Bindable var appSettings = appSettings
+        return Form {
             Section {
                 if !coordinator.alerts.notificationsAuthorized {
                     HStack {
@@ -109,10 +99,8 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Toggle("Run a check automatically when something breaks", isOn: $scanAlert)
-                    .onChange(of: scanAlert) { _, new in Defaults.scanOnAlert = new }
-                Toggle("Run a check the first time I join a network", isOn: $scanNew)
-                    .onChange(of: scanNew) { _, new in Defaults.scanOnNewNetwork = new }
+                Toggle("Run a check automatically when something breaks", isOn: $appSettings.scanOnAlert)
+                Toggle("Run a check the first time I join a network", isOn: $appSettings.scanOnNewNetwork)
                 Text("An automatic check skips the speed test, so it won't slow down a connection that is already struggling.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -121,10 +109,11 @@ struct SettingsView: View {
             Section("Tell me about") {
                 ForEach(AlertDefinition.all) { def in
                     Toggle(def.title, isOn: Binding(
-                        get: { !disabledAlerts.contains(def.id) },
+                        get: { !appSettings.disabledAlerts.contains(def.id) },
                         set: { on in
-                            Defaults.setAlert(def.id, enabled: on)
-                            disabledAlerts = Defaults.disabledAlerts
+                            var set = appSettings.disabledAlerts
+                            if on { set.remove(def.id) } else { set.insert(def.id) }
+                            appSettings.disabledAlerts = set
                         }))
                 }
             }
@@ -142,7 +131,8 @@ struct SettingsView: View {
     // MARK: - Advanced
 
     private var advanced: some View {
-        Form {
+        @Bindable var appSettings = appSettings
+        return Form {
             Section("Background checks") {
                 HStack {
                     Text(coordinator.watcher.isInstalled
@@ -173,11 +163,10 @@ struct SettingsView: View {
 
             Section("netdiag command") {
                 HStack {
-                    TextField("Leave blank to find it automatically", text: $binaryPath)
+                    TextField("Leave blank to find it automatically", text: $appSettings.binaryPath)
                         .textFieldStyle(.roundedBorder)
                     Button("Choose…") { chooseBinary() }
                 }
-                .onChange(of: binaryPath) { _, new in Defaults.binaryPath = new }
                 Text(resolvedPathLabel)
                     .font(.caption)
                     .foregroundStyle(BinaryLocator.resolve() == nil ? .red : .secondary)
@@ -216,12 +205,7 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true
         if panel.runModal() == .OK, let url = panel.url {
-            binaryPath = url.path
-            Defaults.binaryPath = url.path
+            appSettings.binaryPath = url.path
         }
-    }
-
-    private func settingsChanged() {
-        NotificationCenter.default.post(name: .netdiagSettingsChanged, object: nil)
     }
 }

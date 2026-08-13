@@ -17,9 +17,9 @@ struct RunRoute: Hashable {
 struct RunDetailView: View {
     let route: RunRoute
     @Environment(NetdiagCoordinator.self) private var coordinator
+    @Environment(AppSettings.self) private var appSettings
     @State private var detail: RunDetail?
     @State private var error: String?
-    @State private var expertExpanded = Defaults.expertExpanded
 
     var body: some View {
         ScrollView {
@@ -28,7 +28,7 @@ struct RunDetailView: View {
                     header(detail)
                     RunReportView(snapshot: detail.run,
                                   comparison: detail.comparison,
-                                  showRuleIDs: expertExpanded)
+                                  showRuleIDs: appSettings.expertExpanded)
                     expertDisclosure(detail)
                 } else if let error {
                     failure(error)
@@ -71,7 +71,8 @@ struct RunDetailView: View {
     // MARK: - Expert layer
 
     private func expertDisclosure(_ detail: RunDetail) -> some View {
-        DisclosureGroup(isExpanded: $expertExpanded) {
+        @Bindable var appSettings = appSettings
+        return DisclosureGroup(isExpanded: $appSettings.expertExpanded) {
             // The panel's raw-JSON viewer shows what `--show` actually
             // printed, which is this run's stored record plus the context
             // and comparison computed around it — the bytes, not a
@@ -80,9 +81,6 @@ struct RunDetailView: View {
                 .padding(.top, 8)
         } label: {
             Text("Technical detail").font(.headline)
-        }
-        .onChange(of: expertExpanded) { _, new in
-            Defaults.expertExpanded = new
         }
     }
 

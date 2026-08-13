@@ -17,6 +17,10 @@ final class NetdiagCoordinator {
     let details = RunDetailStore()
     let alerts = AlertEngine()
     let watcher = WatcherControl()
+    /// The observable face of `Defaults` — see `AppSettings`'s header.
+    /// Owned here so one instance is shared by every view via the
+    /// environment, instead of each view reading `Defaults` for itself.
+    let appSettings = AppSettings()
     /// The run in flight, phase by phase. Reset at the start of every run
     /// and fed from the child's fd-3 stream as it arrives.
     let progress = ScanProgress()

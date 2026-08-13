@@ -233,12 +233,12 @@ struct ExpertPanel: View {
         DisclosureGroup(isExpanded: $showRawJSON) {
             ScrollView([.horizontal, .vertical]) {
                 Text(run.rawJSON)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(Theme.Font.rawJSONMonospace)
                     .textSelection(.enabled)
                     .padding(6)
             }
             .frame(maxHeight: 320)
-            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
+            .cardStyle()
         } label: {
             HStack {
                 Text("Raw JSON").font(.headline)

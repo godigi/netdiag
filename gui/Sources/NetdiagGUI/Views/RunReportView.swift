@@ -48,7 +48,7 @@ struct RunReportView: View {
                 Divider()
             }
         }
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+        .cardStyle()
     }
 
     private struct Row: Identifiable {
@@ -181,19 +181,6 @@ struct RunReportView: View {
                     }
                 }
             }
-        }
-    }
-}
-
-/// The three states, in colour. Shared because three views now draw the
-/// same dot — the report card, the diagnosis list and the run list — and a
-/// fourth palette is a fourth chance for them to disagree.
-extension Health {
-    var tint: Color {
-        switch self {
-        case .healthy:  return .green
-        case .warning:  return .yellow
-        case .critical: return .red
         }
     }
 }

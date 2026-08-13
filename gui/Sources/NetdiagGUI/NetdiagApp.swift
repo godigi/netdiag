@@ -15,10 +15,6 @@ struct NetdiagApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @Environment(\.openWindow) private var openWindow
 
-    init() {
-        Defaults.registerDefaults()
-    }
-
     var body: some Scene {
         // .window style rather than .menu: the dropdown is a small custom
         // panel with a status line, a Run button and live values, none of
@@ -26,9 +22,10 @@ struct NetdiagApp: App {
         MenuBarExtra {
             DropdownView()
                 .environment(coordinator)
+                .environment(coordinator.appSettings)
                 .frame(width: 340)
         } label: {
-            MenuBarLabel(coordinator: coordinator)
+            MenuBarLabel(coordinator: coordinator, appSettings: coordinator.appSettings)
                 // The only view guaranteed to exist at launch. An
                 // LSUIElement app has no window on screen, so a .task on
                 // the dropdown or the dashboard would not run until the
@@ -41,6 +38,7 @@ struct NetdiagApp: App {
         Window("netdiag", id: WindowID.dashboard) {
             DashboardWindow()
                 .environment(coordinator)
+                .environment(coordinator.appSettings)
                 .frame(minWidth: 720, minHeight: 520)
         }
         .defaultSize(width: 860, height: 640)
@@ -48,6 +46,7 @@ struct NetdiagApp: App {
         Window("netdiag Settings", id: WindowID.settings) {
             SettingsView()
                 .environment(coordinator)
+                .environment(coordinator.appSettings)
         }
         .defaultSize(width: 520, height: 560)
         .windowResizability(.contentSize)
@@ -55,6 +54,7 @@ struct NetdiagApp: App {
         Window("Welcome to netdiag", id: WindowID.onboarding) {
             OnboardingView()
                 .environment(coordinator)
+                .environment(coordinator.appSettings)
         }
         .defaultSize(width: 560, height: 520)
         .windowResizability(.contentSize)
@@ -116,26 +116,18 @@ enum WindowID {
 /// consideration when screen-sharing.
 struct MenuBarLabel: View {
     @Bindable var coordinator: NetdiagCoordinator
-    @State private var style = Defaults.menuBarStyle
+    var appSettings: AppSettings
 
     var body: some View {
         HStack(spacing: 3) {
             Image(nsImage: Self.dot(for: coordinator.currentHealth))
-            if style != .dotOnly,
+            if appSettings.menuBarStyle != .dotOnly,
                let flag = Flag.emoji(forISOCode: countryISO) {
                 Text(flag)
             }
-            if style == .dotFlagAndIP, let ip = publicIP {
-                Text(ip).font(.system(size: 11, design: .monospaced))
+            if appSettings.menuBarStyle == .dotFlagAndIP, let ip = publicIP {
+                Text(ip).font(Theme.Font.compactMonospace)
             }
-        }
-        .task {
-            // UserDefaults is not observable, so re-read on appear and
-            // whenever the settings window announces a change.
-            style = Defaults.menuBarStyle
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .netdiagSettingsChanged)) { _ in
-            style = Defaults.menuBarStyle
         }
     }
 
@@ -156,12 +148,7 @@ struct MenuBarLabel: View {
     @MainActor
     private static func dot(for health: Health) -> NSImage {
         if let cached = dotCache[health.symbol] { return cached }
-        let colour: NSColor
-        switch health {
-        case .healthy:  colour = .systemGreen
-        case .warning:  colour = .systemYellow
-        case .critical: colour = .systemRed
-        }
+        let colour = health.nsColor
         let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
             .applying(NSImage.SymbolConfiguration(paletteColors: [colour]))
         let image = NSImage(systemSymbolName: health.symbol,
@@ -190,12 +177,4 @@ struct MenuBarLabel: View {
         if ip.contains(":") { return "…\(ip.split(separator: ":").last ?? "")" }
         return ip
     }
-}
-
-extension Notification.Name {
-    /// Posted when a preference changes, so the views reading UserDefaults
-    /// directly can refresh. UserDefaults is not @Observable and wrapping
-    /// every key in @AppStorage would scatter the definitions this app
-    /// deliberately keeps in one file.
-    static let netdiagSettingsChanged = Notification.Name("netdiagSettingsChanged")
 }

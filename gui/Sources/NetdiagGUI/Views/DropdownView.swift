@@ -7,6 +7,7 @@ import SwiftUI
 /// Everything an expert wants is one click further in, never here.
 struct DropdownView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
+    @Environment(AppSettings.self) private var appSettings
     @Environment(\.openWindow) private var openWindow
     @State private var copied = false
 
@@ -26,7 +27,7 @@ struct DropdownView: View {
     private var headline: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: coordinator.currentHealth.symbol)
-                .foregroundStyle(tint)
+                .foregroundStyle(coordinator.currentHealth.tint)
                 .font(.title3)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 4) {
@@ -55,12 +56,12 @@ struct DropdownView: View {
         // which reports phases rather than a bare elapsed count.
         if coordinator.isScanning { return nil }
         if coordinator.monitor.isBursting {
-            return "Latency test running — sampling every \(Defaults.latencyTestInterval)s."
+            return "Latency test running — sampling every \(appSettings.latencyTestInterval)s."
         }
         if let reason = coordinator.monitor.pauseReason {
             return "Paused — \(reason)."
         }
-        if !Defaults.monitoringEnabled { return "Turn monitoring on to watch continuously." }
+        if !appSettings.monitoringEnabled { return "Turn monitoring on to watch continuously." }
         if let error = coordinator.monitor.lastError { return error }
         if let sample = coordinator.monitor.latest, sample.status.icmpFiltered {
             // TCP-1. Worth saying out loud: on a hotel or corporate network
@@ -86,7 +87,7 @@ struct DropdownView: View {
                     HStack(spacing: 4) {
                         if let flag = Flag.emoji(forISOCode: countryISO) { Text(flag) }
                         Text(ip)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(Theme.Font.compactMonospace)
                             .textSelection(.enabled)
                     }
                 } label: {
@@ -174,10 +175,11 @@ struct DropdownView: View {
                     copied = false
                 }
             }
-            dropdownButton(Defaults.monitoringEnabled ? "Pause monitoring" : "Resume monitoring",
-                           icon: Defaults.monitoringEnabled ? "pause" : "play") {
-                coordinator.setMonitoring(enabled: !Defaults.monitoringEnabled)
-                NotificationCenter.default.post(name: .netdiagSettingsChanged, object: nil)
+            dropdownButton(appSettings.monitoringEnabled ? "Pause monitoring" : "Resume monitoring",
+                           icon: appSettings.monitoringEnabled ? "pause" : "play") {
+                let enabled = !appSettings.monitoringEnabled
+                appSettings.monitoringEnabled = enabled
+                coordinator.setMonitoring(enabled: enabled)
             }
             dropdownButton("Settings…", icon: "gearshape") {
                 openWindow(id: WindowID.settings)
@@ -212,14 +214,6 @@ struct DropdownView: View {
         guard let speed = coordinator.latestSpeedTest,
               let down = speed.downMbps else { return "Speed test" }
         return String(format: "Speed test — last: %.0f Mbps down", down)
-    }
-
-    private var tint: Color {
-        switch coordinator.currentHealth {
-        case .healthy:  return .green
-        case .warning:  return .yellow
-        case .critical: return .red
-        }
     }
 
     private var networkName: String {
@@ -273,7 +267,7 @@ struct HighlightingButtonStyle: ButtonStyle {
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: Theme.Radius.control)
                     .fill(hovering ? Color.accentColor.opacity(0.85) : .clear)
                     .padding(.horizontal, 6)
             )

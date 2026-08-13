@@ -58,7 +58,7 @@ struct DashboardWindow: View {
 /// technical?" gets the wrong answer in both directions.
 struct DashboardView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
-    @State private var expertExpanded = Defaults.expertExpanded
+    @Environment(AppSettings.self) private var appSettings
 
     var body: some View {
         ScrollView {
@@ -71,7 +71,7 @@ struct DashboardView: View {
                 }
 
                 if let run = coordinator.latestRun {
-                    RunReportView(snapshot: run.snapshot, showRuleIDs: expertExpanded)
+                    RunReportView(snapshot: run.snapshot, showRuleIDs: appSettings.expertExpanded)
                     expertDisclosure(run)
                 } else {
                     emptyState
@@ -147,14 +147,12 @@ struct DashboardView: View {
     // MARK: - Expert layer
 
     private func expertDisclosure(_ run: RunResult) -> some View {
-        DisclosureGroup(isExpanded: $expertExpanded) {
+        @Bindable var appSettings = appSettings
+        return DisclosureGroup(isExpanded: $appSettings.expertExpanded) {
             ExpertPanel(run: run)
                 .padding(.top, 8)
         } label: {
             Text("Technical detail").font(.headline)
-        }
-        .onChange(of: expertExpanded) { _, new in
-            Defaults.expertExpanded = new
         }
     }
 }
