@@ -98,7 +98,7 @@ struct RunListView: View {
                 .monospacedDigit()
                 .frame(width: 76, alignment: .leading)
             VStack(alignment: .leading, spacing: 4) {
-                Text(headline(run))
+                Text(run.headline)
                     .foregroundStyle(run.diagnosisCount == 0 ? .secondary : .primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !run.rules.isEmpty { chips(run.rules) }
@@ -106,21 +106,6 @@ struct RunListView: View {
             Spacer()
         }
         .padding(.vertical, 2)
-    }
-
-    /// The CLI's own sentence where it reached one.
-    ///
-    /// Where it did not, this counts rather than concludes. 1,846 of the
-    /// 1,912 warning-level runs in the store this was written against carry
-    /// no `most_likely_root_cause` — printing "No problems found" beside
-    /// their amber dot would be the app contradicting the CLI, so the
-    /// no-problem line is reserved for runs that really found none.
-    private func headline(_ run: HistoryDocument.Run) -> String {
-        let cause = run.rootCause?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !cause.isEmpty { return cause }
-        return run.diagnosisCount == 0
-            ? "No problems found"
-            : "\(run.diagnosisCount) finding(s)"
     }
 
     /// Rule ids straight from the CLI. docs/DIAGNOSIS-RULES.md is the

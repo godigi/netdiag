@@ -7,7 +7,7 @@ struct RunRoute: Hashable {
     let networkID: String
 }
 
-/// One stored check: the same report card the Status tab shows, plus how it
+/// One stored check: the same report card Home shows, plus how it
 /// compares to the rest of this network's history, plus the expert layer.
 ///
 /// The comparison is the reason this is worth opening rather than a

@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
+    @Environment(\.openWindow) private var openWindow
 
     /// The About section's own answer from the capabilities handshake.
     /// `nil` until the first probe returns — held here, not read from
@@ -181,6 +182,17 @@ struct SettingsView: View {
             }
 
             about
+
+            Section {
+                Button("Show welcome tour again") {
+                    openWindow(id: WindowID.onboarding)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .buttonStyle(.link)
+                Text("Reopens the three-step setup — notifications, Wi-Fi names, background checks — shown on first launch.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Section("Where things are kept") {
                 LabeledContent("Reports and history") {

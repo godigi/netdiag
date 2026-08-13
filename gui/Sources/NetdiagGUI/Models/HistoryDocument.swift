@@ -215,6 +215,38 @@ struct HistoryDocument: Decodable, Sendable {
             guard let runMode else { return true }
             return !runMode.hasSuffix("-only")
         }
+
+        /// The CLI's own sentence where it reached one, else a count.
+        /// Shared by `RunListView` and `HomeView`'s "Recent checks" card so
+        /// the same run never reads two different ways depending on which
+        /// list is showing it.
+        ///
+        /// Where the CLI reached no conclusion, this counts rather than
+        /// invents one: most warning-level runs carry no
+        /// `most_likely_root_cause`, and printing "No problems found" next
+        /// to their amber dot would be the app contradicting the CLI.
+        var headline: String {
+            let cause = rootCause?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !cause.isEmpty { return cause }
+            return diagnosisCount == 0 ? "No problems found" : "\(diagnosisCount) finding(s)"
+        }
+
+        /// A presentational relabeling of the closed `run_mode` set
+        /// docs/JSON-SCHEMA.md documents — "how much of the battery this
+        /// run attempted", not a judgement about the network, so per the
+        /// redesign's risk register this is safe to keep in Swift. `nil`
+        /// for a record written before v0.9.0 stamped `run_mode` at all:
+        /// there is no honest badge to show for those, so none is shown.
+        var modeBadge: String? {
+            switch runMode {
+            case "full":       return "full check"
+            case "quick":      return "quick check"
+            case "speed-only": return "speed reading"
+            case "mtu-only":   return "MTU check"
+            case "wifi-only":  return "WiFi scan"
+            default:           return nil
+            }
+        }
     }
 }
 

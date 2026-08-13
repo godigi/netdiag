@@ -8,7 +8,7 @@ import Foundation
 /// every scan; it restarts when a cadence setting changes; and it dies and
 /// backs off if the binary goes missing. A line drawn straight across any of
 /// those asserts measurements that were never taken — the same lie the
-/// History tab's "no data" panel exists to refuse, and it is worse here
+/// Trends section's "no data" panel exists to refuse, and it is worse here
 /// because a smooth line through a two-minute outage is *reassuring*.
 ///
 /// Nothing in this file judges a value. It decides only whether two points

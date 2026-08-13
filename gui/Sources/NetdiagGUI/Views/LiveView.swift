@@ -3,11 +3,11 @@ import Charts
 
 /// The last hour of the monitor stream, drawn.
 ///
-/// This is the only tab that needs no CLI run at all: `MonitorStream.recent`
-/// has been holding an hour of samples since the stream existed and nothing
-/// drew them. The History tab charts *stored runs* — sparse, minutes to days
-/// apart; this charts the live stream at whatever cadence it is actually
-/// running.
+/// This is the only section that needs no CLI run at all:
+/// `MonitorStream.recent` has been holding an hour of samples since the
+/// stream existed and nothing drew them. The Trends section charts *stored
+/// runs* — sparse, minutes to days apart; this charts the live stream at
+/// whatever cadence it is actually running.
 ///
 /// The rule that shapes it: **gaps are drawn as gaps.** See
 /// `MonitorSeries` for why, and for how a gap is told apart from a slow

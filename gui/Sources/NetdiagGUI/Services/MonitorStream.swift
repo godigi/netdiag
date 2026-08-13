@@ -51,8 +51,8 @@ final class MonitorStream {
     /// hour, which is as far back as a live sparkline is worth reading.
     private(set) var recent: [MonitorSample] = []
     /// When the on-demand latency test's faster cadence expires, or nil
-    /// when there isn't one. Public so the Live tab can say out loud that
-    /// what it is drawing is temporary.
+    /// when there isn't one. Public so the Live section can say out loud
+    /// that what it is drawing is temporary.
     private(set) var burstUntil: Date?
 
     private var process: Process?

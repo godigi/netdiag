@@ -36,12 +36,19 @@ struct NetdiagApp: App {
         .menuBarExtraStyle(.window)
 
         Window("netdiag", id: WindowID.dashboard) {
-            DashboardWindow()
+            MainWindow()
                 .environment(coordinator)
                 .environment(coordinator.appSettings)
-                .frame(minWidth: 720, minHeight: 520)
+                // Raised from the old tab shell's 720×520: a
+                // NavigationSplitView sidebar costs ~200pt of its own, and
+                // the report card's comparison chips (RunReportView caps
+                // them at 320pt wide) need the rest not to feel clipped.
+                // 780×560 keeps both readable at the floor; 920×680 default
+                // gives the sidebar room without the content column
+                // shrinking to match the pre-redesign width.
+                .frame(minWidth: 780, minHeight: 560)
         }
-        .defaultSize(width: 860, height: 640)
+        .defaultSize(width: 920, height: 680)
 
         Window("netdiag Settings", id: WindowID.settings) {
             SettingsView()

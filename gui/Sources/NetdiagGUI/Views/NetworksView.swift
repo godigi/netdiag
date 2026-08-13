@@ -18,9 +18,10 @@ struct NetworksView: View {
     private var store: HistoryStore { coordinator.history }
 
     var body: some View {
-        // The stack lives inside the tab rather than around it, so browsing
-        // into a network's history leaves the tab bar — and whatever Spec 2
-        // decides about the window's overall shape — untouched.
+        // The stack lives inside this section rather than around it, so
+        // browsing into a network's history leaves the sidebar — and
+        // whatever Spec 2 decides about the window's overall shape —
+        // untouched.
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
@@ -82,7 +83,7 @@ struct NetworksView: View {
                             .help("Grouped by inference — these runs predate network identity, or were bridged by matching gateway and ISP.")
                     }
                     Spacer()
-                    // The card has said "1,915 checks" since the tab
+                    // The card has said "1,915 checks" since this section
                     // existed; this is the affordance that makes the number
                     // lead somewhere.
                     NavigationLink(value: NetworkRoute(networkID: net.id)) {

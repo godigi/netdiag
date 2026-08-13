@@ -26,7 +26,7 @@ final class NetdiagCoordinator {
     let progress = ScanProgress()
 
     private(set) var latestRun: RunResult?
-    /// The Status tab's fallback for a session that has not run a scan yet.
+    /// Home's fallback for a session that has not run a scan yet.
     /// See `reportSource` for why this is a separate property rather than
     /// a second way to set `latestRun`, and `hydrateFromHistoryIfNeeded`
     /// for how it gets populated.
@@ -41,9 +41,10 @@ final class NetdiagCoordinator {
     /// has no verdict on it — Part B of the spec, in the app's own terms.
     private(set) var latestSpeedTest: RunSnapshot.Speedtest?
     private(set) var latestSpeedTestAt: Date?
-    /// A tab another surface has asked the dashboard to show. Consumed by
-    /// `DashboardWindow`, which may not exist yet at the moment of asking.
-    var requestedTab: DashboardTab?
+    /// A section (or a stored run) another surface has asked the main
+    /// window to show. Consumed by `MainWindow`, which may not exist yet at
+    /// the moment of asking — see `consumeRequestedDestination()`.
+    var requestedDestination: MainDestination?
     /// Set while a scan started *by an alert* is in flight. The loop guard:
     /// a scan started this way must never start another. Without it, a
     /// scan's own bufferbloat and speed phases can raise the very alert
@@ -99,8 +100,8 @@ final class NetdiagCoordinator {
 
     // MARK: - Cold-launch hydration
     //
-    // The Status tab used to render nothing until the first scan of the
-    // session finished, even on a machine with ~2,000 runs already in
+    // Home used to render nothing until the first scan of the session
+    // finished, even on a machine with ~2,000 runs already in
     // `~/net-diag`. This fills that gap once, right after launch, without
     // ever letting the fallback be mistaken for a live measurement.
 
@@ -284,10 +285,10 @@ final class NetdiagCoordinator {
     /// result live. Spawning a second `netdiag --monitor` would put two
     /// probers on the link one of them is trying to measure.
     func startLatencyTest() {
-        requestedTab = .live
+        requestedDestination = .live
         guard Defaults.monitoringEnabled, monitor.isRunning else {
-            // The Live tab explains the off state itself, which is why this
-            // still opens it rather than silently doing nothing.
+            // The Live section explains the off state itself, which is why
+            // this still opens it rather than silently doing nothing.
             log.debug("latency test asked for while monitoring is off")
             return
         }
@@ -297,9 +298,9 @@ final class NetdiagCoordinator {
 
     func stopLatencyTest() { monitor.endBurst() }
 
-    func consumeRequestedTab() -> DashboardTab? {
-        defer { requestedTab = nil }
-        return requestedTab
+    func consumeRequestedDestination() -> MainDestination? {
+        defer { requestedDestination = nil }
+        return requestedDestination
     }
 
     /// An alert fired. Run a scan so the notification can be replaced with
@@ -389,7 +390,7 @@ final class NetdiagCoordinator {
 
     // MARK: - Presentation helpers
 
-    /// What `DashboardView` has to render: either the run that finished in
+    /// What `HomeView` has to render: either the run that finished in
     /// this session, or a historical one fetched to fill the screen before
     /// any scan has run this launch. See `reportSource` for how the choice
     /// between the two is made and what it does and doesn't mean.

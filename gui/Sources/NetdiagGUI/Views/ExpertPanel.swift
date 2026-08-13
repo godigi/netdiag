@@ -29,7 +29,7 @@ struct ExpertPanel: View {
 
     // MARK: - Live sparklines
 
-    /// The last hour of monitor samples. Distinct from the History tab,
+    /// The last hour of monitor samples. Distinct from the Trends section,
     /// which charts stored runs: this is the live stream, at the cadence
     /// the monitor is actually running, and it is the only place the
     /// between-scans data is visible at all.
@@ -46,8 +46,8 @@ struct ExpertPanel: View {
             } else {
                 // Through MonitorSeries so a pause reads as a break rather
                 // than as a straight line between the last sample before it
-                // and the first one after. The Live tab draws the same data
-                // full size, with the gaps shaded and named.
+                // and the first one after. The Live section draws the same
+                // data full size, with the gaps shaded and named.
                 sparkline("Gateway RTT (ms)",
                           MonitorSeries.build(samples, tier: "fast") { $0.gateway.rttAvgMs })
                 sparkline("Gateway loss (%)",

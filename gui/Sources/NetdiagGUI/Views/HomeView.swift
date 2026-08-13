@@ -1,62 +1,20 @@
 import SwiftUI
 
-/// Declared outside the view so the coordinator can ask for one. The
-/// dropdown's "Latency test" has to open the Live tab, and the window it
-/// wants may not exist at the moment it asks.
-enum DashboardTab: String, CaseIterable, Identifiable {
-    case report = "Status"
-    case live = "Live"
-    case history = "History"
-    case networks = "Networks"
-    var id: String { rawValue }
-}
-
-/// The main window: report card, live stream, history, networks.
-struct DashboardWindow: View {
-    @Environment(NetdiagCoordinator.self) private var coordinator
-    @State private var tab = DashboardTab.report
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                ForEach(DashboardTab.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(12)
-
-            Divider()
-
-            switch tab {
-            case .report:   DashboardView()
-            case .live:     LiveView()
-            case .history:  HistoryView()
-            case .networks: NetworksView()
-            }
-        }
-        .task {
-            // Both paths are needed: `.task` catches a request made while
-            // the window did not exist yet, `onChange` catches one made
-            // while it was already open behind another app.
-            if let requested = coordinator.consumeRequestedTab() { tab = requested }
-            await coordinator.history.load()
-        }
-        .onChange(of: coordinator.requestedTab) { _, new in
-            guard new != nil, let requested = coordinator.consumeRequestedTab() else { return }
-            tab = requested
-        }
-    }
-}
-
-/// Layer three of four: the live run.
+/// Home: "is my internet OK, and why?" — the question the sidebar's first
+/// row answers. Hydrated from stored history on cold launch so this is
+/// never empty (see `NetdiagCoordinator.hydrateFromHistoryIfNeeded`), and
+/// it is the same report card the Networks section's stored runs use —
+/// `RunReportView` — plus the expert layer as a disclosure whose open/closed
+/// state persists rather than a mode chosen at first launch, because asking
+/// a user "are you technical?" gets the wrong answer in both directions.
 ///
-/// The card itself is `RunReportView`, shared with the stored runs the
-/// Networks tab browses — a live run passes no comparison because there is
-/// nothing to compare it against until it is in the store. The expert layer
-/// hangs off the bottom as a disclosure whose open/closed state persists —
-/// never a mode chosen at first launch, because asking a user "are you
-/// technical?" gets the wrong answer in both directions.
-struct DashboardView: View {
+/// Moved here from `DashboardWindow.swift` verbatim, plus
+/// one addition: the "Recent checks" card the redesign's mockup
+/// (`nimbalyst-local/mockups/netdiag-main-window.mockup.html`) puts in
+/// Home's right column. The expert disclosure moved to the bottom of the
+/// page, after that card, to match the mockup's order — previously it sat
+/// directly under the report card because nothing came after it.
+struct HomeView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
 
@@ -83,16 +41,20 @@ struct DashboardView: View {
                 switch coordinator.reportSource {
                 case .live(let run):
                     RunReportView(snapshot: run.snapshot, showRuleIDs: appSettings.expertExpanded)
-                    expertDisclosure(run)
                 case .stored(let detail):
                     // Comparison chips come free: `detail` is a `--show`
                     // response, and RunReportView already knows how to
                     // render one — RunDetailView passes the identical pair.
                     RunReportView(snapshot: detail.run, comparison: detail.comparison,
                                   showRuleIDs: appSettings.expertExpanded)
-                    expertDisclosure(detail.asRunResult)
                 case nil:
                     emptyState
+                }
+
+                recentChecksCard
+
+                if let result = currentRunResult {
+                    expertDisclosure(result)
                 }
             }
             .padding(16)
@@ -185,7 +147,115 @@ struct DashboardView: View {
         .padding(.top, 24)
     }
 
+    // MARK: - Recent checks
+
+    /// The mockup's right-column list, pulled out as its own card: the last
+    /// few checks across every network, so a report on screen never hides
+    /// that fresher ones exist elsewhere. `HistoryStore.recentChecks`
+    /// already picks and orders these — the same call cold-launch
+    /// hydration makes, so this card and the report above it are answering
+    /// the same "what's the newest real look at any network?" question from
+    /// two different angles.
+    private var recentChecksCard: some View {
+        let checks = coordinator.history.recentChecks(limit: 5)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Recent checks").font(.headline)
+            if checks.isEmpty {
+                Text("Checks will appear here once netdiag has run a few.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(checks) { run in
+                        recentCheckRow(run)
+                        if run.id != checks.last?.id { Divider() }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    /// Tappable only when the CLI stamped an id on this run — the same
+    /// version-skew handling `RunListView` uses: a row without one is
+    /// listed but inert rather than offering a push that would fail. The
+    /// two cases render differently for the same reason `RunListView`
+    /// pairs its list with `unopenableNotice`: a plain `.buttonStyle(.plain)`
+    /// row gives no visual difference between "tap this" and "this just sits
+    /// here", so the tappable row gets a trailing chevron and the inert one
+    /// is dimmed with a tooltip explaining why.
+    @ViewBuilder
+    private func recentCheckRow(_ run: HistoryDocument.Run) -> some View {
+        if let runID = run.runID {
+            NavigationLink(value: RunRoute(runID: runID, networkID: run.networkID)) {
+                recentCheckRowContent(run, openable: true)
+            }
+            .buttonStyle(.plain)
+        } else {
+            recentCheckRowContent(run, openable: false)
+                .help("Recorded by an older netdiag — this check can be listed but not opened.")
+        }
+    }
+
+    private func recentCheckRowContent(_ run: HistoryDocument.Run, openable: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: run.health.symbol)
+                .foregroundStyle(run.health.tint)
+                .frame(width: 14)
+            Text(Self.relativeTime(run.date))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+            Text(run.headline)
+                .font(.caption)
+                .foregroundStyle(openable && run.diagnosisCount > 0 ? .primary : .secondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if let badge = run.modeBadge {
+                Text(badge)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.secondary.opacity(0.15), in: Capsule())
+            }
+            if openable {
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+    }
+
+    /// One formatter for every row's timestamp — constructing a
+    /// `RelativeDateTimeFormatter` per row is the same needless cost
+    /// `HistoryDocument.iso` documents for `ISO8601DateFormatter`, just at
+    /// a smaller scale (five rows, not two thousand).
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    private static func relativeTime(_ date: Date) -> String {
+        relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
     // MARK: - Expert layer
+
+    /// Whichever report is on screen, as the `RunResult` the expert
+    /// disclosure and the raw-JSON viewer inside it both expect.
+    private var currentRunResult: RunResult? {
+        switch coordinator.reportSource {
+        case .live(let run):        return run
+        case .stored(let detail):   return detail.asRunResult
+        case nil:                   return nil
+        }
+    }
 
     private func expertDisclosure(_ run: RunResult) -> some View {
         @Bindable var appSettings = appSettings
