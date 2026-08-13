@@ -26,6 +26,11 @@ final class NetdiagCoordinator {
     let progress = ScanProgress()
 
     private(set) var latestRun: RunResult?
+    /// The Status tab's fallback for a session that has not run a scan yet.
+    /// See `reportSource` for why this is a separate property rather than
+    /// a second way to set `latestRun`, and `hydrateFromHistoryIfNeeded`
+    /// for how it gets populated.
+    private(set) var hydratedReport: RunDetail?
     private(set) var isScanning = false
     private(set) var scanStartedAt: Date?
     private(set) var scanKind: String = ""
@@ -81,6 +86,7 @@ final class NetdiagCoordinator {
             await alerts.refreshAuthorization()
             await watcher.refresh()
             await history.load()
+            await hydrateFromHistoryIfNeeded()
         }
         if Defaults.monitoringEnabled { monitor.start() }
     }
@@ -89,6 +95,43 @@ final class NetdiagCoordinator {
         scanTask?.cancel()
         monitor.stop()
         events.stop()
+    }
+
+    // MARK: - Cold-launch hydration
+    //
+    // The Status tab used to render nothing until the first scan of the
+    // session finished, even on a machine with ~2,000 runs already in
+    // `~/net-diag`. This fills that gap once, right after launch, without
+    // ever letting the fallback be mistaken for a live measurement.
+
+    /// Picks the newest run that counts as a check
+    /// (`HistoryDocument.Run.isCheck` — the `run_mode` predicate
+    /// docs/JSON-SCHEMA.md documents and `helpers/history.py` applies
+    /// identically) and has an id `--show` can open, then fetches its full
+    /// record via `details.detail(for:)`.
+    ///
+    /// Silent on failure: a pruned run (the store rolls into an archive and
+    /// is eventually trimmed) or a `netdiag` older than `--show` must fall
+    /// back to the ordinary empty state, not an error banner for something
+    /// the user never asked to happen. Called once, from `start()`, before
+    /// any scan can plausibly have finished — but if one lands anyway while
+    /// the `await` below is in flight, the assignment after it is
+    /// deliberately not re-guarded: `reportSource` prefers `.live`
+    /// regardless of which of the two was written last, so a hydrated
+    /// report landing a moment after a real one is inert, not a race worth
+    /// closing.
+    private func hydrateFromHistoryIfNeeded() async {
+        guard latestRun == nil, hydratedReport == nil else { return }
+        // `recentChecks(limit: 1)`, not a larger buffer: a `netdiag` new
+        // enough to stamp run ids stamps every run, so the newest already
+        // has one; one old enough not to stamps none, and no larger limit
+        // would find one either.
+        guard let id = history.recentChecks(limit: 1).compactMap(\.runID).first else { return }
+        do {
+            hydratedReport = try await details.detail(for: id)
+        } catch {
+            log.debug("cold-launch hydration skipped: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - Monitoring toggle
@@ -202,6 +245,14 @@ final class NetdiagCoordinator {
                 guard !Task.isCancelled else { return }
                 if adoptAsReport {
                     self.latestRun = result
+                    // Not required for correctness — `reportSource` prefers
+                    // `.live` no matter which of the two was written last,
+                    // so a stale `hydratedReport` left in place would never
+                    // render again regardless. This is about memory: a
+                    // `RunDetail` carries `rawJSON`, the full `--show`
+                    // response, and there is no reason to keep holding that
+                    // once nothing can display it.
+                    self.hydratedReport = nil
                     self.alerts.evaluate(run: result.snapshot)
                 } else {
                     self.latestSpeedTest = result.snapshot.speedtest
@@ -337,6 +388,32 @@ final class NetdiagCoordinator {
     }
 
     // MARK: - Presentation helpers
+
+    /// What `DashboardView` has to render: either the run that finished in
+    /// this session, or a historical one fetched to fill the screen before
+    /// any scan has run this launch. See `reportSource` for how the choice
+    /// between the two is made and what it does and doesn't mean.
+    enum ReportSource {
+        case live(RunResult)
+        case stored(RunDetail)
+    }
+
+    /// `.live` always wins: `launch()` clears `hydratedReport` the moment a
+    /// scan lands, and this checks `latestRun` first regardless, so the two
+    /// can never be shown in the wrong order even if that clear were ever
+    /// missed.
+    ///
+    /// Deliberately not read by `currentHealth`, `headline`, or the alert
+    /// engine — all three read `latestRun` directly, unaffected by this
+    /// property's existence. A hydrated report is a *display* fallback for
+    /// a screen that would otherwise be empty; it is not a fresh
+    /// measurement, and nothing that judges the network's current state is
+    /// allowed to treat it as one.
+    var reportSource: ReportSource? {
+        if let latestRun { return .live(latestRun) }
+        if let hydratedReport { return .stored(hydratedReport) }
+        return nil
+    }
 
     var currentHealth: Health {
         if let sample = monitor.latest { return sample.health }

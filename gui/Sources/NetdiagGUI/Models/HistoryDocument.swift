@@ -17,21 +17,54 @@ struct HistoryDocument: Decodable, Sendable {
 
     static let empty = HistoryDocument()
 
+    /// One formatter for every timestamp in this document. Constructing
+    /// `ISO8601DateFormatter()` per call looks free and is not: a sort of
+    /// ~2,000 runs through per-call construction measured 5.3 s on a real
+    /// store, against 0.6 ms without it. Sharing one instance here is sound
+    /// because every caller — `HistoryStore` and this file's own
+    /// `Run.date`, `Network.firstSeenDate`/`lastSeenDate` — runs on
+    /// `@MainActor`, not because `ISO8601DateFormatter` is documented safe
+    /// for concurrent use from multiple threads (it isn't, explicitly).
+    /// `RunSnapshot` and `MonitorSample` still construct their own per call;
+    /// that's a different file and out of scope here.
+    static let iso = ISO8601DateFormatter()
+
     struct Counts: Decodable, Sendable {
         var recordsRead: Int = 0
         var duplicatesDropped: Int = 0
         var redactedDropped: Int = 0
         var unparseableDropped: Int = 0
         var runs: Int = 0
+        /// Of `runs`, the ones that examined the network rather than
+        /// answering one narrow question about it — see
+        /// `HistoryDocument.Run.isCheck`. Optional, not defaulted to 0:
+        /// this key is new in v0.9.0:T3, and an old CLI omitting it must
+        /// read as "unknown", not "zero checks ever ran".
+        var checks: Int?
         var networks: Int = 0
 
         enum CodingKeys: String, CodingKey {
-            case runs, networks
+            case runs, checks, networks
             case recordsRead = "records_read"
             case duplicatesDropped = "duplicates_dropped"
             case redactedDropped = "redacted_dropped"
             case unparseableDropped = "unparseable_dropped"
         }
+    }
+
+    /// One metric's population summary for one network: the same
+    /// `median`/`p10`/`p90` arithmetic `--show`'s `comparison` computes for
+    /// a single run, reused rather than re-derived here for a whole
+    /// network's worth of samples (helpers/history.py's
+    /// `population_stats`). Carries no verdict or direction — this states
+    /// what a network's numbers look like, never whether one reading was
+    /// good, which stays `--show`'s question alone.
+    struct MetricStat: Decodable, Sendable {
+        var median: Double?
+        var p10: Double?
+        var p90: Double?
+
+        enum CodingKeys: String, CodingKey { case median, p10, p90 }
     }
 
     /// Label, unit and direction all come from the CLI. A chart needs to
@@ -67,6 +100,13 @@ struct HistoryDocument: Decodable, Sendable {
         var isps: [String] = []
         var ssids: [String] = []
         var metricSamples: [String: Int] = [:]
+        /// This network's `MetricStat` per metric key in `metrics[]` —
+        /// `nil` for a metric below `THRESH_COMPARE_MIN_SAMPLES`, and the
+        /// whole dictionary `nil` (never empty) when the running CLI
+        /// predates `metric_stats` entirely, so the two "no answer" cases
+        /// stay distinguishable. `HistoryStore.median(metric:networkID:)`
+        /// is the one place this app reads it.
+        var metricStats: [String: MetricStat?]?
         var severityCounts: [String: Int] = [:]
 
         enum CodingKeys: String, CodingKey {
@@ -76,11 +116,19 @@ struct HistoryDocument: Decodable, Sendable {
             case lastSeen = "last_seen"
             case runCount = "run_count"
             case metricSamples = "metric_samples"
+            case metricStats = "metric_stats"
             case severityCounts = "severity_counts"
         }
 
-        var firstSeenDate: Date? { ISO8601DateFormatter().date(from: firstSeen ?? "") }
-        var lastSeenDate: Date? { ISO8601DateFormatter().date(from: lastSeen ?? "") }
+        /// This network's summary for one metric, flattened to a single
+        /// optional: `nil` whether the CLI never sent `metric_stats` at
+        /// all or sent it with this metric's block null.
+        func stat(for metric: String) -> MetricStat? {
+            metricStats?[metric] ?? nil
+        }
+
+        var firstSeenDate: Date? { HistoryDocument.iso.date(from: firstSeen ?? "") }
+        var lastSeenDate: Date? { HistoryDocument.iso.date(from: lastSeen ?? "") }
 
         var incidentCount: Int {
             (severityCounts["warn"] ?? 0) + (severityCounts["critical"] ?? 0)
@@ -110,6 +158,11 @@ struct HistoryDocument: Decodable, Sendable {
         var runID: String?
         var networkID: String = ""
         var version: String?
+        /// How much of the battery this run attempted — the closed set
+        /// docs/JSON-SCHEMA.md documents under `run_mode`. `nil` on every
+        /// record written before v0.9.0. See `isCheck`, the one predicate
+        /// this app derives from it.
+        var runMode: String?
         var severity: String = "ok"
         var diagnosisCount: Int = 0
         var rules: [String] = []
@@ -122,6 +175,7 @@ struct HistoryDocument: Decodable, Sendable {
             case ts, version, severity, rules, metrics
             case runID = "id"
             case networkID = "network_id"
+            case runMode = "run_mode"
             case diagnosisCount = "diagnosis_count"
             case rootCause = "root_cause"
         }
@@ -132,7 +186,7 @@ struct HistoryDocument: Decodable, Sendable {
         /// netdiag still has stable row identity instead of a run of
         /// duplicate empty strings.
         var id: String { runID ?? "\(ts ?? "")-\(networkID)" }
-        var date: Date { ISO8601DateFormatter().date(from: ts ?? "") ?? .distantPast }
+        var date: Date { HistoryDocument.iso.date(from: ts ?? "") ?? .distantPast }
 
         var health: Health {
             switch severity {
@@ -140,6 +194,26 @@ struct HistoryDocument: Decodable, Sendable {
             case "warn":     return .warning
             default:         return .healthy
             }
+        }
+
+        /// True when this run examined the network rather than answering
+        /// one narrow question about it. docs/JSON-SCHEMA.md's `run_mode`
+        /// table: "the suffix is the rule rather than a list of the three
+        /// [modes] that exist today… a list would go stale the day a
+        /// `--dns-only` landed, and it would go stale silently, by counting
+        /// the new mode as a full check." `helpers/history.py`'s
+        /// `is_check()` applies this identical rule server-side to build
+        /// `counts.checks` and `severity_counts`; this is the one place the
+        /// GUI re-applies it, per CLAUDE.md's no-diagnostic-logic-in-Swift
+        /// rule — it reads a documented naming convention, not the run's
+        /// content, so it is data plumbing rather than a judgement call.
+        ///
+        /// `nil` predates v0.9.0 and counts as a check: those runs were
+        /// full or quick ones, and reclassifying them would rewrite months
+        /// of a user's own history the moment this shipped.
+        var isCheck: Bool {
+            guard let runMode else { return true }
+            return !runMode.hasSuffix("-only")
         }
     }
 }

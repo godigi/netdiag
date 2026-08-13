@@ -70,10 +70,28 @@ struct DashboardView: View {
                     Divider()
                 }
 
-                if let run = coordinator.latestRun {
+                // Hoisted out of `emptyState`: a hydrated report replaces
+                // that state the moment history has anything to show, and a
+                // failed scan needs to surface whether or not the screen
+                // underneath it is empty.
+                if let error = coordinator.lastRunError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                switch coordinator.reportSource {
+                case .live(let run):
                     RunReportView(snapshot: run.snapshot, showRuleIDs: appSettings.expertExpanded)
                     expertDisclosure(run)
-                } else {
+                case .stored(let detail):
+                    // Comparison chips come free: `detail` is a `--show`
+                    // response, and RunReportView already knows how to
+                    // render one — RunDetailView passes the identical pair.
+                    RunReportView(snapshot: detail.run, comparison: detail.comparison,
+                                  showRuleIDs: appSettings.expertExpanded)
+                    expertDisclosure(detail.asRunResult)
+                case nil:
                     emptyState
                 }
             }
@@ -90,8 +108,8 @@ struct DashboardView: View {
                 Text(coordinator.headline)
                     .font(.title3)
                     .fixedSize(horizontal: false, vertical: true)
-                if let run = coordinator.latestRun {
-                    Text("Last checked \(run.finishedAt.formatted(date: .abbreviated, time: .shortened)) · took \(String(format: "%.0f", run.duration))s")
+                if let caption = lastCheckedCaption {
+                    Text(caption)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -129,17 +147,40 @@ struct DashboardView: View {
         return "\(max(elapsed, 0))s"
     }
 
+    /// "Last checked …" for whichever report is on screen. A live run adds
+    /// "· took Ns" — the process's own wall-clock, meaningful for a check
+    /// that just ran. A stored one drops it: the process that produced a
+    /// report hydrated from history exited long before this launch, and
+    /// its duration says nothing about how long *this* check took. A stored
+    /// one adds the network's name instead — hydration picks the newest
+    /// check across every network this app has seen, so showing last
+    /// week's office report with no label while the headline above talks
+    /// about the network you're on right now would read as one contradictory
+    /// screen. Mirrors `RunDetailView.subtitle`, which names the network
+    /// the same way for the same reason.
+    private var lastCheckedCaption: String? {
+        switch coordinator.reportSource {
+        case .live(let run):
+            return "Last checked \(run.finishedAt.formatted(date: .abbreviated, time: .shortened)) · took \(String(format: "%.0f", run.duration))s"
+        case .stored(let detail):
+            let date = detail.run.date.formatted(date: .abbreviated, time: .shortened)
+            guard let networkID = detail.context.networkID else {
+                // An old `netdiag` whose `--show` predates `context`. Still
+                // better than nothing, just without the network name.
+                return "Last checked \(date)"
+            }
+            return "Last checked \(date) · \(coordinator.history.displayName(for: networkID))"
+        case nil:
+            return nil
+        }
+    }
+
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("No check has run yet.").font(.headline)
             Text("netdiag is watching your connection continuously in the background. Run a full check to see the detail behind it.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let error = coordinator.lastRunError {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .padding(.top, 24)
     }

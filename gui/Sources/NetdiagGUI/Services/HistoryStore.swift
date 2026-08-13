@@ -35,6 +35,11 @@ final class HistoryStore {
             document = try await NetdiagRunner.history()
             lastError = nil
             lastLoadedAt = Date()
+            // A fresh document invalidates every memoized median: the
+            // store may have grown new runs, and stale numbers under a
+            // "computed once" cache are worse than the repeated scan it
+            // replaces.
+            medianCache.removeAll()
         } catch {
             lastError = error.localizedDescription
         }
@@ -79,11 +84,16 @@ final class HistoryStore {
         // second hop that has to be followed forever.
         manualMerges[source] = canonicalID(destination)
         Defaults.networkMerges = manualMerges
+        // A merge changes which raw networks a canonical id stands for,
+        // which is exactly what `median(metric:networkID:)` keys its cache
+        // on — see its doc comment.
+        medianCache.removeAll()
     }
 
     func unmerge(_ networkID: String) {
         manualMerges.removeValue(forKey: networkID)
         Defaults.networkMerges = manualMerges
+        medianCache.removeAll()
     }
 
     // MARK: - Derived views
@@ -127,6 +137,30 @@ final class HistoryStore {
         }
     }
 
+    /// Newest-first runs that count as a check, across every network —
+    /// `HistoryDocument.Run.isCheck` filters out `-only` measurements. Built
+    /// for cold-launch hydration (`NetdiagCoordinator.hydrateFromHistoryIfNeeded`),
+    /// which wants "the most recent real look at any network this app has
+    /// seen", and for the "Recent checks" list a later task adds to Home.
+    ///
+    /// Sorted on the raw `ts` string, not `Run.date`: docs/JSON-SCHEMA.md
+    /// fixes `timestamp` at ISO 8601 UTC with no fractional seconds, so
+    /// lexicographic order on that string already equals chronological
+    /// order — `bin/netdiag` is the store's only writer, and that equality
+    /// has held over the full store this was verified against. Skipping the
+    /// parse still matters even now that `Run.date` reads from
+    /// `HistoryDocument.iso`, the formatter every call in this document
+    /// shares: sorting ~2,000 runs invokes the comparator roughly n·log₂n
+    /// times, each side parsing a date, and the parsing itself — not just
+    /// the `ISO8601DateFormatter()` construction the shared instance
+    /// removed — is the cost. Measured 5.3 s through a fresh formatter per
+    /// call, 0.6 ms for the lexicographic compare below; the shared
+    /// formatter cuts the construction share of that 5.3 s but leaves
+    /// ~44,000 parse calls this comparator has no need to make.
+    func recentChecks(limit: Int) -> [HistoryDocument.Run] {
+        Array(document.runs.filter(\.isCheck).sorted { ($0.ts ?? "") > ($1.ts ?? "") }.prefix(limit))
+    }
+
     /// Points for one metric, skipping runs where it was not measured.
     ///
     /// Skipping rather than zero-filling is the whole difference between a
@@ -160,5 +194,78 @@ final class HistoryStore {
     func isFirstTimeSeen(_ networkID: String) -> Bool {
         let key = canonicalID(networkID)
         return !document.networks.contains { canonicalID($0.id) == key }
+    }
+
+    // MARK: - Medians
+
+    /// `median(metric:networkID:)`'s memo, keyed by canonical network id
+    /// then metric key. The inner value is itself optional — a network
+    /// with no samples for a metric memoizes `nil` too, so that case does
+    /// not re-scan `runs()` on every redraw either — which is why lookups
+    /// below unwrap it with `if let` rather than `??`: one `if let` peels
+    /// exactly the "have we computed this at all" layer off, leaving the
+    /// possibly-nil result underneath untouched. Cleared in `load()` and
+    /// in `merge()`/`unmerge()`, the two places what a canonical id stands
+    /// for can change.
+    ///
+    /// `@ObservationIgnored` because `median()` writes this during view
+    /// bodies: a cache fill must not look like observable state changing,
+    /// or a second view calling `median()` could invalidate the first
+    /// mid-render for what is semantically a read.
+    @ObservationIgnored
+    private var medianCache: [String: [String: Double?]] = [:]
+
+    /// The median for one metric on one network, computed once per loaded
+    /// document rather than by every row on every render.
+    ///
+    /// Before this existed, `NetworksView` called `runs(networkID:window:)`
+    /// — an O(runs) scan and sort — from inside its per-row body, over
+    /// roughly 2,000 runs on the author's own machine, once per network row
+    /// per redraw.
+    ///
+    /// Prefers the CLI's own `metric_stats.median` — the same population
+    /// arithmetic `--show`'s `comparison` already uses
+    /// (`helpers/history.py`'s `population_stats`), reused here rather than
+    /// re-derived in Swift — for a network that maps onto exactly one raw
+    /// `--history` group. A manually merged network (`merge(_:into:)`)
+    /// combines runs the CLI still reports as separate groups, so their
+    /// per-group medians cannot be combined into one without redoing the
+    /// arithmetic; that case, and an old CLI with no `metric_stats` at all,
+    /// fall back to the local computation this file always did.
+    func median(metric: String, networkID: String) -> Double? {
+        let key = canonicalID(networkID)
+        if let cached = medianCache[key]?[metric] { return cached }
+        let value = computeMedian(metric: metric, canonicalID: key)
+        medianCache[key, default: [:]][metric] = value
+        return value
+    }
+
+    private func computeMedian(metric: String, canonicalID key: String) -> Double? {
+        let raw = document.networks.filter { canonicalID($0.id) == key }
+        if raw.count == 1, let stat = raw[0].stat(for: metric), let median = stat.median {
+            return median
+        }
+        return localMedian(metric: metric, networkID: key)
+    }
+
+    /// The exhaustive fallback: a full scan and sort of the metric's own
+    /// series. That undersells the gap with `metric_stats`: below
+    /// `THRESH_COMPARE_MIN_SAMPLES` the CLI returns `null` on purpose
+    /// (docs/JSON-SCHEMA.md — it withholds a number "stated with more
+    /// confidence than the sample supports"), and this fallback computes
+    /// that same median anyway, from as few as 2 readings. That's not this
+    /// file overriding the CLI's judgement; it's preserved legacy
+    /// behavior — `NetworksView` always computed it this way, before
+    /// `metric_stats` existed to refuse — and it is still the only option
+    /// for a manually merged network or a CLI old enough to have no
+    /// `metric_stats` at all.
+    private func localMedian(metric: String, networkID: String) -> Double? {
+        let values = runs(networkID: networkID, window: .all)
+            .compactMap { $0.metrics[metric] }
+            .sorted()
+        guard !values.isEmpty else { return nil }
+        let mid = values.count / 2
+        return values.count.isMultiple(of: 2)
+            ? (values[mid - 1] + values[mid]) / 2 : values[mid]
     }
 }

@@ -21,6 +21,17 @@ import Foundation
 struct RunSnapshot: Decodable, Sendable {
     var version: String?
     var timestamp: String?
+    /// How much of the battery this run attempted — the closed set
+    /// docs/JSON-SCHEMA.md documents under `run_mode`, the same field
+    /// `HistoryDocument.Run.runMode` carries for a stored run's summary
+    /// row. `nil` on records written before v0.9.0.
+    var runMode: String?
+    /// The id `--history`/`--show` addresses this run by, once it is
+    /// stored. `null` in the four cases docs/JSON-SCHEMA.md's `run_id`
+    /// section lists — most commonly `--redact`, or a mode that appends no
+    /// record at all — so its absence on a live run is ordinary, not a
+    /// sign anything failed.
+    var runID: String?
     var interfaceInfo: InterfaceInfo = .init()
     var network: MonitorSample.NetworkIdentity = .init()
     var wifi: WiFi?
@@ -49,6 +60,8 @@ struct RunSnapshot: Decodable, Sendable {
         case version, timestamp, network, wifi, gateway, dns, traceroute
         case bufferbloat, mtu, ipv6, vpn, speedtest, ntp, dhcp, mtr, timings
         case diagnosis
+        case runMode = "run_mode"
+        case runID = "run_id"
         case interfaceInfo = "interface"
         case internetLatency = "internet_latency"
         case publicInfo = "public"
@@ -347,6 +360,8 @@ extension RunSnapshot {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = c.lenient(.version)
         timestamp = c.lenient(.timestamp)
+        runMode = c.lenient(.runMode)
+        runID = c.lenient(.runID)
         interfaceInfo = c.lenient(.interfaceInfo, .init())
         network = c.lenient(.network, .init())
         wifi = c.lenient(.wifi)

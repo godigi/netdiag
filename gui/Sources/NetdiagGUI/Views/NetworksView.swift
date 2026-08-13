@@ -141,14 +141,12 @@ struct NetworksView: View {
     /// Median rather than mean: one 4,000 ms outlier from a moment the
     /// radio was reassociating would drag a mean somewhere no reading ever
     /// was, and the number is there to characterise the typical case.
+    /// `HistoryStore.median` memoizes this per document load instead of
+    /// rescanning ~2,000 runs on every row on every render.
     private func medianRTT(_ net: HistoryDocument.Network) -> String {
-        let values = store.runs(networkID: net.id, window: .all)
-            .compactMap { $0.metrics["gateway_rtt_ms"] }
-            .sorted()
-        guard !values.isEmpty else { return "no data" }
-        let mid = values.count / 2
-        let median = values.count.isMultiple(of: 2)
-            ? (values[mid - 1] + values[mid]) / 2 : values[mid]
+        guard let median = store.median(metric: "gateway_rtt_ms", networkID: net.id) else {
+            return "no data"
+        }
         return String(format: "%.1f ms", median)
     }
 
