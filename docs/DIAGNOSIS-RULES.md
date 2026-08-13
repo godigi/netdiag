@@ -318,7 +318,8 @@ All of the below are implemented and can fire.
 ### NT-1 — System clock drift > 30 s
 
 - Trigger: `|ntp.drift_seconds| > 30`.
-- Severity: `critical`.
+- Severity: `warn` or `critical`, by magnitude — the same call site
+  grades smaller drifts down (the catalog says `varies`).
 - Evidence: drift in seconds from `sntp -t 3 time.apple.com`.
 - Recommendation: re-enable network time (System Settings → General →
   Date & Time → Set automatically).
@@ -327,18 +328,19 @@ All of the below are implemented and can fire.
   rotation window; days of drift breaks everything. Users see this as
   "nothing loads" without any network-level fault to blame.
 - **BL-1** — Metric regression vs 30-day median (gateway RTT, RSSI, PMTU, etc.).
-### DI-1 — Duplicate IPs or incomplete gateway ARP
+### DI-1 — Router unreachable at the hardware (ARP) layer
 
-- Trigger: any IP in `arp -an` with > 1 distinct MAC, or the gateway IP
-  marked `(incomplete)`.
+- Trigger: the gateway IP is marked `(incomplete)` in `arp -an`.
 - Severity: `critical`.
-- Evidence: duplicate IP list, or `(IP) at (incomplete)` line for the
-  gateway.
-- Recommendation: a duplicate IP means another LAN device is squatting
-  the address (static-IP collision or rogue DHCP server). Incomplete
-  gateway = L2 to the router is broken (cable, AP, switch port).
+- Evidence: the `(IP) at (incomplete)` line for the gateway.
+- Recommendation: L2 to the router is broken — check the ethernet cable,
+  the WiFi connection, or that the right router is actually set as the
+  default gateway.
 - Rationale: nothing above this in the stack matters if ARP can't
-  resolve. Surface it early.
+  resolve the router at all. Surface it early. Split from DI-2 (below)
+  so "the router is unreachable at layer 2" and "two devices share an
+  address" don't share a message — they have different causes and
+  different fixes.
 
 ### DH-1 — DHCP lease expires within 1 hour
 
@@ -464,6 +466,40 @@ All of the below are implemented and can fire.
   absolute number still looks fine. Scoped per-network since v0.5.0 —
   before that, a laptop moving between home and a café reported a
   regression on every move.
+
+## Rules emitted only by `--monitor`
+
+`--monitor` evaluates a deliberately partial mirror of the rules above —
+see the comment at the top of `lib/monitor.sh::_mon_rules` — on whichever
+inputs a between-scans sample actually has, plus one rule below that has
+no scan-mode equivalent at all.
+
+### CP-1 — Captive portal blocking real access
+
+- Trigger: the monitor's periodic probe to
+  `http://captive.apple.com/hotspot-detect.html` comes back as a redirect
+  (3xx) instead of the plain 200 a clean connection returns. Evaluated in
+  `lib/monitor.sh::_mon_probe_public` / `_mon_rules`.
+- Severity: `warn`.
+- Evidence: the observed HTTP status class from the probe.
+- Recommendation: open a browser and complete the portal's login or terms
+  page — hotel, airport, and coffee-shop WiFi commonly gate real internet
+  access behind one. Nothing else will work until it's accepted.
+- Rationale: a background monitor has no browser in the loop, so a
+  captive portal looks identical to a dead gateway on every other signal
+  it has. A full scan runs the exact same probe (`lib/public.sh::public_run`
+  — same URL, same 3xx test, no `-L`), but doesn't need a rule for it: a
+  detected portal already surfaces as `public.captive_portal` in the JSON
+  and a warn line in the Public reachability section, and when the portal
+  is actually blocking traffic the `ifconfig.co` fetch earlier in the
+  same function fails too, so P1/P2 fire anyway. The monitor emits the
+  same `public.captive_portal` field on every sample — but only
+  `status.rules[]` feeds `status.severity`. Without CP-1, a portal that
+  still lets the probe's fetch through would stream `severity: "ok"` — a
+  green menu-bar dot over a network where nothing loads — and one that
+  blocks the fetch would fire P2, whose "your provider's side" advice is
+  exactly wrong on a hotel network. CP-1 names the actual cause either
+  way.
 
 ## Rules under active development
 

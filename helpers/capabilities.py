@@ -58,6 +58,7 @@ FEATURES = [
     "redact",
     "speed-only",
     "watcher",
+    "rules-catalog",
 ]
 
 

@@ -697,3 +697,72 @@ every optional dependency below is missing.
   package), or `null` if neither is installed — from the same
   `speedtest_flavor()` `lib/speedtest.sh` uses to pick an implementation
   for a real run.
+
+---
+
+# `netdiag --rules-catalog` schema
+
+`netdiag --rules-catalog` writes one JSON object to stdout and exits 0:
+every rule the diagnosis engine (`lib/diagnosis.sh`, `lib/wan.sh`,
+`lib/output.sh`) and the live monitor (`lib/monitor.sh`) can emit,
+described once. Same family as `--capabilities` — early exit, no probing,
+no log file, no `~/net-diag` writes, sudo-free — and this schema is
+additive: a future release only ever adds fields to a rule entry or new
+entries to `rules`, never removes or repurposes one, so a consumer that
+reads today's fields keeps working against tomorrow's catalog.
+
+```jsonc
+{
+  "schema": 1,
+  "version": "0.9.0",
+  "rules": [
+    {
+      "id": "G2",
+      "title": "Router dropping packets",
+      "category": "router",
+      "severity": "critical",
+      "scope": "both",
+      "blurb": "Packets are being dropped between your Mac and your router even though the WiFi signal is strong, which points at the router itself rather than the wireless link. A reboot (power off, wait, then power back on) clears this in most cases.",
+      "doc": "DIAGNOSIS-RULES.md#g2--gateway-loss-with-healthy-wifi"
+    }
+  ]
+}
+```
+
+- **`schema`** versions this document's own shape, independent of
+  `--capabilities`'s `schemas` block, `--json`'s implicit `1`, and every
+  other schema number this project tracks.
+- **`rules`** is exhaustive as of the running version: one entry per rule
+  ID `add_diag` or `_mon_add_rule` can actually record, matched against
+  those call sites by `tests/test_rules_catalog.bats` so the two can't
+  drift apart silently. `UP-1` is the one documented exception — reserved
+  in `docs/DIAGNOSIS-RULES.md` for a rule that has never fired, because
+  the Report card already states UPnP status directly and a second
+  restatement would say the same fact twice.
+- **`title`** is a short plain-English noun phrase, not a sentence — the
+  label a chip or a list row shows.
+- **`category`** is the measurement family the rule judges (`router`,
+  `internet`, `dns`, `wifi`, `load`, `mtu`, `speed`, `clock`, `ipv6`,
+  `vpn`, `lan`, `dhcp`, `topology`, `baseline`), for tinting a
+  report-card row — deliberately not the same axis as `severity`, so a
+  `varies`-severity rule like `B1` still has one fixed row to live on.
+- **`severity`** is `info` / `warn` / `critical` for a rule that always
+  fires at one severity, or `varies` for the handful that grade by
+  magnitude within a single `add_diag` call site (`B1`, `B2`, `M1`,
+  `NT-1`) — the actual severity of *this* incident always arrives
+  separately, in `diagnosis[].severity`. This field describes the rule,
+  never a reading.
+- **`scope`** is `scan` (only `lib/diagnosis.sh` / `lib/wan.sh` /
+  `lib/output.sh` evaluate it), `monitor` (only `lib/monitor.sh::_mon_rules`
+  does — `CP-1` is the sole member, because a captive-portal probe has no
+  scan-mode equivalent), or `both`.
+- **`blurb`** is general prose about what the rule means, what typically
+  causes it, and what helps — 1–3 sentences, adapted from
+  `docs/DIAGNOSIS-RULES.md`. It is **not** per-incident text: the string a
+  user reads about *this run's* fault is, and remains,
+  `diagnosis[].summary`, which carries this run's own numbers. `blurb`
+  stays qualitative on purpose — no embedded numeric cutoffs — because a
+  threshold belongs in exactly one place (`lib/thresholds.sh`), and
+  `doc` is where the actual number lives.
+- **`doc`** is a GitHub-style anchor into `docs/DIAGNOSIS-RULES.md` for
+  the full trigger condition, evidence, and rationale.

@@ -112,6 +112,7 @@ netdiag --install-watcher        # launchd plist, every 15 min, background
 netdiag --uninstall-watcher
 netdiag --version                # print the version and exit
 netdiag --capabilities           # JSON handshake: schemas, features, deps
+netdiag --rules-catalog          # JSON catalog: every rule ID, title, blurb
 ```
 
 | Flag                 | Effect                                                 |
@@ -148,6 +149,10 @@ netdiag --capabilities           # JSON handshake: schemas, features, deps
 | `--capabilities`     | one JSON object describing this install: per-mode      |
 |                      | schema numbers, a feature list, and which optional     |
 |                      | dependencies are on `PATH`                             |
+| `--rules-catalog`    | one JSON object cataloguing every diagnosis-engine and |
+|                      | monitor rule: title, category, severity, scope, a      |
+|                      | plain-English blurb, and a `docs/DIAGNOSIS-RULES.md`   |
+|                      | anchor                                                 |
 
 Examples:
 

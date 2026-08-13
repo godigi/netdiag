@@ -280,6 +280,15 @@ while [ "$#" -gt 0 ]; do
              NETDIAG_CAP_GPING NETDIAG_CAP_SPEEDTEST
       python3 "$HELPERS_DIR/capabilities.py" || exit 3
       exit 0 ;;
+    --rules-catalog)
+      # Same shape as --capabilities: a static handshake, not a run.
+      # helpers/rules_catalog.py is pure module-level data — bash's only
+      # job is naming the running version, the one fact python can't know
+      # on its own.
+      NETDIAG_RULES_VERSION="$NETDIAG_VERSION"
+      export NETDIAG_RULES_VERSION
+      python3 "$HELPERS_DIR/rules_catalog.py" || exit 3
+      exit 0 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -375,6 +384,12 @@ Modes (exit after running, don't run the normal check battery):
                            which optional dependencies are on PATH — a
                            handshake for a GUI to check compatibility
                            before it relies on a feature.
+  --rules-catalog          print one JSON object cataloguing every rule the
+                           diagnosis engine and the monitor can emit: title,
+                           category, descriptive severity, scope (scan /
+                           monitor / both) and a plain-English blurb per
+                           rule ID — the prose a GUI shows next to a rule
+                           chip instead of reimplementing it in Swift.
 HELP
       exit 0 ;;
     -*)

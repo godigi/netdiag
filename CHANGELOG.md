@@ -15,6 +15,15 @@ All notable changes to `netdiag` are recorded here. Format follows
   are actually on `PATH`. Lets a GUI detect what its CLI supports before
   it relies on a feature, instead of parsing `--version`'s semver and
   guessing.
+- **`netdiag --rules-catalog`** — one JSON object cataloguing every rule
+  the diagnosis engine and the monitor can emit: `title`, `category`,
+  descriptive `severity`, `scope` (`scan` / `monitor` / `both`), a
+  plain-English `blurb`, and a `doc` anchor into
+  `docs/DIAGNOSIS-RULES.md`. The GUI holds no diagnostic logic, so the
+  plain-English layer next to a rule-ID chip has to come from the CLI —
+  this is that source. `tests/test_rules_catalog.bats` diffs the catalog
+  against every `add_diag`/`_mon_add_rule` call site so the two can't
+  drift apart silently.
 
 ## [0.9.0] - 2026-08-12
 

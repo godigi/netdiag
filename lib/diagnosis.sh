@@ -182,7 +182,7 @@ diagnosis_run() {
     add_diag warn NT-1 "Your Mac's clock is off by ${NTP_DRIFT_S} seconds. Most apps will be fine but some authenticated services (banking apps, work VPNs) may refuse to connect. Turn on \"Set date and time automatically\" in System Settings → General → Date & Time if this persists."
   fi
 
-  # DI-1 — duplicate IP / incomplete gateway ARP.
+  # DI-1 — incomplete gateway ARP. Duplicate IPs are DI-2, just below.
   if [ "$ARP_GW_INCOMPLETE" -eq 1 ]; then
     add_diag critical DI-1 "Your Mac can't find your router on the local network — the connection between them is broken at the hardware layer. Check the ethernet cable, the WiFi connection, or that the right router is set as the default. Nothing else above this matters until this is fixed."
   fi

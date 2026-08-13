@@ -48,6 +48,8 @@ helpers/history.py           # --history: network identity + grouping
                              # --show: one run + its comparison (it judges,
                              #   so its cutoffs come from lib/thresholds.sh)
 helpers/monitor_sample.py    # one --monitor sample → one JSON line
+helpers/capabilities.py      # --capabilities: the version/feature handshake
+helpers/rules_catalog.py     # --rules-catalog: rule titles/blurbs for the GUI
 gui/                         # SwiftUI menu-bar client (SwiftPM, macOS 14+)
 ```
 
