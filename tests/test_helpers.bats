@@ -50,6 +50,26 @@ import json,sys; print('yes' if '$key' in json.load(sys.stdin) else 'no')")"
   done
 }
 
+@test "emit_json: run_id is absent unless the caller set NETDIAG_RUN_ID" {
+  # The one top-level key that is NOT unconditionally present, unlike
+  # every key the previous test checks. lib/output.sh's private build —
+  # the one that becomes the appended baseline.jsonl record — never sets
+  # this var, deliberately: the key must not exist in that build's output
+  # at all, so it can never sit inside the bytes history.py hashes to
+  # produce the very id it would carry. Only the render built for stdout
+  # sets it, even to an empty string when no record was appended.
+  run emit
+  [ "$(printf '%s' "$output" | python3 -c "import json,sys; print('run_id' in json.load(sys.stdin))")" = "False" ]
+
+  run emit NETDIAG_RUN_ID=2026-01-01T00:00:00Z.deadbeef
+  [ "$(printf '%s' "$output" | jq_get run_id)" = '"2026-01-01T00:00:00Z.deadbeef"' ]
+
+  # Set-but-empty (what lib/output.sh passes when this run didn't append)
+  # reads as present-and-null, not absent — the two are different facts.
+  run emit NETDIAG_RUN_ID=
+  [ "$(printf '%s' "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); print('run_id' in d, d.get('run_id'))")" = "True None" ]
+}
+
 @test "emit_json: run_mode is carried through, and is null when unset" {
   # Null rather than a "full" default: this helper is also run by hand and
   # from the bats suite, and a default would let a record claim it was a
@@ -271,4 +291,14 @@ _write_history() {
            NETDIAG_IPV6_GATEWAY='fe80::1298:5fff:fe91:2f00%en0' \
            NETDIAG_IPV6_AVAILABLE=1
   [ "$(printf '%s' "$output" | jq_get ipv6.gateway)" = '"[redacted]"' ]
+}
+
+@test "emit_json redact: nulls run_id even though it isn't built from any secret" {
+  # run_id doesn't match any string in _REDACT_ENV, so the ordinary
+  # secret-scrub would leave it untouched. It is nulled by name instead:
+  # a report built to leave the machine should not carry a working
+  # pointer back into the private, unredacted record lib/output.sh always
+  # stores.
+  run emit NETDIAG_REDACT=1 NETDIAG_RUN_ID=2026-01-01T00:00:00Z.deadbeef
+  [ "$(printf '%s' "$output" | jq_get run_id)" = "null" ]
 }

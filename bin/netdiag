@@ -97,6 +97,18 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 HELPERS_DIR="${SCRIPT_DIR}/../helpers"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
+# lib/output.sh's build_json sets every other NETDIAG_* var it needs
+# explicitly before invoking emit_json.py, so none of them can leak in
+# from the caller's shell. run_id is the one exception by construction:
+# the build that becomes the *stored* record (build_json_private) never
+# sets NETDIAG_RUN_ID at all, deliberately, so that var's absence is what
+# keeps a run_id key out of the bytes history.py hashes to produce that
+# same id (see lib/output.sh's HISTORY_APPEND block). A stray
+# NETDIAG_RUN_ID already exported in the invoking shell would slip through
+# that gap unnoticed and plant a run_id key inside the stored record
+# itself. Unset it before anything downstream can read it.
+unset NETDIAG_RUN_ID
+
 NETDIAG_VERSION="0.9.0"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
@@ -482,6 +494,14 @@ if [ "$HISTORY" -eq 1 ]; then
   case "$HISTORY_LIMIT" in
     ''|*[!0-9]*) printf 'netdiag: --history expects a run count (got: %s)\n' "$HISTORY_LIMIT" >&2; exit 3 ;;
   esac
+  # Every network row now carries metric_stats — median/p10/p90 over the
+  # same population --show already judges runs against — so the plain
+  # listing needs THRESH_COMPARE_* too, the same cutoffs and the same
+  # refusal to carry a default. See lib/thresholds.sh and the --show
+  # block below.
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL
   python3 "$HELPERS_DIR/history.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --limit "$HISTORY_LIMIT"

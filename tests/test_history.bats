@@ -16,6 +16,13 @@ setup() {
   LIVE="$TMP/baseline.jsonl"
   ARCHIVE="$TMP/baseline-archive.jsonl"
   : > "$LIVE"
+  # metric_stats (per-network median/p10/p90) reuses --show's comparison
+  # arithmetic, so the plain listing now needs THRESH_COMPARE_* too.
+  # Sourced rather than hardcoded, so a test can never pass against a
+  # cutoff production does not use. bin/netdiag exports exactly these.
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL
 }
 
 # rec <file> <ts> <json-body…> — append one record. The body is spliced in
@@ -316,6 +323,101 @@ assert d['runs'] == [] and d['networks'] == []
   rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":3.4}'
   run hpy 'import json,sys; print(len(json.load(sys.stdin)["metrics"]))'
   [ "$output" -ge 13 ]
+}
+
+# ── metric_stats: population facts, no verdict ────────────────────────────
+# median/p10/p90 over the same per-network population metric_samples
+# counts, reusing --show's own quantile()/median arithmetic. No verdict,
+# no direction, no value: --history states what a network's numbers look
+# like; whether any one run's reading was good stays --show's question.
+
+# ramp <metric-json> — twenty runs on one network, one per day, with every
+# @ replaced by the day number, mirroring test_show.bats's own fixture:
+# median 10.5, and with the default 10-point tail p10 is 2.9 and p90 18.1.
+ramp() {
+  local body="$1" i
+  for i in $(seq 1 20); do
+    rec "$LIVE" "$(printf '2026-01-%02dT00:00:00Z' "$i")" \
+      "\"network\":{\"id\":\"wifi:mac=aa:bb:cc:dd:ee:ff\"},${body//@/$i}"
+  done
+}
+
+@test "metric_stats carries every METRICS key, present or null" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"gateway":{"rtt_avg_ms":3.4}'
+  run hpy 'import json,sys
+d = json.load(sys.stdin)
+keys = sorted(m["key"] for m in d["metrics"])
+print(keys == sorted(d["networks"][0]["metric_stats"]))'
+  [ "$output" = "True" ]
+}
+
+@test "median, p10 and p90 come off the raw distribution, same arithmetic as --show" {
+  ramp '"gateway":{"rtt_avg_ms":@.0}'
+  run hget networks.0.metric_stats.gateway_rtt_ms.median
+  [ "$output" = "10.5" ]
+  run hget networks.0.metric_stats.gateway_rtt_ms.p10
+  [ "$output" = "2.9" ]
+  run hget networks.0.metric_stats.gateway_rtt_ms.p90
+  [ "$output" = "18.1" ]
+}
+
+@test "metric_stats is facts only — no value, direction or verdict" {
+  ramp '"gateway":{"rtt_avg_ms":@.0}'
+  run hpy 'import json,sys
+s = json.load(sys.stdin)["networks"][0]["metric_stats"]["gateway_rtt_ms"]
+print(sorted(s))'
+  [ "$output" = "['median', 'p10', 'p90']" ]
+}
+
+@test "below THRESH_COMPARE_MIN_SAMPLES the whole metric_stats block is null" {
+  local i
+  for i in $(seq 1 $((THRESH_COMPARE_MIN_SAMPLES - 1))); do
+    rec "$LIVE" "$(printf '2026-01-%02dT00:00:00Z' "$i")" \
+      "\"network\":{\"id\":\"wifi:mac=aa:bb:cc:dd:ee:ff\"},\"gateway\":{\"rtt_avg_ms\":$i.0}"
+  done
+  run hget networks.0.metric_stats.gateway_rtt_ms
+  [ "$output" = "null" ]
+  # metric_samples still reports the count — a UI reads "n" from there,
+  # not from inside a null metric_stats block.
+  run hget networks.0.metric_samples.gateway_rtt_ms
+  [ "$output" = "$((THRESH_COMPARE_MIN_SAMPLES - 1))" ]
+}
+
+@test "one more sample crosses into a real metric_stats block" {
+  local i
+  for i in $(seq 1 "$THRESH_COMPARE_MIN_SAMPLES"); do
+    rec "$LIVE" "$(printf '2026-01-%02dT00:00:00Z' "$i")" \
+      "\"network\":{\"id\":\"wifi:mac=aa:bb:cc:dd:ee:ff\"},\"gateway\":{\"rtt_avg_ms\":$i.0}"
+  done
+  run hget networks.0.metric_stats.gateway_rtt_ms
+  [ "$output" != "null" ]
+}
+
+@test "metric_stats is scoped to the network — another network's samples don't leak in" {
+  ramp '"gateway":{"rtt_avg_ms":@.0}'
+  rec "$LIVE" 2026-02-01T00:00:00Z '"network":{"id":"wifi:mac=11:22:33:44:55:66"},"gateway":{"rtt_avg_ms":900.0}'
+  run hget networks.0.metric_stats.gateway_rtt_ms.median
+  [ "$output" = "10.5" ]
+}
+
+@test "metric_stats and metric_samples agree on n, and both follow --limit" {
+  ramp '"gateway":{"rtt_avg_ms":@.0}'
+  run hget networks.0.metric_samples.gateway_rtt_ms --limit 5
+  local limited_samples="$output"
+  [ "$limited_samples" = "5" ]
+  run hpy 'import json,sys; print(json.load(sys.stdin)["networks"][0]["metric_stats"]["gateway_rtt_ms"])' --limit 5
+  # Fewer than THRESH_COMPARE_MIN_SAMPLES (10) of the 5 most recent runs,
+  # so the population is too thin for a stats block at all.
+  [ "$output" = "None" ]
+}
+
+@test "--history refuses to run without THRESH_COMPARE_* — metric_stats needs them too now" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run env -u THRESH_COMPARE_MIN_SAMPLES -u THRESH_COMPARE_TAIL_PCTL \
+    python3 "$HELPERS/history.py" --history "$LIVE"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"THRESH_COMPARE_MIN_SAMPLES"* ]]
+  [[ "$output" == *"lib/thresholds.sh"* ]]
 }
 
 @test "--limit keeps the most recent runs" {

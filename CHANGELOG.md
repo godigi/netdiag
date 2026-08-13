@@ -24,6 +24,36 @@ All notable changes to `netdiag` are recorded here. Format follows
   this is that source. `tests/test_rules_catalog.bats` diffs the catalog
   against every `add_diag`/`_mon_add_rule` call site so the two can't
   drift apart silently.
+  - `--capabilities`'s `schemas` now also reports `rules_catalog`, the one
+    divergence from its own "never the odd one out" docstring — every
+    other output that embeds a `"schema"` field was already listed.
+- **`--json` gains `run_id`** — the same `"<timestamp>.<8 hex>"` id
+  `netdiag --history`/`--show` will later derive for this exact run,
+  computed at run time so a GUI can deep-link to "the check that just
+  ran" from an alert without waiting for the next `--history` poll.
+  `lib/output.sh` computes it by importing `helpers/history.py`'s own
+  `canonical()`/`run_id()` rather than reimplementing the hash, from the
+  precise record about to be appended — so the two can never disagree —
+  and the record written to `baseline.jsonl` is unchanged: the build that
+  gets stored never carries a `run_id` key at all, not even `null`,
+  because a key holding a run's id can't also sit inside the bytes that
+  id is hashed from. `null` when nothing was appended this run
+  (`--no-baseline`, `--mtu-only`, `--wifi-only`) and, for a different
+  reason, under `--redact`: the record really is stored — the private,
+  unredacted build always is — but the id is a pointer back into that
+  private copy, and the "shareable" rendition shouldn't carry a working
+  key into data it otherwise took pains to mask.
+- **`--history` gains `metric_stats`** on every network: `{median, p10,
+  p90}` for each of the 13 charted metrics, over the exact population
+  `metric_samples` already counts. Reuses `--show`'s own
+  `quantile()`/median arithmetic rather than a second implementation, and
+  carries no `value`, `direction` or `verdict` — facts about the network,
+  not a judgement of any one run, which stays `--show`'s job. Below
+  `THRESH_COMPARE_MIN_SAMPLES` the whole per-metric block is `null` rather
+  than a partial object, mirroring `--show`'s `insufficient_data`; a plain
+  `netdiag --history` now needs `THRESH_COMPARE_MIN_SAMPLES`/
+  `THRESH_COMPARE_TAIL_PCTL` in the environment for this reason, the same
+  way `--show` always has.
 
 ## [0.9.0] - 2026-08-12
 

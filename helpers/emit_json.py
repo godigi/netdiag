@@ -6,10 +6,10 @@ environment variables (NETDIAG_* prefix). Fields that weren't set
 become JSON null.
 
 Top-level keys follow the order specified in docs/JSON-SCHEMA.md:
-  version, timestamp, run_mode, interface, wifi, gateway, public, dns,
-  traceroute, per_hop, bufferbloat, mtu, ipv6, vpn, tcp_reach, wifi_scan,
-  wifi_disconnects, speedtest, ntp, duplicate_ips, dhcp, mtr, wan,
-  baseline, diagnosis, most_likely_root_cause, netdiag_extras
+  version, timestamp, run_mode, run_id, interface, wifi, gateway, public,
+  dns, traceroute, per_hop, bufferbloat, mtu, ipv6, vpn, tcp_reach,
+  wifi_scan, wifi_disconnects, speedtest, ntp, duplicate_ips, dhcp, mtr,
+  wan, baseline, diagnosis, most_likely_root_cause, netdiag_extras
 
 `wan` (v0.3+) covers NAT / WAN topology — dual-WAN load balancing,
 double-NAT detection, UPnP/NAT-PMP status. Sub-keys: load_balancing,
@@ -26,6 +26,16 @@ import sys
 def _env(name: str) -> str | None:
     v = os.environ.get(f"NETDIAG_{name}")
     return v if v else None
+
+
+def _is_set(name: str) -> bool:
+    """True iff NETDIAG_<name> is present in the environment at all,
+    including present-but-empty — the case _env() folds to None. Distinct
+    from `_env(name) is not None`: this answers "did the caller set this
+    var", not "did it carry a value". Owns the "NETDIAG_" prefix the same
+    way _env() does, so a presence check never has to hardcode it again.
+    """
+    return f"NETDIAG_{name}" in os.environ
 
 
 def _maybe_float(name: str) -> float | None:
@@ -307,6 +317,24 @@ def main() -> None:
         # a --speed-only spot check counted toward a network's check total
         # while having formed no opinion about the network at all.
         "run_mode": _env("RUN_MODE"),
+        # The id `netdiag --history` will hand back for this same run once
+        # it lands in baseline.jsonl: "<timestamp>.<8 hex>", computed in
+        # lib/output.sh by importing helpers/history.py's own canonical()
+        # and run_id() rather than reimplementing them, so this value and
+        # the one --history derives later can never disagree.
+        #
+        # null whenever lib/output.sh did not append a record this run —
+        # --no-baseline, --mtu-only, --wifi-only (--speed-only does append,
+        # per v0.9.0) — and also, unconditionally, under --redact: see
+        # redact() below for why that second case isn't left to the
+        # ordinary secret-scrub.
+        #
+        # Dropped from the dict entirely (see below main()) rather than
+        # left null when NETDIAG_RUN_ID was never set at all — the build
+        # that becomes the appended baseline.jsonl record never sets it,
+        # deliberately, so this key can never be part of the bytes
+        # history.py hashes to produce the very id it would carry.
+        "run_id": _env("RUN_ID"),
         "interface": {
             "name": _env("INTERFACE"),
             "ip": _env("LOCAL_IP"),
@@ -457,6 +485,25 @@ def main() -> None:
     }
     if _bool("REDACT"):
         data = redact(data)
+        # run_id is a pointer into the *private* copy of this run that
+        # lib/output.sh always writes to baseline.jsonl, redacted or not —
+        # see build_json_private there. _scrub has nothing to catch it
+        # with (it isn't built from any _REDACT_ENV value), so it is
+        # nulled explicitly: a report built to leave the machine should
+        # not carry a working key back into data it otherwise took pains
+        # to mask, even though that data lives only on this machine.
+        data["run_id"] = None
+
+    if not _is_set("RUN_ID"):
+        # Dropped, not left null. The build that becomes the appended
+        # baseline.jsonl record (lib/output.sh's build_json_private) never
+        # sets this var — see its own HISTORY_APPEND block — precisely so
+        # this key cannot exist in that build's output at all: a key that
+        # carries a run's id cannot also sit inside the bytes history.py
+        # hashes to produce that same id. Checked last, after the REDACT
+        # branch above, so it wins even if some future caller set REDACT
+        # without also setting NETDIAG_RUN_ID.
+        del data["run_id"]
 
     json.dump(data, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")

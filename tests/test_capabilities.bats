@@ -163,13 +163,13 @@ for name in ('monitor', 'history', 'show', 'progress'):
   done <<< "$features"
 }
 
-@test "schemas has exactly the five documented keys, all integers" {
+@test "schemas has exactly the six documented keys, all integers" {
   run "$NETDIAG" --capabilities
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, sys
 s = json.load(sys.stdin)['schemas']
-assert set(s) == {'run', 'monitor', 'history', 'show', 'progress'}, sorted(s)
+assert set(s) == {'run', 'monitor', 'history', 'show', 'rules_catalog', 'progress'}, sorted(s)
 for v in s.values():
     assert isinstance(v, int), s
 "
@@ -216,6 +216,19 @@ PY
 import json, sys
 assert str(json.load(sys.stdin)['schemas']['show']) == sys.argv[1]
 " "$show_const"
+}
+
+@test "schemas.rules_catalog matches the constant helpers/rules_catalog.py stamps on its output" {
+  local const
+  const="$(grep -m1 '^SCHEMA_RULES_CATALOG = ' "$HELPERS/rules_catalog.py" \
+    | sed -E 's/^SCHEMA_RULES_CATALOG = ([0-9]+).*/\1/')"
+  [ -n "$const" ]
+  run "$NETDIAG" --capabilities
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+assert str(json.load(sys.stdin)['schemas']['rules_catalog']) == sys.argv[1]
+" "$const"
 }
 
 @test "schemas.monitor matches the constant lib/monitor.sh stamps on a sample" {

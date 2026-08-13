@@ -128,7 +128,7 @@ build_json() {
   NETDIAG_WAN_UPNP_URL="$WAN_UPNP_URL" \
   NETDIAG_WAN_UPNP_TESTED_VIA="$WAN_UPNP_TESTED_VIA" \
   NETDIAG_TIMING_LINES="$TIMING_LINES" \
-  NETDIAG_RUN_ELAPSED_S="$(run_elapsed_s)" \
+  NETDIAG_RUN_ELAPSED_S="${_run_elapsed_frozen:-$(run_elapsed_s)}" \
   NETDIAG_QUICK="$QUICK" \
   NETDIAG_REDACT="$REDACT" \
   python3 "$HELPERS_DIR/emit_json.py"
@@ -244,7 +244,27 @@ prune_logs() {
 }
 
 output_run() {
-  local json_tmp shared_tmp baseline_out baseline_lines reg
+  local json_tmp baseline_out baseline_lines reg
+  # Frozen once, here, before the first render. Every build_json call this
+  # run makes — the private snapshot below, its regression rebuild, and
+  # the stdout render at the bottom — reads this same value through
+  # build_json's `${_run_elapsed_frozen:-$(run_elapsed_s)}`, instead of
+  # each one calling run_elapsed_s() itself and getting whatever moment it
+  # happened to run at. Un-frozen, the stored record and the stdout render
+  # measured different instants and so disagreed on timings.total_s (and,
+  # at the boundary, over_budget) — a divergence that used to be silent
+  # but that run_id now makes checkable: a consumer can follow the id from
+  # stdout into the stored record and find the numbers it was just shown
+  # not matching. Every render in one run now carries identical timings,
+  # by construction.
+  local _run_elapsed_frozen
+  _run_elapsed_frozen="$(run_elapsed_s)"
+  # Explicitly initialized: read unconditionally below (every JSON_MODE
+  # run, not just one that appends), while only *assigned* inside the
+  # HISTORY_APPEND branch — under Homebrew bash 5's `set -u`, a bare
+  # `local run_id_val` is not enough to make an unconditional read of it
+  # safe; the declaration has to carry a value.
+  local run_id_val=""
   # macOS mktemp(1) only substitutes the trailing X's. Any suffix after
   # them (e.g. ".json") is treated as literal and breaks subsequent runs
   # because the file already exists. Keep X's at the end; the file is
@@ -302,8 +322,47 @@ for r in d.get('regressions', []):
   # instead of counting them alike.
   if [ "$HISTORY_APPEND" -eq 1 ]; then
     mkdir -p "$LOG_DIR"
-    python3 -c "import json; print(json.dumps(json.load(open('$json_tmp'))))" \
-      >> "$LOG_DIR/baseline.jsonl" 2>/dev/null || true
+    # One python3 invocation computes the id AND performs the append, and
+    # prints the id only once the append has actually landed. This used to
+    # be two calls — compute the id here, append the record there — which
+    # let the id "succeed" independently of the write it names: an append
+    # failure (a store path that went unwritable mid-run, a full disk)
+    # still left run_id_val holding a real-looking id pointing at a record
+    # that was never written, so `--show` on it exits 3. That was the
+    # hazard, not a safety property; computing and appending together
+    # means the id and the record it names now either both exist or
+    # neither does.
+    #
+    # canonical()/run_id() are imported from helpers/history.py rather
+    # than reimplemented, so this id and the one --history derives later
+    # from the stored bytes can never disagree. json_tmp, the store path,
+    # and HELPERS_DIR are passed as sys.argv rather than interpolated into
+    # the python source string: an apostrophe anywhere in an install path
+    # (a user's home directory, a Homebrew prefix) used to land inside a
+    # single-quoted Python string literal and produce a silent
+    # SyntaxError, swallowed by 2>/dev/null.
+    #
+    # A failure anywhere in the script (no python3, an unreadable
+    # $json_tmp, an unwritable store path) means nothing is printed before
+    # the failure, leaving run_id_val empty — which reaches emit_json.py
+    # as a set-but-empty NETDIAG_RUN_ID (present in the environment, empty
+    # string), not an unset one: _env() folds "" to None exactly as it
+    # would an unset var, so it still renders as `"run_id": null`, per the
+    # every-key-present convention the rest of this JSON follows. The
+    # overall `|| true` keeps an append failure from ever killing the run.
+    run_id_val="$(python3 -c '
+import json, sys
+
+json_tmp, store_path, helpers_dir = sys.argv[1:4]
+sys.path.insert(0, helpers_dir)
+from history import canonical, run_id
+
+rec = json.load(open(json_tmp))
+rid = run_id(str(rec.get("timestamp") or ""), canonical(rec))
+with open(store_path, "a") as f:
+    f.write(json.dumps(rec) + "\n")
+print(rid)
+' "$json_tmp" "$LOG_DIR/baseline.jsonl" "$HELPERS_DIR" 2>/dev/null || true)"
     prune_history "$LOG_DIR/baseline.jsonl" "$NETDIAG_KEEP_HISTORY"
   fi
   # Prune logs regardless of the baseline flags — a --no-baseline run still
@@ -317,21 +376,27 @@ for r in d.get('regressions', []):
     printf '%s' "$TIMING_LINES" \
       | awk -F'|' '{printf "      %-16s %6.2f s\n", $1, $2}' \
       | log_pipe
-    info "total: $(run_elapsed_s) s (budget: $([ "$QUICK" -eq 1 ] && echo 8 || echo 30) s)"
+    info "total: ${_run_elapsed_frozen:-$(run_elapsed_s)} s (budget: $([ "$QUICK" -eq 1 ] && echo 8 || echo 30) s)"
   fi
 
   if [ "$JSON_MODE" -eq 1 ]; then
-    if [ "$REDACT" -eq 1 ]; then
-      # The one place redaction belongs: the copy that leaves the machine.
-      # Built fresh rather than reusing $json_tmp, which is deliberately
-      # unredacted for the history above.
-      shared_tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-share.XXXXXX")"
-      build_json > "$shared_tmp"
-      cat "$shared_tmp"
-      rm -f "$shared_tmp"
-    else
-      cat "$json_tmp"
-    fi
+    # A second render, always — not a copy of $json_tmp. run_id must appear
+    # on stdout but must never appear in the bytes that were appended to
+    # baseline.jsonl above (history.py derives the id from exactly those
+    # bytes), so the build that carries it can't be the build that was
+    # stored. build_json already honours $REDACT, so this one call is
+    # correct whether or not --redact was passed; see emit_json.py's
+    # redact() for why it also nulls run_id specifically rather than
+    # letting the ordinary secret-scrub handle it. timings.total_s is
+    # frozen (see _run_elapsed_frozen at the top of this function), so
+    # this render's timings match the stored record's exactly — run_id
+    # isn't the only thing this render and that record now agree on.
+    #
+    # Rendered straight to stdout rather than through a temp file: the
+    # mktemp+write+cat+rm sequence this used to go through was a relic of
+    # a removed redact-only branch that needed a file to diff against, and
+    # left a mktemp failure meaning --json silently emitted nothing.
+    NETDIAG_RUN_ID="$run_id_val" build_json
   elif [ "$WATCH_CHILD" -eq 0 ]; then
     say ""
     # Hint about --expert only when we suppressed the section bodies AND

@@ -86,6 +86,13 @@ a cutoff that judges a network lives in exactly one place (CLAUDE.md), and
 a Python default would be a second copy of it that nobody would notice
 going stale.
 
+Every network in the plain listing also carries `metric_stats`: median,
+p10 and p90 over the same per-network population `metric_samples` counts,
+with no verdict and no direction — facts about the network, not a
+judgement of any one run. It reuses the same quantile()/THRESH_COMPARE_*
+machinery `--show`'s comparison does, so both modes now need the
+thresholds; there is no longer a bare `--history` that skips them.
+
 Inputs:
   --history PATH   live JSONL store (required)
   --archive PATH   rolled-over older records; defaults to the
@@ -93,8 +100,10 @@ Inputs:
   --limit N        keep only the N most recent runs (0 = all)
   --show ID        emit one run instead of the store: full record, context
                    and comparison. Accepts a bare timestamp when it names
-                   exactly one run. Needs THRESH_COMPARE_* in the
-                   environment; see docs/JSON-SCHEMA.md for the shape.
+                   exactly one run.
+
+Both modes need THRESH_COMPARE_* in the environment; see
+docs/JSON-SCHEMA.md for the shape.
 """
 
 from __future__ import annotations
@@ -612,6 +621,43 @@ def judge_metric(value: float | None, samples: list[float], unit: str,
     }
 
 
+def population_stats(values: list[float], min_samples: int,
+                     tail_pctl: int) -> dict | None:
+    """median/p10/p90 for one metric's population on one network — facts,
+    no verdict.
+
+    Reuses quantile() and statistics.median, the exact arithmetic
+    judge_metric already draws its own median/p10/p90 from. What it omits
+    on purpose is everything judge_metric adds on top for a single run:
+    `value`, `percentile`, `direction`, `verdict`, `summary`. --history's
+    networks[] states what a network's numbers look like; it does not say
+    whether any particular run's reading was good, which stays --show's
+    job alone.
+
+    Below min_samples the answer is the same refusal as --show's
+    insufficient_data: too few readings for a median to mean anything, so
+    the whole block is null rather than a spread stated with more
+    confidence than the sample supports. `n` is not repeated inside it —
+    the caller already has the identical count in `metric_samples`, drawn
+    from the same population, and a second copy is a second place for the
+    two to quietly disagree.
+    """
+    ordered = sorted(values)
+    n = len(ordered)
+    if n < min_samples:
+        return None
+    # The upper tail is the lower one mirrored about the scale percentiles
+    # are stated on, so one threshold sets both ends and neither can be
+    # applied the wrong way round. 100 here is that scale, not a cutoff —
+    # see judge_metric's identical line.
+    upper_pctl = 100 - tail_pctl
+    return {
+        "median": statistics.median(ordered),
+        "p10": quantile(ordered, tail_pctl),
+        "p90": quantile(ordered, upper_pctl),
+    }
+
+
 def build_comparison(rec: dict, network_runs: list[dict],
                      min_samples: int, tail_pctl: int) -> dict:
     """Every metric in METRICS, this run against every run on its network.
@@ -654,15 +700,15 @@ def resolve_id(target: str, ids: list[str]) -> str:
 
 
 def build_detail(target: str, assigned: list[tuple[str, dict, str]],
-                 groups: dict[str, dict]) -> dict:
+                 groups: dict[str, dict], min_samples: int,
+                 tail_pctl: int) -> dict:
     """The --show object: one stored run, where it sits, how it compares.
 
-    Thresholds are read before the id is resolved, so a broken install says
-    so even when the id is wrong too.
+    min_samples/tail_pctl are read once in main(), before either mode does
+    any work — see the comment there. Both modes need them now that
+    --history's networks[] carries metric_stats too, so reading them here
+    a second time would just be a later place for the same failure.
     """
-    min_samples = env_threshold("THRESH_COMPARE_MIN_SAMPLES")
-    tail_pctl = env_threshold("THRESH_COMPARE_TAIL_PCTL")
-
     rid = resolve_id(target, [i for i, _rec, _key in assigned])
     rec, key = next((r, k) for i, r, k in assigned if i == rid)
 
@@ -713,6 +759,15 @@ def main() -> None:
                          "instead of the whole store")
     args = ap.parse_args()
 
+    # Every population judgement in this file — --show's comparison and
+    # --history's per-network metric_stats alike — reads the same two
+    # cutoffs, so they are read exactly once, here, before either mode
+    # does any work: a broken install says so immediately rather than
+    # after a (possibly large) parse of the store. No default: see
+    # env_threshold.
+    min_samples = env_threshold("THRESH_COMPARE_MIN_SAMPLES")
+    tail_pctl = env_threshold("THRESH_COMPARE_TAIL_PCTL")
+
     archive = args.archive
     if archive is None:
         stem = str(args.history)
@@ -731,7 +786,7 @@ def main() -> None:
             "run_count": 0, "check_count": 0,
             "synthesized": False, "first_seen": None, "last_seen": None,
             "gateways": [], "isps": [], "channels": [], "ssids": [], "labels": [],
-            "metric_samples": {}, "severity_counts": {},
+            "metric_samples": {}, "metric_values": {}, "severity_counts": {},
         })
         g["run_count"] += 1
         # run_count is every stored record; check_count is the ones that
@@ -777,8 +832,8 @@ def main() -> None:
     # network, so it answers here — before --limit, which exists to keep a
     # chart's payload small and has nothing to say about a single record.
     if args.show is not None:
-        json.dump(build_detail(args.show, assigned, groups), sys.stdout,
-                  separators=(",", ":"), default=str)
+        json.dump(build_detail(args.show, assigned, groups, min_samples, tail_pctl),
+                  sys.stdout, separators=(",", ":"), default=str)
         sys.stdout.write("\n")
         return
 
@@ -804,8 +859,9 @@ def main() -> None:
         if is_check(run):
             checks += 1
             g["severity_counts"][run["severity"]] = g["severity_counts"].get(run["severity"], 0) + 1
-        for mk in run["metrics"]:
+        for mk, mv in run["metrics"].items():
             g["metric_samples"][mk] = g["metric_samples"].get(mk, 0) + 1
+            g["metric_values"].setdefault(mk, []).append(mv)
             global_samples[mk] = global_samples.get(mk, 0) + 1
 
     networks = []
@@ -823,6 +879,15 @@ def main() -> None:
             "isps": g["isps"],
             "ssids": g["ssids"],
             "metric_samples": g["metric_samples"],
+            # median/p10/p90 over the exact population metric_samples
+            # counts, null below THRESH_COMPARE_MIN_SAMPLES — see
+            # population_stats. No verdict, no direction: a chart's
+            # "normal band" needs what the network's numbers look like,
+            # not whether this run's reading was good.
+            "metric_stats": {
+                mk: population_stats(g["metric_values"].get(mk, []), min_samples, tail_pctl)
+                for _p, mk, _lbl, _u, _d in METRICS
+            },
             "severity_counts": g["severity_counts"],
         })
 

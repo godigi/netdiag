@@ -28,6 +28,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `version` | string | netdiag version that produced this run |
 | `timestamp` | string | ISO 8601, UTC |
 | `run_mode` | string | how much of the battery this run attempted — see below |
+| `run_id` | string \| null | the id `netdiag --history`/`--show` will use for this same run — see below |
 | `interface` | object | active interface, IP, gateway, gateway MAC, `type` (`wifi`/`wired`) |
 | `network` | object | `id` + human `label` identifying which network this is — scopes the baseline |
 | `wifi` | object | SSID, BSSID, security; `rssi`/`noise`/`snr`/`channel`/`phy`/`tx_rate` are `null` without `sudo` |
@@ -93,6 +94,50 @@ reclassifying them would rewrite two months of history.
 `--speed-only` is the one focused mode that *is* recorded. `--mtu-only` and
 `--wifi-only` still write no history record, which is the behaviour their
 existing records were written under.
+
+## `run_id`
+
+The same `"<timestamp>.<8 hex>"` id [`--history`](#netdiag---history-schema)
+and `--show` (below) use to address this run, computed at run time rather
+than waiting for a later `--history` call to derive it — a GUI reacting to
+an alert needs to deep-link to "the check that just ran" immediately, not
+after its next poll. `lib/output.sh` computes it by importing
+`helpers/history.py`'s own `canonical()`/`run_id()` functions rather than
+reimplementing them, from the exact record about to be appended, so the
+value here and the one `--history` derives later can never disagree.
+
+`null` in four cases. Three are "no record was appended this run":
+
+| case | why |
+|---|---|
+| `--no-baseline` | disables the append outright |
+| `--mtu-only` | a focused run isn't comparable to a full one; unrecorded since before `run_id` existed |
+| `--wifi-only` | same as `--mtu-only` |
+
+`--speed-only` is **not** in that list: it appends per v0.9.0, and gets a
+real `run_id` like a `full` or `quick` run.
+
+The fourth, `--redact`, is null for a different reason — see immediately
+below.
+
+**`--redact` is the exception that isn't about the append.** `lib/output.sh`
+always writes the *private*, unredacted build to `baseline.jsonl` —
+`build_json_private`'s whole reason for existing — so a `--redact` run
+really does get stored, and really does have a derivable id. `run_id` is
+`null` here anyway: it is a pointer back into that private copy, and a
+report built to leave the machine should not carry a working key into data
+it otherwise took pains to mask, even though that data never left this
+machine. `emit_json.py`'s `redact()` nulls it explicitly, since it isn't
+built from any of the values the ordinary secret-scrub catches.
+
+**Never a key on the stored record itself.** The build that becomes the
+appended `baseline.jsonl` line is produced *without* `run_id` ever set —
+not even to `null` — specifically so the key can never be part of the
+bytes `--history` hashes to compute that same id. A record with a `run_id`
+key inside it would be hashing its own answer. Every top-level key in the
+rest of this document is unconditionally present per the convention at the
+top of this page; `run_id` is the one exception, and this paragraph is its
+documentation.
 
 ## `wan`
 
@@ -441,7 +486,11 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
                 "bridged_from": [], "first_seen": "…", "last_seen": "…",
                 "run_count": 35, "check_count": 32,
                 "gateways": [], "isps": [], "ssids": [],
-                "metric_samples": {}, "severity_counts": {}}],
+                "metric_samples": {"gateway_rtt_ms": 32},
+                "metric_stats": {"gateway_rtt_ms":
+                  {"median": 3.21, "p10": 2.90, "p90": 8.40},
+                  "wifi_rssi_dbm": null},
+                "severity_counts": {}}],
   "runs": [{"id": "2026-08-11T20:51:19Z.a3f9c1d2", "ts": "…",
             "network_id": "mac:10:98:5f:…", "version": "0.6.1",
             "run_mode": "full",
@@ -463,8 +512,13 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
   precision. The separator is `.` and not `#` because under zsh with
   `EXTENDED_GLOB` (the default in many setups) an unquoted `--show=…#…` is
   a glob pattern and fails with "no matches found".
-  Redacted records are dropped before ids are handed out, so a run recorded
-  with `--redact` has no id and cannot be opened with `--show`.
+  Records whose *identity fields* are literally redacted are dropped before
+  ids are handed out — but as of v0.7.0 that is no longer what a `--redact`
+  run writes to disk (see the note below and `run_id` above): its stored
+  record is the ordinary private build, so it gets an ordinary id and
+  *is* reachable with `--show`. What `--redact` actually withholds is
+  narrower — the `run_id` field on its own `--json` output — not the
+  record's existence in the store.
 
 - **Grouping is not exact-string matching on `network.id`.** Records
   predating `lib/netid.sh` carry no id at all, and the id of the *same*
@@ -480,6 +534,37 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
   case: in the store this was written against, `gateway_rtt_ms` has 1,959
   samples and `wifi.rssi` has 1. A chart that omits the count presents a
   single reading as a trend.
+- **`networks[].metric_stats`** is `{median, p10, p90}` for every key in
+  `metrics[]`, over the exact same per-network population
+  `metric_samples` counts — the same `quantile()`/median arithmetic
+  `--show`'s `comparison` uses, reused rather than reimplemented. It
+  carries no `value`, `direction` or `verdict`: this is what a network's
+  numbers look like, not whether any one run's reading was good, which
+  stays `--show`'s question alone. `p10`/`p90` follow
+  `THRESH_COMPARE_TAIL_PCTL`, the same cutoff and the same "named for its
+  default of 10" caveat as `--show`'s `p10`/`p90` below.
+  Below `THRESH_COMPARE_MIN_SAMPLES` **the whole per-metric block is
+  `null`**, not a partial object. This is the same cutoff `--show` judges
+  `insufficient_data` against, applied differently on purpose: `--show`
+  still returns `median`/`p10`/`p90` below the cutoff and withholds only
+  the `verdict` — a single run's reading still needs the band drawn under
+  it even when there isn't enough history to judge that reading against
+  it — while `metric_stats` withholds the numbers themselves, because
+  there is no single reading to give context to here, only a population to
+  describe, and a population too small to describe honestly gets `null`
+  rather than a spread stated with more confidence than the sample
+  supports.
+  `n` is deliberately not repeated inside it: the identical count already
+  lives in `metric_samples` for the same key, and a plain
+  `netdiag --history` now needs `THRESH_COMPARE_*` in the environment for
+  this reason, the same way `--show` always has. One asymmetry a consumer
+  must not paper over: `metric_stats` carries all 13 keys from `METRICS`
+  for every network — null blocks included, for metrics that network never
+  recorded at all — while `metric_samples` carries only the keys some run
+  on that network actually measured. A key present (as `null`) in
+  `metric_stats` is not guaranteed to exist in `metric_samples` at all;
+  code iterating `metric_stats` to look up a matching `n` must check for
+  the key rather than assume it.
 - **`run_count` counts records; `check_count` counts checks.** They differ
   by the partial runs — see [`run_mode`](#run_mode). `severity_counts` and
   `counts.checks` follow `check_count`; `metric_samples` and
@@ -624,7 +709,7 @@ and "too few checks" cannot render as the same thing.
 | id not found in the live store or the archive | exit `3`, reason on stderr |
 | a bare timestamp matching more than one run | exit `3`, candidate ids listed on stderr |
 | missing or empty `--show` argument | exit `3` — a usage error |
-| record written with `--redact` | it has no id, so it is unreachable by construction |
+| a legacy record whose identity fields were literally redacted (pre-v0.7.0) | it has no id, so it is unreachable by construction |
 
 Exit `2` is never used here: it is reserved for a real diagnosis, so a
 wrapper can keep telling a mistyped id apart from a broken network.
@@ -657,7 +742,8 @@ every optional dependency below is missing.
 {
   "schema": 1,
   "version": "0.9.0",
-  "schemas": {"run": 1, "monitor": 1, "history": 1, "show": 1, "progress": 1},
+  "schemas": {"run": 1, "monitor": 1, "history": 1, "show": 1,
+              "rules_catalog": 1, "progress": 1},
   "features": ["capabilities", "version", "progress", "monitor", "history",
                "show", "redact", "speed-only", "watcher"],
   "deps": {
@@ -673,10 +759,11 @@ every optional dependency below is missing.
 
 - **`schema`** versions this document's own shape, separately from
   every entry inside `schemas`.
-- **`schemas`** carries the schema number of five other outputs.
-  `monitor`, `history` and `show` mirror a `"schema"` field each of
-  those already emits (`lib/monitor.sh`, `helpers/history.py`) — see
-  their sections above. `run` (the `--json` output) and `progress` (the
+- **`schemas`** carries the schema number of six other outputs.
+  `monitor`, `history`, `show` and `rules_catalog` mirror a `"schema"`
+  field each of those already emits (`lib/monitor.sh`,
+  `helpers/history.py`, `helpers/rules_catalog.py`) — see their sections
+  above and below. `run` (the `--json` output) and `progress` (the
   `--progress` event stream) do not embed a schema field as of v0.9.0;
   both report `1` here as the number a future field would start at, and
   this note is that field's documentation until one exists.

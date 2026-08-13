@@ -1,7 +1,8 @@
 {
-  "version": "0.8.0",
-  "timestamp": "2026-08-12T04:14:39Z",
+  "version": "0.9.0",
+  "timestamp": "2026-08-13T07:32:17Z",
   "run_mode": "full",
+  "run_id": null,
   "interface": {
     "name": "en0",
     "ip": "[redacted]",
@@ -27,21 +28,21 @@
   "gateway": {
     "ip": "192.168.15.1",
     "loss_pct": 0.0,
-    "rtt_avg_ms": 3.846,
-    "rtt_jitter_ms": 0.829
+    "rtt_avg_ms": 4.594,
+    "rtt_jitter_ms": 4.39
   },
   "internet_latency": {
     "target": "1.1.1.1",
-    "rtt_avg_ms": 55.808,
-    "rtt_jitter_ms": 5.985,
+    "rtt_avg_ms": 55.496,
+    "rtt_jitter_ms": 1.067,
     "loss_pct": 0.0,
     "target_alt": "8.8.8.8",
-    "rtt_avg_ms_alt": 68.107,
+    "rtt_avg_ms_alt": 50.442,
     "loss_pct_alt": 0.0
   },
   "public": {
     "ip": "[redacted]",
-    "asn": "AS10429",
+    "asn": "AS18881",
     "isp": "TELEFONICA BRASIL S.A",
     "city": "[redacted]",
     "country": "Brazil",
@@ -82,7 +83,7 @@
     {
       "resolver": "8.8.8.8",
       "name": "cloudflare.com",
-      "answer": "104.16.133.229",
+      "answer": "104.16.132.229",
       "ok": true
     }
   ],
@@ -93,7 +94,7 @@
         "n": 1,
         "ip": "192.168.15.1",
         "responded": true,
-        "rtt_ms": 14.955
+        "rtt_ms": 3.653
       },
       {
         "n": 2,
@@ -103,33 +104,33 @@
       },
       {
         "n": 3,
-        "ip": "201.1.228.64",
+        "ip": "201.1.232.254",
         "responded": true,
-        "rtt_ms": 7.776
+        "rtt_ms": 15.471
       },
       {
         "n": 4,
-        "ip": "152.255.135.141",
+        "ip": "152.255.147.188",
         "responded": true,
-        "rtt_ms": 51.729
+        "rtt_ms": 54.151
       },
       {
         "n": 5,
-        "ip": "152.255.135.150",
+        "ip": "179.88.3.57",
         "responded": true,
-        "rtt_ms": 34.683
+        "rtt_ms": 55.791
       },
       {
         "n": 6,
-        "ip": "152.255.206.22",
+        "ip": "179.88.3.60",
         "responded": true,
-        "rtt_ms": 48.515
+        "rtt_ms": 54.908
       },
       {
         "n": 7,
-        "ip": "187.100.57.104",
+        "ip": "152.255.209.102",
         "responded": true,
-        "rtt_ms": 51.713
+        "rtt_ms": 56.29
       },
       {
         "n": 8,
@@ -147,7 +148,7 @@
         "n": 10,
         "ip": "1.1.1.1",
         "responded": true,
-        "rtt_ms": 50.948
+        "rtt_ms": 55.608
       }
     ]
   },
@@ -157,39 +158,39 @@
       "ip": "192.168.15.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 5.927
+      "avg_ms": 13.809
     },
     {
       "n": 2,
-      "ip": "201.1.228.64",
+      "ip": "201.1.232.254",
       "responded": true,
-      "loss_pct": 100.0,
-      "avg_ms": null
+      "loss_pct": 0.0,
+      "avg_ms": 15.985
     },
     {
       "n": 3,
-      "ip": "152.255.135.141",
+      "ip": "152.255.147.188",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
     },
     {
       "n": 4,
-      "ip": "152.255.135.150",
+      "ip": "179.88.3.57",
       "responded": true,
-      "loss_pct": 100.0,
-      "avg_ms": null
+      "loss_pct": 0.0,
+      "avg_ms": 53.141
     },
     {
       "n": 5,
-      "ip": "152.255.206.22",
+      "ip": "179.88.3.60",
       "responded": true,
-      "loss_pct": 100.0,
-      "avg_ms": null
+      "loss_pct": 0.0,
+      "avg_ms": 58.208
     },
     {
       "n": 6,
-      "ip": "187.100.57.104",
+      "ip": "152.255.209.102",
       "responded": true,
       "loss_pct": 100.0,
       "avg_ms": null
@@ -199,16 +200,16 @@
       "ip": "1.1.1.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 57.545
+      "avg_ms": 60.754
     }
   ],
   "bufferbloat": {
-    "idle_gw_rtt_ms": 3.846,
-    "loaded_gw_rtt_ms": 3.742,
-    "idle_inet_rtt_ms": 56.33,
-    "loaded_inet_rtt_ms": 54.27,
-    "gw_delta_ms": -0.1,
-    "inet_delta_ms": -2.1,
+    "idle_gw_rtt_ms": 4.594,
+    "loaded_gw_rtt_ms": 3.676,
+    "idle_inet_rtt_ms": 55.27,
+    "loaded_inet_rtt_ms": 54.847,
+    "gw_delta_ms": -0.9,
+    "inet_delta_ms": -0.4,
     "gw_grade": "A",
     "inet_grade": "A"
   },
@@ -222,7 +223,7 @@
     "gateway": "[redacted]",
     "ping_loss_pct": 0.0,
     "aaaa_ok": true,
-    "trace_hops": 9,
+    "trace_hops": 10,
     "tcp_v6_ok": true
   },
   "vpn": {
@@ -235,61 +236,61 @@
       "host": "1.1.1.1",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 69.0
+      "elapsed_ms": 71.0
     },
     {
       "host": "1.1.1.1",
       "port": 53,
       "ok": true,
-      "elapsed_ms": 66.0
+      "elapsed_ms": 71.0
     },
     {
       "host": "8.8.8.8",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 82.0
+      "elapsed_ms": 64.0
     },
     {
       "host": "github.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 78.0
+      "elapsed_ms": 80.0
     },
     {
       "host": "apple.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 94.0
+      "elapsed_ms": 68.0
     }
   ],
   "wifi_scan": {
-    "current_channel": "52",
+    "current_channel": "100",
     "current_band": "5GHz",
-    "neighbour_count": 57,
-    "current_channel_neighbours": 6
+    "neighbour_count": 31,
+    "current_channel_neighbours": 4
   },
   "wifi_disconnects": {
     "window_hours": 1,
     "count": 0
   },
   "speedtest": {
-    "down_mbps": 440.0,
-    "up_mbps": 237.1,
-    "latency_ms": 8.266,
-    "jitter_ms": 1.284,
-    "server": "Full Telecom"
+    "down_mbps": 893.1,
+    "up_mbps": 376.9,
+    "latency_ms": 7.877,
+    "jitter_ms": 0.361,
+    "server": "Grupo Bitnet"
   },
   "ntp": {
-    "drift_seconds": 0.278061,
+    "drift_seconds": 0.1318,
     "using_network_time": null,
     "server": null
   },
   "duplicate_ips": [],
   "dhcp": {
     "server": "192.168.15.1",
-    "lease_start": "08/11/2026 22:31:49",
-    "lease_end": "08/12/2026 02:31:49",
-    "time_remaining_s": 8226,
+    "lease_start": "08/13/2026 04:06:22",
+    "lease_end": "08/13/2026 08:06:22",
+    "time_remaining_s": 12841,
     "dns_servers": "192.168.15.1"
   },
   "mtr": {
@@ -301,39 +302,39 @@
         "ip": "192.168.15.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 5.927
+        "avg_ms": 13.809
       },
       {
         "n": 2,
-        "ip": "201.1.228.64",
+        "ip": "201.1.232.254",
         "responded": true,
-        "loss_pct": 100.0,
-        "avg_ms": null
+        "loss_pct": 0.0,
+        "avg_ms": 15.985
       },
       {
         "n": 3,
-        "ip": "152.255.135.141",
+        "ip": "152.255.147.188",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
       },
       {
         "n": 4,
-        "ip": "152.255.135.150",
+        "ip": "179.88.3.57",
         "responded": true,
-        "loss_pct": 100.0,
-        "avg_ms": null
+        "loss_pct": 0.0,
+        "avg_ms": 53.141
       },
       {
         "n": 5,
-        "ip": "152.255.206.22",
+        "ip": "179.88.3.60",
         "responded": true,
-        "loss_pct": 100.0,
-        "avg_ms": null
+        "loss_pct": 0.0,
+        "avg_ms": 58.208
       },
       {
         "n": 6,
-        "ip": "187.100.57.104",
+        "ip": "152.255.209.102",
         "responded": true,
         "loss_pct": 100.0,
         "avg_ms": null
@@ -343,7 +344,7 @@
         "ip": "1.1.1.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 57.545
+        "avg_ms": 60.754
       }
     ],
     "first_lossy_hop": null
@@ -351,7 +352,7 @@
   "wan": {
     "load_balancing": {
       "distinct_asns": [
-        "AS10429"
+        "AS18881"
       ],
       "distinct_ips": [
         "[redacted]"
@@ -382,32 +383,32 @@
     "suspicious_redirects": []
   },
   "timings": {
-    "total_s": 58.07,
+    "total_s": 62.76,
     "budget_s": 30.0,
     "over_budget": true,
     "phases": {
-      "iface": 0.06,
+      "iface": 0.02,
       "vpn": 0.02,
-      "wifi": 0.06,
+      "wifi": 0.05,
       "gateway": 3.92,
       "arp": 0.02,
       "netid": 0.0,
       "dhcp": 0.03,
-      "public": 0.7,
-      "parallel_batch": 14.01,
+      "public": 0.54,
+      "parallel_batch": 13.56,
       "internet_ping": 4.0,
-      "bufferbloat": 4.08,
+      "bufferbloat": 4.07,
       "mtu": 2.49,
-      "traceroute": 6.31,
+      "traceroute": 6.36,
       "nat": 0.02,
-      "mtr": 2.16,
-      "speedtest": 19.81
+      "mtr": 2.15,
+      "speedtest": 25.13
     }
   },
   "baseline": {
-    "compared_runs": 10,
+    "compared_runs": 4,
     "network_id": "wifi:mac=[redacted]",
-    "skipped_other_networks": 1937,
+    "skipped_other_networks": 1998,
     "regressions": []
   },
   "diagnosis": [
@@ -419,7 +420,7 @@
     {
       "severity": "warn",
       "rule": "WS-1",
-      "summary": "Your WiFi channel (52) is shared with 6 neighbouring networks \u2014 they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
+      "summary": "Your WiFi channel (100) is shared with 4 neighbouring networks \u2014 they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
     }
   ],
   "most_likely_root_cause": "Some websites load fine and others hang forever loading \u2014 your network is silently dropping packets above 1480 bytes. Usually caused by a VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN; if it persists, ask your ISP or check your router's WAN-MTU / MSS-clamping setting.",
