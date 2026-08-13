@@ -110,6 +110,8 @@ netdiag --history[=N]            # whole run store as network-grouped JSON
 netdiag --show=ID                # one stored run, judged against its network
 netdiag --install-watcher        # launchd plist, every 15 min, background
 netdiag --uninstall-watcher
+netdiag --version                # print the version and exit
+netdiag --capabilities           # JSON handshake: schemas, features, deps
 ```
 
 | Flag                 | Effect                                                 |
@@ -142,6 +144,10 @@ netdiag --uninstall-watcher
 | `--history[=N]`      | emit the whole run store as one grouped JSON object    |
 | `--show=ID`          | one stored run in full, plus how each of its metrics   |
 |                      | compares to every other run on the same network        |
+| `--version`          | print `netdiag VERSION` and exit                       |
+| `--capabilities`     | one JSON object describing this install: per-mode      |
+|                      | schema numbers, a feature list, and which optional     |
+|                      | dependencies are on `PATH`                             |
 
 Examples:
 

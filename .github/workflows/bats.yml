@@ -68,6 +68,21 @@ jobs:
           done < /tmp/monitor.jsonl
           echo "monitor: 3 valid samples, rules=$(jq -c '.status.rules' /tmp/monitor.jsonl | tr '\n' ' ')"
 
+      - name: Smoke test --capabilities
+        run: |
+          ./bin/netdiag --version
+          ./bin/netdiag --capabilities > /tmp/caps.json
+          # jq is installed above, so deps.jq must be true here. The type
+          # checks in bats can't catch a broken env-var wire between bash
+          # and the helper — the document stays well-formed, just wrong —
+          # so this asserts one real detection on a machine whose deps we
+          # control.
+          jq -e '
+            has("schema") and has("schemas") and has("features")
+            and (.deps.jq == true)
+          ' /tmp/caps.json > /dev/null
+          echo "capabilities: $(jq -c '.deps' /tmp/caps.json)"
+
       - name: Smoke test the installer
         run: |
           ./install.sh --prefix /tmp/ndbin --no-brew

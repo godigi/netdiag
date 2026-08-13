@@ -36,6 +36,7 @@ netdiag [TARGET] [--quick] [--quiet] [--json] [--expert] [--redact]
         [--progress]
         [--baseline] [--no-baseline] [--log PATH] [-h|--help]
 netdiag --watch[=SEC] | --summary[=HOURS] | --history[=N] | --show=ID
+netdiag --version | --capabilities
 netdiag --monitor [--monitor-fast-interval SEC] [--monitor-degraded-interval SEC]
                   [--monitor-medium-interval SEC] [--monitor-slow-interval SEC]
                   [--monitor-count N]

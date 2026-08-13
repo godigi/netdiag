@@ -628,3 +628,72 @@ and "too few checks" cannot render as the same thing.
 
 Exit `2` is never used here: it is reserved for a real diagnosis, so a
 wrapper can keep telling a mistyped id apart from a broken network.
+
+---
+
+# `netdiag --version`
+
+Prints `netdiag <VERSION>` to stdout and exits 0. No log file, no
+network, no dependency check — the one thing every version of this
+CLI has always been able to answer.
+
+```console
+$ netdiag --version
+netdiag 0.9.0
+```
+
+---
+
+# `netdiag --capabilities` schema
+
+`netdiag --capabilities` writes one JSON object to stdout and exits 0: a
+handshake a GUI can use to find out what this install of the CLI actually
+supports before it relies on a feature, rather than parsing `--version`'s
+semver and guessing. Early exit, same family as `--help`: no probing, no
+log file, no `~/net-diag` writes, sudo-free, and it succeeds even when
+every optional dependency below is missing.
+
+```jsonc
+{
+  "schema": 1,
+  "version": "0.9.0",
+  "schemas": {"run": 1, "monitor": 1, "history": 1, "show": 1, "progress": 1},
+  "features": ["capabilities", "version", "progress", "monitor", "history",
+               "show", "redact", "speed-only", "watcher"],
+  "deps": {
+    "bash": "5.2.37",
+    "python3": "3.9.6",
+    "jq": true,
+    "speedtest": "ookla",
+    "mtr": false,
+    "gping": false
+  }
+}
+```
+
+- **`schema`** versions this document's own shape, separately from
+  every entry inside `schemas`.
+- **`schemas`** carries the schema number of five other outputs.
+  `monitor`, `history` and `show` mirror a `"schema"` field each of
+  those already emits (`lib/monitor.sh`, `helpers/history.py`) — see
+  their sections above. `run` (the `--json` output) and `progress` (the
+  `--progress` event stream) do not embed a schema field as of v0.9.0;
+  both report `1` here as the number a future field would start at, and
+  this note is that field's documentation until one exists.
+- **`features`** is an open set, not a closed enum — expect it to grow
+  as new CLI surface ships. A GUI checks membership (`"redact" in
+  features`), not the array's length or order.
+- **`deps.bash`** is the version of the bash interpreter actually
+  running the script — after netdiag's own re-exec into Homebrew bash 5
+  if it started under macOS's system bash — as `major.minor.patch`.
+- **`deps.python3`** is `null` if python3 is not on `PATH`. In practice
+  this is close to unreachable: `--capabilities` builds its JSON with a
+  python3 helper the same way `--json`/`--history`/`--show` already do,
+  so a machine that cannot run python3 cannot produce this object at all.
+- **`deps.jq`**, **`deps.mtr`**, **`deps.gping`** are booleans: present
+  on `PATH` or not. None of the three is required for `--capabilities`
+  itself.
+- **`deps.speedtest`** is `"ookla"`, `"cli"` (the `speedtest-cli` Python
+  package), or `null` if neither is installed — from the same
+  `speedtest_flavor()` `lib/speedtest.sh` uses to pick an implementation
+  for a real run.

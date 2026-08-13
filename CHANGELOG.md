@@ -4,6 +4,18 @@ All notable changes to `netdiag` are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`netdiag --version`** — prints `netdiag VERSION` and exits 0.
+- **`netdiag --capabilities`** — a JSON handshake describing this
+  install: per-mode schema numbers, a `features` list, and which
+  optional dependencies (`jq`, `mtr`, `gping`, `speedtest`/`speedtest-cli`)
+  are actually on `PATH`. Lets a GUI detect what its CLI supports before
+  it relies on a feature, instead of parsing `--version`'s semver and
+  guessing.
+
 ## [0.9.0] - 2026-08-12
 
 Makes a check watchable while it runs. A full check takes ~55 s and

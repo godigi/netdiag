@@ -250,6 +250,36 @@ while [ "$#" -gt 0 ]; do
     --install-watcher)   INSTALL_WATCHER=1 ;;
     --uninstall-watcher) UNINSTALL_WATCHER=1 ;;
     --watch-child)       WATCH_CHILD=1 ;;
+    --version)
+      printf 'netdiag %s\n' "$NETDIAG_VERSION"
+      exit 0 ;;
+    --capabilities)
+      # A handshake, not a run: gather facts in bash, let python write the
+      # JSON. Sourcing lib/speedtest.sh here is safe — the file is function
+      # definitions only — and we need speedtest_flavor() to report which
+      # speed-test implementation this install would actually use.
+      # shellcheck source=lib/speedtest.sh
+      . "$LIB_DIR/speedtest.sh"
+      _cap_speed="$(speedtest_flavor)"
+      case "${_cap_speed%%:*}" in
+        ookla) NETDIAG_CAP_SPEEDTEST=ookla ;;
+        cli)   NETDIAG_CAP_SPEEDTEST=cli ;;
+        *)     NETDIAG_CAP_SPEEDTEST="" ;;
+      esac
+      NETDIAG_CAP_VERSION="$NETDIAG_VERSION"
+      NETDIAG_CAP_BASH_VERSION="${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"
+      # Nullable in the data model, but a machine with no python3 exits 3
+      # below before emitting anything — the same silent assumption --json
+      # and --history already make.
+      NETDIAG_CAP_PYTHON3_VERSION="$(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null || true)"
+      NETDIAG_CAP_JQ=0;    command -v jq    >/dev/null 2>&1 && NETDIAG_CAP_JQ=1
+      NETDIAG_CAP_MTR=0;   command -v mtr   >/dev/null 2>&1 && NETDIAG_CAP_MTR=1
+      NETDIAG_CAP_GPING=0; command -v gping >/dev/null 2>&1 && NETDIAG_CAP_GPING=1
+      export NETDIAG_CAP_VERSION NETDIAG_CAP_BASH_VERSION \
+             NETDIAG_CAP_PYTHON3_VERSION NETDIAG_CAP_JQ NETDIAG_CAP_MTR \
+             NETDIAG_CAP_GPING NETDIAG_CAP_SPEEDTEST
+      python3 "$HELPERS_DIR/capabilities.py" || exit 3
+      exit 0 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -339,6 +369,12 @@ Modes (exit after running, don't run the normal check battery):
   --install-watcher        install a launchd plist that runs netdiag
                            every 15 min in the background.
   --uninstall-watcher      remove the launchd plist.
+  --version                print "netdiag VERSION" and exit.
+  --capabilities           print one JSON object describing this install:
+                           per-mode schema numbers, a feature list, and
+                           which optional dependencies are on PATH — a
+                           handshake for a GUI to check compatibility
+                           before it relies on a feature.
 HELP
       exit 0 ;;
     -*)
