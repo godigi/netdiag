@@ -11,8 +11,16 @@
        casually. -->
   <key>CFBundleIdentifier</key><string>me.brianfreeman.netdiag</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.7.0</string>
-  <key>CFBundleVersion</key><string>0.7.0</string>
+  <!-- Template value, not the shipped version: gui/Makefile's `bundle`
+       target always overwrites both version keys — via PlistBuddy, on the
+       *copied* plist at build/Netdiag.app/Contents/Info.plist — with
+       whatever NETDIAG_VERSION the bundled ../bin/netdiag reports, so
+       app and CLI can never disagree about which release they are. This
+       file (the committed template) is never read by a running app; the
+       obviously-not-real value below is deliberate so a stale number here
+       can't be mistaken for the truth. -->
+  <key>CFBundleShortVersionString</key><string>0.0.0-unstamped</string>
+  <key>CFBundleVersion</key><string>0.0.0-unstamped</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
 
   <!-- Menu-bar only: no Dock icon, no app switcher entry. An always-on

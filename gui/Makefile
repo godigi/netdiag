@@ -16,6 +16,15 @@ BUILD_DIR     := build
 APP_DIR       := $(BUILD_DIR)/$(APP).app
 CONFIG        := release
 BIN           := .build/$(CONFIG)/NetdiagGUI
+CLI_DIR       := $(APP_DIR)/Contents/Resources/cli
+
+# The single source of truth for the shipped version is the CLI's own
+# NETDIAG_VERSION (../bin/netdiag) — see the T7 note on Resources/Info.plist
+# for why the plist itself never carries a real number.
+# [^"]* rather than .*: a greedy match would swallow a trailing comment
+# after the closing quote into the version string; head -1 guards the
+# (never-expected) second matching line.
+VERSION       := $(shell sed -n 's/^NETDIAG_VERSION="\([^"]*\)".*/\1/p' ../bin/netdiag | head -1)
 
 # ── Signing ─────────────────────────────────────────────────────────────
 # TCC keys its grants on bundle id *and* code signature. `codesign -s -`
@@ -39,12 +48,34 @@ build:
 	swift build -c $(CONFIG)
 
 bundle: build
+	@if [ -z "$(VERSION)" ]; then \
+	  echo "error: could not read NETDIAG_VERSION from ../bin/netdiag" >&2; exit 1; \
+	fi
 	@rm -rf "$(APP_DIR)"
 	@mkdir -p "$(APP_DIR)/Contents/MacOS" "$(APP_DIR)/Contents/Resources"
 	@cp "$(BIN)" "$(APP_DIR)/Contents/MacOS/NetdiagGUI"
 	@cp Resources/Info.plist "$(APP_DIR)/Contents/Info.plist"
 	@printf 'APPL????' > "$(APP_DIR)/Contents/PkgInfo"
-	@echo "bundled: $(APP_DIR)"
+	@# Bundle the CLI itself, so app+CLI ship — and version — as one
+	@# artifact. Only bin/ lib/ helpers/ are needed at runtime (no tests/);
+	@# cp -R preserves file modes (bin/netdiag stays executable; lib/*.sh
+	@# stay 644 — they are sourced, never executed), and
+	@# preserves the sibling bin/../lib, bin/../helpers layout that
+	@# bin/netdiag's _resolve_path walk depends on to find them once
+	@# symlinked or copied elsewhere.
+	@mkdir -p "$(CLI_DIR)"
+	@cp -R ../bin "$(CLI_DIR)/bin"
+	@cp -R ../lib "$(CLI_DIR)/lib"
+	@cp -R ../helpers "$(CLI_DIR)/helpers"
+	@find "$(CLI_DIR)" \( -name '.DS_Store' -o -name '*.pyc' \) -delete
+	@find "$(CLI_DIR)" -type d -name '__pycache__' -exec rm -rf {} +
+	@# Stamp the CLI's version into the *copied* plist, never the committed
+	@# template in Resources/Info.plist — see that file's comment.
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" \
+	  "$(APP_DIR)/Contents/Info.plist"
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(VERSION)" \
+	  "$(APP_DIR)/Contents/Info.plist"
+	@echo "bundled: $(APP_DIR) (netdiag $(VERSION))"
 
 sign: bundle
 ifeq ($(strip $(SIGN_IDENTITY)),)
@@ -106,19 +137,21 @@ identity:
 	  echo "done — re-run 'make' and the bundle will be signed stably."; \
 	fi
 
-# Report what the app will actually find at runtime. The CLI is normally a
-# symlink that re-execs under Homebrew bash, so a wrong PATH breaks it in a
-# way that only shows up as an empty dashboard.
+# Report what the app will actually find at runtime. Since T7, the app
+# bundles its own CLI copy (see `bundle`), so the number that matters is
+# the bundled binary's own --version — not a PATH search, which the
+# bundled copy makes a fallback rather than the primary path.
 check:
 	@echo "swift:     $$(swift --version 2>&1 | head -1)"
 	@echo "identity:  $${SIGN_IDENTITY:-<none — will sign ad-hoc>}"
-	@printf 'netdiag:   '; \
-	  found=''; \
-	  for p in "$$HOME/bin/netdiag" /opt/homebrew/bin/netdiag /usr/local/bin/netdiag \
-	           "$$HOME/Documents/AI-Workspace/netdiag/bin/netdiag"; do \
-	    [ -x "$$p" ] && { found="$$p"; break; }; \
-	  done; \
-	  echo "$${found:-<not found — set a path in Settings>}"
+	@echo "cli source: ../bin/netdiag ($(VERSION))"
+	@printf 'bundled:   '; \
+	  cli="$(CLI_DIR)/bin/netdiag"; \
+	  if [ -x "$$cli" ]; then \
+	    echo "$$cli ($$("$$cli" --version 2>/dev/null))"; \
+	  else \
+	    echo "<not bundled yet — run 'make bundle'>"; \
+	  fi
 
 clean:
 	swift package clean
