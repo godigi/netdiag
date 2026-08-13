@@ -55,6 +55,34 @@ All notable changes to `netdiag` are recorded here. Format follows
   `THRESH_COMPARE_TAIL_PCTL` in the environment for this reason, the same
   way `--show` always has.
 
+### Changed
+
+- **jq is no longer required for the speed test.** The ~10 `jq -r` calls
+  that parsed Ookla's and `speedtest-cli`'s final result JSON are now one
+  call to `helpers/speedtest_result.py`, a stdlib-only parser that reads
+  the result object on stdin and writes `down_mbps`/`up_mbps`/
+  `latency_ms`/`jitter_ms`/`server` as one tab-separated line — same
+  deny-by-default discipline the fd-3 progress translation already used
+  for the same reason: an Ookla result carries `interface.internalIp`
+  (a dual-stack Mac's public IPv6 address), `externalIp`, `macAddr` and a
+  `result.url`, none of which may reach stdout. `speedtest_will_run()`
+  and `speedtest_run()` no longer gate on `command -v jq` at all, so a
+  machine with only bash 5 and python3 now gets a real speed test instead
+  of a "brew install jq" hint. `lib/headline.sh`'s Report card drops the
+  matching hint row for the same reason. `mtr`'s sudo-only per-hop view
+  and Tailscale's VPN name are the only things jq still touches; both are
+  optional enhancers, not defaults, and are unchanged.
+  - New `tests/test_speedtest_parse.bats` (17 cases) drives the helper
+    against fixtures for both flavors — a hand-checked bandwidth
+    conversion (60875000 bytes/s → 487.0 Mbps), absent-field and
+    malformed-input handling, and a privacy test asserting the identifying
+    Ookla fields never reach stdout — plus two structural checks that
+    neither speed-test function's source still mentions jq.
+  - CI gained a broken-jq smoke test: `jq` is shadowed by a failing stub
+    earlier in `PATH` than either Homebrew prefix — jq is present and
+    resolves, it just fails — and a real `--json --quick` run is
+    asserted to exit anything but 3 and to parse with `python3`.
+
 ## [0.9.0] - 2026-08-12
 
 Makes a check watchable while it runs. A full check takes ~55 s and

@@ -50,6 +50,8 @@ helpers/history.py           # --history: network identity + grouping
 helpers/monitor_sample.py    # one --monitor sample → one JSON line
 helpers/capabilities.py      # --capabilities: the version/feature handshake
 helpers/rules_catalog.py     # --rules-catalog: rule titles/blurbs for the GUI
+helpers/speedtest_result.py  # speed test's final result JSON → tab-separated
+                             #   fields, replacing ~10 jq calls (see below)
 gui/                         # SwiftUI menu-bar client (SwiftPM, macOS 14+)
 ```
 
@@ -128,6 +130,16 @@ than carrying a default — a default is a second home for a number that
 has exactly one, and the two diverge silently the first time either is
 tuned. `tests/test_thresholds.bats` fails the build on an inline numeric
 cutoff in any of the three.
+
+**Amendment (unreleased): a fifth reason, running the other direction.**
+Every reason above is about Python *producing* JSON. `helpers/speedtest_result.py`
+instead *consumes* it — reading the speed test's final result object
+(Ookla's or speedtest-cli's) on stdin and writing back a tab-separated
+line — and the rationale is dependency removal rather than escaping:
+those ~10 `jq -r`/`jq -e` calls were the last thing on the default run
+path that hard-required `jq`, so replacing them with `json.loads()` plus
+five shape-checked field lookups means a machine with just bash 5 and
+python3 gets a real speed test instead of a "brew install jq" hint.
 
 **Runtime requirement:** Python 3 (system `/usr/bin/python3` on macOS
 14+ is fine; no extra packages).

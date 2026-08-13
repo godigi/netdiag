@@ -206,8 +206,6 @@ headline_run() {
     _row "" "Speed" "not measured (no internet to test against)"
   elif [ "$(speedtest_flavor)" = "none:" ]; then
     _row "" "Speed" "not measured · brew install speedtest"
-  elif ! command -v jq >/dev/null 2>&1; then
-    _row "" "Speed" "not measured · brew install jq"
   else
     _row warn "Speed" "test ran but returned no result"
   fi

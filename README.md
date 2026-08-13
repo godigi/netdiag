@@ -339,9 +339,11 @@ would say the same thing twice.
 - **Required:** bash 5 (`brew install bash`), and macOS built-ins
   (`ipconfig`, `networksetup`, `route`, `scutil`, `dig`, `traceroute`,
   `ping`, `nc`, `arp`, `system_profiler`, `sntp`, `curl`, `log`).
-- **Optional (Homebrew):** `jq` (required for `--json`, mtr parse,
-  Ookla/CLI speedtest parse), `mtr` (richer per-hop loss), `gping`
-  (live monitoring on exit), `speedtest` (Ookla) or `speedtest-cli`.
+- **Optional (Homebrew):** `jq` (only enables `mtr`'s sudo-only per-hop
+  view and Tailscale's VPN name — `--json`, `--history`, `--monitor` and
+  the speed test are all python3-based and run without it), `mtr`
+  (richer per-hop loss), `gping` (live monitoring on exit), `speedtest`
+  (Ookla) or `speedtest-cli`.
 - **Bundled Python helpers** use stock `/usr/bin/python3` only — no extra
   packages.
 

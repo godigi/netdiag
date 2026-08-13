@@ -58,7 +58,6 @@ speedtest_will_run() {
     return 1
   fi
   [ "$(speedtest_flavor)" != "none:" ] || return 1
-  command -v jq >/dev/null 2>&1        || return 1
   return 0
 }
 
@@ -119,6 +118,43 @@ speedtest_translate_line() {
   progress_speed "$stage" "$progress" "$mbps" "$latency"
 }
 
+# Parses a final result object (Ookla or speedtest-cli, whichever flavor
+# ran) through helpers/speedtest_result.py — a single tab-separated line,
+# five fields, empty string per absent value — and sets the SPEEDTEST_*
+# globals from it. See that file's module docstring for the field math
+# and the deny-by-default extraction it replaced ~10 `jq -r` calls with:
+# this is the only place either flavor's JSON is parsed now, so netdiag's
+# speed test no longer needs jq on PATH at all.
+#
+# Returns 1 (globals left empty) when there was no usable download field
+# to report — the same condition the old `jq -e .download`/
+# `.download.bandwidth` checks used to gate the ok/warn branch on below —
+# so callers tell a real result from a failed/unparseable one without
+# re-parsing anything themselves.
+#
+# `IFS=$'\t' read -r var1 var2 …` is the wrong tool here: bash treats tab
+# as "IFS whitespace" no matter what IFS is set to, so a plain `read`
+# silently collapses two adjacent tabs into one delimiter and shifts
+# every field after it — invisible for the Ookla flavor, which always has
+# a jitter value between its tabs, and wrong for every speedtest-cli
+# result, which never does: the empty jitter field would swallow the tab
+# meant to separate latency from server, so SPEEDTEST_JITTER_MS silently
+# took the server name and SPEEDTEST_SERVER came back empty. `|` is not
+# IFS whitespace, so translating tab → `|` first — the same delimiter
+# already used for DIAGNOSIS_LINES/DNS_LINES elsewhere in this project —
+# makes an empty field survive the split.
+_speedtest_parse_result() {
+  local raw="$1" parsed line
+  SPEEDTEST_DOWN_MBPS="" SPEEDTEST_UP_MBPS="" SPEEDTEST_LATENCY_MS=""
+  SPEEDTEST_JITTER_MS="" SPEEDTEST_SERVER=""
+  [ -n "$raw" ] || return 1
+  parsed="$(printf '%s' "$raw" | python3 "$HELPERS_DIR/speedtest_result.py" 2>/dev/null || true)"
+  line="${parsed//$'\t'/|}"
+  IFS='|' read -r SPEEDTEST_DOWN_MBPS SPEEDTEST_UP_MBPS SPEEDTEST_LATENCY_MS \
+    SPEEDTEST_JITTER_MS SPEEDTEST_SERVER <<<"$line"
+  [ -n "$SPEEDTEST_DOWN_MBPS" ]
+}
+
 speedtest_run() {
   [ "$SPEED" -eq 1 ]     || { progress_skip "speed test not requested"; return 0; }
   [ "$NO_SPEED" -eq 0 ]  || { progress_skip "--no-speed"; return 0; }
@@ -142,11 +178,6 @@ speedtest_run() {
     progress_skip "no speedtest CLI installed"
     return 0
   fi
-  if ! command -v jq >/dev/null 2>&1; then
-    info "Speed test skipped: parsing its JSON needs jq (brew install jq)."
-    progress_skip "jq not installed"
-    return 0
-  fi
 
   case "$flavor" in
     ookla)
@@ -165,13 +196,7 @@ speedtest_run() {
         speedtest_translate_line "$st_line"
         case "$st_line" in *'"type":"result"'*) st_out="$st_line" ;; esac
       done < <("$bin" --format=jsonl --progress=yes --accept-license --accept-gdpr 2>/dev/null || true)
-      if [ -n "$st_out" ] && printf '%s' "$st_out" | jq -e .download.bandwidth >/dev/null 2>&1; then
-        # Ookla reports bytes/s; ×8/1e6 gives Mbps.
-        SPEEDTEST_DOWN_MBPS="$(printf '%s' "$st_out" | jq -r '.download.bandwidth * 8 / 1000000' | awk '{printf "%.1f", $1}')"
-        SPEEDTEST_UP_MBPS="$(  printf '%s' "$st_out" | jq -r '.upload.bandwidth   * 8 / 1000000' | awk '{printf "%.1f", $1}')"
-        SPEEDTEST_LATENCY_MS="$(printf '%s' "$st_out" | jq -r '.ping.latency')"
-        SPEEDTEST_JITTER_MS="$( printf '%s' "$st_out" | jq -r '.ping.jitter')"
-        SPEEDTEST_SERVER="$(    printf '%s' "$st_out" | jq -r '.server.name')"
+      if _speedtest_parse_result "$st_out"; then
         ok "Down ${SPEEDTEST_DOWN_MBPS} Mbps · Up ${SPEEDTEST_UP_MBPS} Mbps · ${SPEEDTEST_LATENCY_MS} ms (jitter ${SPEEDTEST_JITTER_MS} ms)"
         info "Server: $SPEEDTEST_SERVER"
       else
@@ -187,12 +212,7 @@ speedtest_run() {
       # nothing in this branch knows how far along the test is.
       progress_speed running
       st_out="$("$bin" --json 2>/dev/null || true)"
-      if [ -n "$st_out" ] && printf '%s' "$st_out" | jq -e .download >/dev/null 2>&1; then
-        # speedtest-cli reports bits/s already; only the scale changes.
-        SPEEDTEST_DOWN_MBPS="$(printf '%s' "$st_out" | jq -r '.download / 1000000' | awk '{printf "%.1f", $1}')"
-        SPEEDTEST_UP_MBPS="$(  printf '%s' "$st_out" | jq -r '.upload   / 1000000' | awk '{printf "%.1f", $1}')"
-        SPEEDTEST_LATENCY_MS="$(printf '%s' "$st_out" | jq -r '.ping')"
-        SPEEDTEST_SERVER="$(   printf '%s' "$st_out" | jq -r '.server.host')"
+      if _speedtest_parse_result "$st_out"; then
         ok "Down ${SPEEDTEST_DOWN_MBPS} Mbps · Up ${SPEEDTEST_UP_MBPS} Mbps · ${SPEEDTEST_LATENCY_MS} ms"
         info "Server: $SPEEDTEST_SERVER"
         # Still no progress fraction — the number is final, but it never

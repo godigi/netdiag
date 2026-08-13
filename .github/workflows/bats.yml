@@ -83,6 +83,47 @@ jobs:
           ' /tmp/caps.json > /dev/null
           echo "capabilities: $(jq -c '.deps' /tmp/caps.json)"
 
+      # jq is now optional everywhere except mtr's sudo-only per-hop path
+      # and Tailscale VPN naming — the speed test's ~10 `jq -r` calls were
+      # the last thing on the default path that hard-required it, and
+      # those went through helpers/speedtest_result.py instead. This
+      # proves the *run* survives jq failing; the parse math itself is
+      # covered by tests/test_speedtest_parse.bats against fixtures, and
+      # --quick skips the speed test regardless, so this is about the
+      # rest of the run not tripping over a missing `command -v jq`
+      # somewhere unexpected.
+      #
+      # A stub shadows `jq` earlier in PATH rather than trying to strip
+      # brew's bin from PATH: real jq could be at /usr/local/bin (Intel)
+      # or /opt/homebrew/bin (Apple Silicon) depending on the runner, and
+      # bash/bats/other brew tools this job needs live in that same
+      # directory, so removing it outright would risk breaking the step
+      # for an unrelated reason. Shadowing only touches jq — which means
+      # `command -v jq` still succeeds here: this step proves the run
+      # survives jq *failing*, not jq being absent. A gate reintroduced
+      # in either speed-test function is caught instead by the structural
+      # tests in tests/test_speedtest_parse.bats.
+      - name: Smoke test a run with a broken jq
+        run: |
+          mkdir -p /tmp/no-jq
+          cat > /tmp/no-jq/jq <<'EOF'
+          #!/bin/sh
+          echo "jq: stubbed out for the no-jq smoke test" >&2
+          exit 127
+          EOF
+          chmod +x /tmp/no-jq/jq
+
+          status=0
+          PATH="/tmp/no-jq:$PATH" command -v jq
+          PATH="/tmp/no-jq:$PATH" ./bin/netdiag --json --quick --no-gping --no-baseline > /tmp/nojq.json || status=$?
+          echo "netdiag exit status (broken jq): $status"
+          if [ "$status" -eq 3 ]; then
+            echo "::error::netdiag exited 3 with broken jq"
+            exit 1
+          fi
+          python3 -c 'import json,sys; json.load(open("/tmp/nojq.json"))'
+          echo "no-jq run: stdout parsed as JSON"
+
       - name: Smoke test the installer
         run: |
           ./install.sh --prefix /tmp/ndbin --no-brew
