@@ -340,6 +340,13 @@ struct RunSnapshot: Decodable, Sendable {
     }
 
     var date: Date { ISO8601DateFormatter().date(from: timestamp ?? "") ?? Date() }
+
+    /// The dropdown's "Last check" row wants the same badge a stored run's
+    /// list row shows — reused via `HistoryDocument.Run.modeBadge(for:)`
+    /// rather than re-switched here, so a live run and a `--show` record of
+    /// the exact same run can never describe their `run_mode` two
+    /// different ways.
+    var modeBadge: String? { HistoryDocument.Run.modeBadge(for: runMode) }
 }
 
 // MARK: - Lenient decoding

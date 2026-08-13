@@ -23,7 +23,7 @@ struct NetdiagApp: App {
             DropdownView()
                 .environment(coordinator)
                 .environment(coordinator.appSettings)
-                .frame(width: 340)
+                .frame(width: 360)
         } label: {
             MenuBarLabel(coordinator: coordinator, appSettings: coordinator.appSettings)
                 // The only view guaranteed to exist at launch. An

@@ -204,7 +204,7 @@ struct HomeView: View {
             Image(systemName: run.health.symbol)
                 .foregroundStyle(run.health.tint)
                 .frame(width: 14)
-            Text(Self.relativeTime(run.date))
+            Text(RelativeTime.string(from: run.date))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(width: 64, alignment: .leading)
@@ -231,19 +231,6 @@ struct HomeView: View {
         .contentShape(Rectangle())
     }
 
-    /// One formatter for every row's timestamp — constructing a
-    /// `RelativeDateTimeFormatter` per row is the same needless cost
-    /// `HistoryDocument.iso` documents for `ISO8601DateFormatter`, just at
-    /// a smaller scale (five rows, not two thousand).
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
-
-    private static func relativeTime(_ date: Date) -> String {
-        relativeFormatter.localizedString(for: date, relativeTo: Date())
-    }
 
     // MARK: - Expert layer
 

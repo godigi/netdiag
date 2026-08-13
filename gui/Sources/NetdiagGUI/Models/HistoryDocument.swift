@@ -237,7 +237,15 @@ struct HistoryDocument: Decodable, Sendable {
         /// redesign's risk register this is safe to keep in Swift. `nil`
         /// for a record written before v0.9.0 stamped `run_mode` at all:
         /// there is no honest badge to show for those, so none is shown.
-        var modeBadge: String? {
+        var modeBadge: String? { Self.modeBadge(for: runMode) }
+
+        /// The mapping itself, as a static function so `RunSnapshot` — which
+        /// carries the identical `run_mode` field for a run that has not
+        /// been through `--history` at all — can render the exact same
+        /// vocabulary rather than re-deriving it. Still just a
+        /// presentational relabeling of the closed `run_mode` set, per this
+        /// property's own doc comment above.
+        static func modeBadge(for runMode: String?) -> String? {
             switch runMode {
             case "full":       return "full check"
             case "quick":      return "quick check"
