@@ -9,6 +9,15 @@ enum NetdiagError: LocalizedError {
     /// run store rolls over into an archive and is eventually pruned, so a
     /// list held in memory can outlive a record on disk.
     case runNotFound
+    /// `CapabilityStore` gated a feature the resolved CLI's handshake
+    /// doesn't have — or, for a CLI old enough to exit 3 on
+    /// `--capabilities` itself, doesn't demonstrably have. `found` is the
+    /// CLI's own `--version` string when the handshake was able to learn
+    /// one, nil when it wasn't (a pre-handshake CLI answers neither
+    /// `--capabilities` nor `--version`, so there is nothing to cite).
+    /// `needs` always comes from `CapabilityStore.requiredVersion` — see
+    /// its doc comment for why that's the one place the number lives.
+    case cliTooOld(found: String?, needs: String)
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +29,30 @@ enum NetdiagError: LocalizedError {
         case .badJSON(let s):      return "netdiag returned something unreadable: \(s)"
         case .cancelled:           return "Check cancelled."
         case .runNotFound:         return "That check is no longer in your history — it may have been pruned."
+        case .cliTooOld(let found, let needs):
+            // Reachable only through a user override: the bundled copy
+            // (BinaryLocator's first choice after the override itself) is
+            // always this exact build's own CLI, so it always answers the
+            // handshake. Say so explicitly rather than leaving a user who
+            // has never touched Settings → Advanced to wonder what broke.
+            let fix = "Point Settings → Advanced back at the app's built-in copy, or update the override."
+            guard let found else {
+                return """
+                    Your netdiag command doesn't answer this app's version check — \
+                    this app needs \(AppVersion.phrase(for: needs)) or newer. \(fix)
+                    """
+            }
+            if found == needs {
+                // Same version, yet a feature is missing or didn't decode
+                // — "needs vX or newer" would contradict itself here.
+                return """
+                    Your netdiag command (v\(found)) doesn't support a feature this app needs. \(fix)
+                    """
+            }
+            return """
+                Your netdiag command is v\(found) — this app needs \
+                \(AppVersion.phrase(for: needs)) or newer. \(fix)
+                """
         }
     }
 }
@@ -96,7 +129,7 @@ struct NetdiagRunner {
         // leaves a finished phase rendered as running.
         var continuation: AsyncStream<String>.Continuation?
         var pump: Task<Void, Never>?
-        if let progress, await supportsProgress() {
+        if let progress, await CapabilityStore.shared.supports(.progress) {
             args.append("--progress")
             let (stream, sink) = AsyncStream.makeStream(of: String.self)
             continuation = sink
@@ -129,26 +162,6 @@ struct NetdiagRunner {
                          startedAt: started, finishedAt: Date())
     }
 
-    /// Does the installed CLI understand `--progress`?
-    ///
-    /// Asked because the app bundle and the CLI are installed separately —
-    /// `BinaryLocator` resolves whatever `netdiag` is on the machine, which
-    /// may be older than this build. `bin/netdiag` answers an unknown flag
-    /// with exit 3, so sending it unconditionally would turn every scan on
-    /// such a machine into "netdiag couldn't complete the check".
-    ///
-    /// `--progress --help` rather than grepping the help text: the flag is
-    /// machine-facing and may reasonably go undocumented, but a version that
-    /// parses it exits 0 and a version that doesn't exits 3. Costs one
-    /// process, once, for the life of the app.
-    private static func supportsProgress() async -> Bool {
-        await ProgressSupport.shared.value {
-            guard let (_, _, status) = try? await execute(
-                arguments: ["--progress", "--help"]) else { return false }
-            return status == 0
-        }
-    }
-
     /// `netdiag --redact --json`, for "Copy shareable report". The point of
     /// running the CLI again rather than re-encoding the snapshot already
     /// on screen: redaction is defined in helpers/emit_json.py, and a
@@ -162,6 +175,7 @@ struct NetdiagRunner {
 
     /// `netdiag --history`, decoded.
     static func history(limit: Int = 0) async throws -> HistoryDocument {
+        try await CapabilityStore.shared.requireSupport(for: .history)
         let arg = limit > 0 ? "--history=\(limit)" : "--history"
         let (out, _, status) = try await execute(arguments: [arg])
         if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
@@ -181,6 +195,7 @@ struct NetdiagRunner {
     /// unreachable from the UI while the pruned one is reached by simply
     /// leaving the window open long enough.
     static func show(id: String) async throws -> RunDetail {
+        try await CapabilityStore.shared.requireSupport(for: .show)
         let (out, _, status) = try await execute(arguments: ["--show=\(id)"])
         if status == 3 { throw NetdiagError.runNotFound }
         if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
@@ -205,7 +220,13 @@ struct NetdiagRunner {
     /// Progress that arrived only after `waitUntilExit` would be a list of
     /// results for a run that had already finished — the moment progress
     /// stops being progress.
-    private static func execute(
+    ///
+    /// Not `private`: `CapabilityStore` reuses this exact plumbing for its
+    /// own `--capabilities` / `--progress --help` probes rather than
+    /// hand-rolling a second `Process` wrapper. Still module-internal —
+    /// nothing outside this target has a reason to spawn `netdiag` for
+    /// itself.
+    static func execute(
         arguments: [String],
         stderrLines: AsyncStream<String>.Continuation? = nil
     ) async throws -> (String, String, Int32) {
@@ -268,24 +289,6 @@ struct NetdiagRunner {
         } onCancel: {
             if process.isRunning { process.terminate() }
         }
-    }
-}
-
-/// Remembers one answer for the life of the process.
-///
-/// An actor rather than a `static var` because `supportsProgress()` can be
-/// asked from two runs at once — the alert-triggered scan and a scan the
-/// user started overlap by design — and two concurrent probes would spawn
-/// two children to learn the same thing.
-private actor ProgressSupport {
-    static let shared = ProgressSupport()
-    private var cached: Bool?
-
-    func value(_ probe: @Sendable () async -> Bool) async -> Bool {
-        if let cached { return cached }
-        let answer = await probe()
-        cached = answer
-        return answer
     }
 }
 

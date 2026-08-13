@@ -241,6 +241,17 @@ struct HistoryView: View {
         let counts = store.document.counts
         return VStack(alignment: .leading, spacing: 4) {
             Text("About this history").font(.headline)
+            // A load failure would otherwise render as "0 runs across 0
+            // network(s)" — indistinguishable from a genuinely empty
+            // store, with the actionable message (a too-old CLI names the
+            // fix) swallowed. This is the only surface that reads
+            // `HistoryStore.lastError`.
+            if let error = store.lastError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text("\(counts.runs) runs across \(counts.networks) network(s), read from ~/net-diag/baseline.jsonl and its archive.")
                 .font(.caption).foregroundStyle(.secondary)
             if counts.redactedDropped > 0 {

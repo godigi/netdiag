@@ -57,8 +57,25 @@ final class MonitorStream {
 
     private var process: Process?
     private var readTask: Task<Void, Never>?
+    /// The capability-gate half of `start()`, tracked so `stop()` can
+    /// cancel it. Without this a `stop()` that lands while the handshake
+    /// is still in flight would do nothing to it, and the gate would go
+    /// on to spawn a monitor the user just asked to turn off the moment
+    /// the check finally resolved.
+    private var startTask: Task<Void, Never>?
+    /// Bumped by every `start()`. Lets the task tail and the post-await
+    /// guards tell "I am still the current start" from "a newer start or
+    /// a stop superseded me" — a cancelled elder task resuming late must
+    /// not clear a newer task's handle or spawn over its process.
+    private var startGeneration = 0
     private var restartAttempts = 0
     private var pauseHolders: Set<String> = []
+    /// True once the current child has produced a sample — the only
+    /// evidence its USR1/USR2 traps are installed. See `spawn()`.
+    private var trapsReady = false
+    /// A pause requested before `trapsReady` — recorded, and replayed by
+    /// `ingest()` on the first sample.
+    private var pauseSignalPending = false
     private var burstInterval: Int?
     private var burstTimer: Task<Void, Never>?
 
@@ -71,11 +88,62 @@ final class MonitorStream {
     // MARK: - Lifecycle
 
     func start() {
+        guard !isRunning, startTask == nil else { return }
+        // Fail-fast only — the path spawned later is re-resolved after
+        // the gate, not this one. See startAfterCapabilityCheck.
+        guard BinaryLocator.resolve() != nil else {
+            lastError = BinaryLocator.missingBinaryMessage
+            return
+        }
+        // Gated behind the capabilities handshake, not spawned straight
+        // away: an old CLI's `--monitor` exits 3 on flags it has never
+        // seen — the cadence flags below among them — the same failure
+        // mode `--progress` already guards against in `NetdiagRunner`.
+        // Checking first means `lastError` reads the actionable
+        // `cliTooOld` message instead of the generic "died immediately"
+        // a doomed child would otherwise produce.
+        startGeneration += 1
+        let generation = startGeneration
+        startTask = Task { [weak self] in
+            await self?.startAfterCapabilityCheck(generation: generation)
+            // Clear only our own handle. A cancelled elder task resuming
+            // here must not null a newer start's handle — a later stop()
+            // would then find nothing to cancel, and the newer task would
+            // go on to spawn a monitor the user had already turned off.
+            if let self, self.startGeneration == generation { self.startTask = nil }
+        }
+    }
+
+    /// The async half of `start()`. Re-checks cancellation, `isRunning`
+    /// and its own generation after the one `await`, because `stop()`
+    /// cancels `startTask` but has no way to interrupt an in-flight actor
+    /// call directly — and a superseded elder task resuming late must not
+    /// spawn over a newer start's process.
+    private func startAfterCapabilityCheck(generation: Int) async {
         guard !isRunning else { return }
+        do {
+            try await CapabilityStore.shared.requireSupport(for: .monitor)
+        } catch {
+            guard !Task.isCancelled, startGeneration == generation else { return }
+            lastError = error.localizedDescription
+            log.error("monitor not started: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        guard !Task.isCancelled, !isRunning, startGeneration == generation else { return }
+        // Resolve again now that the gate has passed. The gate re-resolves
+        // internally, so spawning a path captured before the await would
+        // let an override changed mid-handshake validate one binary and
+        // launch another.
         guard let binary = BinaryLocator.resolve() else {
             lastError = BinaryLocator.missingBinaryMessage
             return
         }
+        spawn(binary: binary)
+    }
+
+    /// The process itself, split out of `start()` so the capability check
+    /// above can sit ahead of it without duplicating any of this.
+    private func spawn(binary: String) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         // A burst overrides the degraded tier as well as the fast one.
@@ -111,8 +179,21 @@ final class MonitorStream {
 
         process = proc
         isRunning = true
-        isPaused = false
         lastError = nil
+        // No signal may reach this child until it proves its USR1/USR2
+        // traps are installed. lib/monitor.sh installs them inside
+        // monitor_run — after the re-exec into bash 5 and all of lib/ has
+        // been sourced — and before that, SIGUSR1's default disposition
+        // *terminates* the child (measured: a signal sent immediately
+        // after launch killed it three runs in three, and the resulting
+        // EOF→restart→signal cycle looped for as long as the holder was
+        // held). So a pause that predates this spawn — restart()
+        // replaying its holders, a scan starting mid-handshake — is only
+        // recorded here; ingest() replays it on the first sample, which
+        // is the evidence the traps exist.
+        trapsReady = false
+        pauseSignalPending = !pauseHolders.isEmpty
+        isPaused = false
         log.info("monitor started, pid \(proc.processIdentifier)")
 
         readTask = Task { [weak self] in
@@ -121,6 +202,8 @@ final class MonitorStream {
     }
 
     func stop() {
+        startTask?.cancel()
+        startTask = nil
         readTask?.cancel()
         readTask = nil
         if let process, process.isRunning {
@@ -135,6 +218,8 @@ final class MonitorStream {
         isPaused = false
         pauseHolders.removeAll()
         pauseReason = nil
+        trapsReady = false
+        pauseSignalPending = false
         // Stopping is the end of the test too. A burst cadence that
         // survived into the next `start()` would be a faster sample rate
         // the user never asked for, with nothing on screen to explain it.
@@ -217,6 +302,13 @@ final class MonitorStream {
     func pause(reason: String) {
         pauseHolders.insert(reason)
         pauseReason = pauseHolders.sorted().joined(separator: ", ")
+        guard trapsReady else {
+            // Pre-trap window, or no child at all: record the intent and
+            // let ingest()'s first-sample replay deliver it — the same
+            // no-signal-before-evidence rule spawn() documents.
+            pauseSignalPending = true
+            return
+        }
         guard let process, process.isRunning, !isPaused else { return }
         kill(process.processIdentifier, SIGUSR1)
         isPaused = true
@@ -230,6 +322,12 @@ final class MonitorStream {
             return
         }
         pauseReason = nil
+        guard trapsReady else {
+            // Every holder released before the child proved its traps:
+            // nothing was ever signaled, so there is nothing to undo.
+            pauseSignalPending = false
+            return
+        }
         guard let process, process.isRunning, isPaused else { return }
         kill(process.processIdentifier, SIGUSR2)
         isPaused = false
@@ -271,6 +369,18 @@ final class MonitorStream {
     }
 
     private func ingest(_ sample: MonitorSample) {
+        if !trapsReady {
+            // First sample from this child: monitor_run is live, so its
+            // traps are installed and a deferred pause can now be signaled
+            // without landing in the pre-trap window spawn() describes.
+            trapsReady = true
+            if pauseSignalPending, let process, process.isRunning {
+                kill(process.processIdentifier, SIGUSR1)
+                isPaused = true
+                log.debug("monitor paused (deferred until first sample)")
+            }
+            pauseSignalPending = false
+        }
         // A sample proves the process is alive and producing, which is the
         // only evidence that matters for backoff.
         restartAttempts = 0

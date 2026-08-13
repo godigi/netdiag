@@ -4,6 +4,13 @@ struct SettingsView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
 
+    /// The About section's own answer from the capabilities handshake.
+    /// `nil` until the first probe returns — held here, not read from
+    /// `CapabilityStore` inline, because that store is an actor and a
+    /// view body can't `await` it.
+    @State private var capabilities: CapabilityState?
+    @State private var isRechecking = false
+
     var body: some View {
         TabView {
             general.tabItem { Label("General", systemImage: "gearshape") }
@@ -173,6 +180,8 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
 
+            about
+
             Section("Where things are kept") {
                 LabeledContent("Reports and history") {
                     Text("~/net-diag").font(.system(.caption, design: .monospaced))
@@ -191,7 +200,10 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .task { await coordinator.watcher.refresh() }
+        .task {
+            await coordinator.watcher.refresh()
+            capabilities = await CapabilityStore.shared.current()
+        }
     }
 
     private var resolvedPathLabel: String {
@@ -206,6 +218,104 @@ struct SettingsView: View {
         panel.showsHiddenFiles = true
         if panel.runModal() == .OK, let url = panel.url {
             appSettings.binaryPath = url.path
+        }
+    }
+
+    // MARK: - About
+    //
+    // Facts, not verdicts — every value below is a version string or a
+    // boolean off the capabilities handshake, never a judgement about the
+    // network (that stays lib/thresholds.sh's job, per CLAUDE.md).
+
+    private var about: some View {
+        Section("About") {
+            LabeledContent("netdiag.app") { Text(AppVersion.display) }
+            LabeledContent("CLI in use") {
+                Text(BinaryLocator.resolve() ?? "not found")
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            aboutHandshake
+            HStack {
+                Spacer()
+                if isRechecking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Re-check") {
+                        Task {
+                            isRechecking = true
+                            capabilities = await CapabilityStore.shared.recheck()
+                            // The deliberate recovery point. The monitor's
+                            // capability-gate failure doesn't retry on its
+                            // own (a doomed CLI would just spin the backoff
+                            // loop), so a user following the error's advice
+                            // — fixing the override — completes it here:
+                            // a re-check that comes back modern restarts
+                            // the monitor they still have switched on.
+                            if case .modern = capabilities,
+                               appSettings.monitoringEnabled,
+                               !coordinator.monitor.isRunning {
+                                coordinator.monitor.start()
+                            }
+                            isRechecking = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The part of the About section that depends on the handshake having
+    /// actually returned — the CLI's own version, its dependencies, and
+    /// (for a CLI old enough to predate the handshake) an explanation of
+    /// why none of that is available.
+    @ViewBuilder
+    private var aboutHandshake: some View {
+        switch capabilities {
+        case nil:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking netdiag's version…").font(.caption).foregroundStyle(.secondary)
+            }
+        case .unavailable:
+            Text("Couldn't reach the netdiag command to check its version.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .legacy:
+            Text("This netdiag command predates the version check this app uses, so its version and dependencies aren't available. It still runs — Monitor, History and Show need an update to work from this app.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .modern(let caps):
+            LabeledContent("netdiag CLI") {
+                Text(caps.version.map { "v\($0)" } ?? "unknown version")
+            }
+            LabeledContent("Speed test tool") { Text(speedtestLabel(caps.deps.speedtest)) }
+            LabeledContent("bash") { Text(caps.deps.bash ?? "unknown") }
+            LabeledContent("python3") { Text(caps.deps.python3 ?? "not installed") }
+            LabeledContent("jq") { Text(boolLabel(caps.deps.jq)) }
+            LabeledContent("mtr") { Text(boolLabel(caps.deps.mtr)) }
+            LabeledContent("gping") { Text(boolLabel(caps.deps.gping)) }
+            if let schemas = caps.schemas, !schemas.isEmpty {
+                Text("Schemas: " + schemas.sorted { $0.key < $1.key }
+                        .map { "\($0.key) \($0.value)" }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func speedtestLabel(_ value: String?) -> String {
+        switch value {
+        case "ookla": return "Ookla speedtest"
+        case "cli":   return "speedtest-cli"
+        default:      return "not installed — speed tests will be skipped"
+        }
+    }
+
+    private func boolLabel(_ value: Bool?) -> String {
+        switch value {
+        case true?:  return "installed"
+        case false?: return "not installed"
+        case nil:    return "unknown"
         }
     }
 }
