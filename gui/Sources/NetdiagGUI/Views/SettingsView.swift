@@ -269,6 +269,14 @@ struct SettingsView: View {
                                !coordinator.monitor.isRunning {
                                 coordinator.monitor.start()
                             }
+                            // Same recovery point for the rules catalog: a
+                            // user landed here because *something* about
+                            // the resolved CLI just changed, and that's
+                            // exactly when a catalog cached for the old
+                            // version needs re-checking against the new
+                            // one rather than waiting for some other view
+                            // to happen to call `ensureLoaded()` again.
+                            await coordinator.rulesCatalog.refresh()
                             isRechecking = false
                         }
                     }

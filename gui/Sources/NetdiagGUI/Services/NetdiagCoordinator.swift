@@ -17,6 +17,11 @@ final class NetdiagCoordinator {
     let details = RunDetailStore()
     let alerts = AlertEngine()
     let watcher = WatcherControl()
+    /// The CLI's rules catalog — see that store's header for why it's
+    /// `@Observable` rather than an actor like `CapabilityStore`. Every
+    /// `RuleChip` and every category-driven report row reads
+    /// `rulesCatalog.catalog` directly rather than awaiting anything.
+    let rulesCatalog = RulesCatalogStore()
     /// The observable face of `Defaults` — see `AppSettings`'s header.
     /// Owned here so one instance is shared by every view via the
     /// environment, instead of each view reading `Defaults` for itself.
@@ -89,6 +94,12 @@ final class NetdiagCoordinator {
             await history.load()
             await hydrateFromHistoryIfNeeded()
         }
+        // Its own task, not folded into the one above: the catalog gates
+        // on a *different* capability (`rulesCatalog`, not `history`) and
+        // has nothing to sequence after — chips and report rows render
+        // fine before it resolves, they just show the inert fallback until
+        // it does.
+        rulesCatalog.ensureLoaded()
         if Defaults.monitoringEnabled { monitor.start() }
     }
 

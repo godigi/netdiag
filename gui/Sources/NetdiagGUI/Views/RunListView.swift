@@ -108,16 +108,14 @@ struct RunListView: View {
         .padding(.vertical, 2)
     }
 
-    /// Rule ids straight from the CLI. docs/DIAGNOSIS-RULES.md is the
-    /// expansion; the app does not paraphrase them.
+    /// Rule ids straight from the CLI, one `RuleChip` each. With a rules
+    /// catalog loaded, tapping one opens its plain-English explanation;
+    /// without one, this is the same inert capsule row this view always
+    /// rendered — see `RuleChip`'s header.
     private func chips(_ rules: [String]) -> some View {
         HStack(spacing: 4) {
             ForEach(rules, id: \.self) { rule in
-                Text(rule)
-                    .font(.system(.caption2, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(.secondary.opacity(0.18), in: Capsule())
+                RuleChip(ruleID: rule)
             }
         }
     }
