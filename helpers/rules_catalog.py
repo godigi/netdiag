@@ -111,60 +111,17 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#n1b--router-present-nothing-public-responds",
     },
     {
-        "id": "W1",
-        "title": "Weak WiFi signal",
-        "category": "wifi",
-        "severity": "warn",
-        "scope": "both",
-        "blurb": (
-            "Your WiFi signal strength is poor enough to slow down page "
-            "loads and make video calls stutter. Moving closer to the "
-            "router — or moving the router — usually helps; so can "
-            "switching to a different band or access point if you have "
-            "one."
-        ),
-        "doc": "DIAGNOSIS-RULES.md#w1--weak-wifi-signal",
-    },
-    {
-        "id": "W2",
-        "title": "Noisy WiFi channel (low SNR)",
-        "category": "wifi",
-        "severity": "warn",
-        "scope": "both",
-        "blurb": (
-            "Other electronics or nearby WiFi networks are interfering "
-            "with yours, even if the raw signal strength looks fine. "
-            "Switching to a less crowded channel in your router's "
-            "settings is the usual fix."
-        ),
-        "doc": "DIAGNOSIS-RULES.md#w2--low-wifi-snr",
-    },
-    {
-        "id": "G1",
-        "title": "WiFi link dropping packets",
-        "category": "router",
-        "severity": "critical",
-        "scope": "both",
-        "blurb": (
-            "Your Mac is losing packets on the way to your own router "
-            "while the WiFi signal is weak at the same time — the "
-            "wireless link itself is the bottleneck, not the router or "
-            "the ISP. Move closer to the router or switch WiFi channel."
-        ),
-        "doc": "DIAGNOSIS-RULES.md#g1--gateway-loss--weak-wifi",
-    },
-    {
         "id": "G2",
         "title": "Router dropping packets",
         "category": "router",
         "severity": "critical",
         "scope": "both",
         "blurb": (
-            "Packets are being dropped between your Mac and your router "
-            "even though the WiFi signal is strong, which points at the "
-            "router itself rather than the wireless link. A reboot "
-            "(power off, wait, then power back on) clears this in most "
-            "cases."
+            "Your Mac is losing packets between your Mac and your router "
+            "— the connection between your Mac and your router is "
+            "severely degraded. A reboot of the router (power off, wait, "
+            "then power back on) or moving closer to it clears this in "
+            "most cases. On ethernet, check the cable."
         ),
         "doc": "DIAGNOSIS-RULES.md#g2--gateway-loss-with-healthy-wifi",
     },
@@ -275,6 +232,36 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#d1--partial-dns-internet-reachable",
     },
     {
+        "id": "D3",
+        "title": "DNS server sluggish",
+        "category": "dns",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Your configured DNS server takes a long time to answer "
+            "name lookups, so every new website or link you click pauses "
+            "before it begins loading. Switching to a fast public resolver "
+            "like Cloudflare's or Google's in your network settings clears "
+            "the delay."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#d3--slow-dns-resolver-latency",
+    },
+    {
+        "id": "D4",
+        "title": "DNS searches intercepted",
+        "category": "dns",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Your DNS server intercepts mistyped website addresses and "
+            "redirects them to an advertising or search portal rather than "
+            "reporting that the address does not exist. Switching to a "
+            "standard public resolver or enabling Encrypted DNS stops "
+            "the redirection."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#d4--dns-hijacking-and-search-redirection",
+    },
+    {
         "id": "B1",
         "title": "Bufferbloat at the router",
         "category": "load",
@@ -352,6 +339,20 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#v6-1--ipv6-broken-while-ipv4-works",
     },
     {
+        "id": "V6-2",
+        "title": "IPv6 DNS resolver unresponsive",
+        "category": "ipv6",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Your router provided an IPv6 DNS server address that is not "
+            "responding. Websites pause for several seconds before opening "
+            "while your Mac waits for the IPv6 lookup to time out before "
+            "falling back to IPv4."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#v6-2--unresponsive-ipv6-dns-resolver",
+    },
+    {
         "id": "VPN-1",
         "title": "VPN carrying your traffic",
         "category": "vpn",
@@ -383,21 +384,7 @@ RULES: list[dict[str, str]] = [
         ),
         "doc": "DIAGNOSIS-RULES.md#tcp-1--tcp-works-icmp-is-filtered",
     },
-    {
-        "id": "WS-1",
-        "title": "Congested WiFi channel",
-        "category": "wifi",
-        "severity": "warn",
-        "scope": "scan",
-        "blurb": (
-            "Your WiFi channel is shared with enough neighbouring "
-            "networks that they interfere with each other. Switching to "
-            "a less crowded channel in your router's WiFi settings — "
-            "often one most routers don't pick automatically — "
-            "usually helps."
-        ),
-        "doc": "DIAGNOSIS-RULES.md#ws-1--wifi-channel-is-congested",
-    },
+
     {
         "id": "WD-1",
         "title": "WiFi flapping / roaming",

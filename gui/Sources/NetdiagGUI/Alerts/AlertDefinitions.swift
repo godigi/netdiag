@@ -75,8 +75,8 @@ struct AlertDefinition: Identifiable, Sendable {
 
         AlertDefinition(
             id: "dns-failing", title: "Websites aren't loading",
-            rules: ["P1", "D1"],
-            dwell: 60, cooldown: 1800, resolves: true, scanOnly: false,
+            rules: ["P1", "D1", "D3", "D4", "V6-2"],
+            dwell: 30, cooldown: 1800, resolves: true, scanOnly: false,
             suppressedByICMPFilter: false, oncePerNetwork: false,
             interimBody: "Checking your name lookups…"),
 
@@ -126,17 +126,6 @@ struct AlertDefinition: Identifiable, Sendable {
             suppressedByICMPFilter: false, oncePerNetwork: true,
             interimBody: "The Wi-Fi name is the same, but the router behind it is a different one."),
 
-        AlertDefinition(
-            id: "weak-wifi", title: "Weak Wi-Fi signal",
-            rules: ["W1", "W2"],
-            // The most nag-prone of the twelve: signal strength drifts all
-            // day as a laptop moves around a house. Two minutes of dwell
-            // and an hour of cooldown is what makes it survivable — it
-            // should fire when you have settled somewhere bad, not while
-            // you walk past the kitchen.
-            dwell: 120, cooldown: 3600, resolves: true, scanOnly: false,
-            suppressedByICMPFilter: false, oncePerNetwork: false,
-            interimBody: "Checking how much the signal is costing you…"),
 
         AlertDefinition(
             id: "lease-expiring", title: "Network address expiring soon",
@@ -151,6 +140,13 @@ struct AlertDefinition: Identifiable, Sendable {
             dwell: 0, cooldown: 43_200, resolves: false, scanOnly: true,
             suppressedByICMPFilter: false, oncePerNetwork: false,
             interimBody: ""),
+
+        AlertDefinition(
+            id: "double-nat", title: "Two routers connected (Double NAT)",
+            rules: ["NAT-1"],
+            dwell: 0, cooldown: 86_400, resolves: true, scanOnly: true,
+            suppressedByICMPFilter: false, oncePerNetwork: true,
+            interimBody: "Two routers are chained together in your home, which can cause gaming and VPN issues."),
     ]
 
     static func byID(_ id: String) -> AlertDefinition? { all.first { $0.id == id } }

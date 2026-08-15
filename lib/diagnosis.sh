@@ -35,28 +35,12 @@ diagnosis_run() {
     add_diag critical N1b "Your Mac has a router but nothing on the public internet responded. $_rerun for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
   fi
 
-  # W1, W2, G1/G2 — WiFi quality and gateway loss interplay.
-  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then
-    add_diag warn W1 "Your WiFi signal is weak (${WIFI_RSSI} dBm — anything below ${THRESH_WIFI_RSSI_WEAK_DBM} is poor). Web pages will be slow and video calls will stutter. Try moving closer to the router, or switch to the 5 GHz network if your router broadcasts both bands."
-  fi
-  if [ -n "$WIFI_SNR" ] && [ "$WIFI_SNR" -lt "$THRESH_WIFI_SNR_LOW_DB" ]; then
-    add_diag warn W2 "Other electronics or nearby WiFi networks are interfering with yours (signal-to-noise ratio ${WIFI_SNR} dB — below ${THRESH_WIFI_SNR_LOW_DB} dB is noisy). Try switching to a less crowded channel in your router settings."
-  fi
+  # G2/G3 — gateway loss.
   if loss_at_least "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
-    if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] && [ "$WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_G1_DBM" ]; then
-      add_diag critical G1 "You're losing packets between your Mac and your router, and your WiFi signal is weak — the WiFi link is the bottleneck, not the router or the ISP. Move closer to the router or switch WiFi channel."
-    else
-      add_diag critical G2 "You're losing packets between your Mac and your router even though the WiFi signal is strong — the router itself is misbehaving. Try rebooting it (unplug for 30 seconds, plug back in)."
-    fi
+    add_diag critical G2 "You're losing packets between your Mac and your router (${GW_LOSS}% loss) — the connection between your Mac and your router is severely degraded. Try moving closer to the router or rebooting it (unplug for 30 seconds, plug back in). On ethernet, check the cable."
   elif loss_at_least "$GW_LOSS" "$LOSS_WARN_PCT"; then
-    # G3 — the band under G1/G2's critical floor. Previously this coloured
-    # the Report card's Router row yellow and did nothing else: because
-    # ok()/warn()/bad() are pure printers and only add_diag moves
-    # MAX_SEVERITY, 15% loss to your own router exited 0 under the headline
-    # "Nothing obviously wrong". At that rate every page load stalls on a
-    # retransmit and video calls break up, which is precisely the state a
-    # user describes as "the internet is down".
-    add_diag warn G3 "Your Mac is losing about ${GW_LOSS}% of the packets it sends to your own router — not enough to break the connection outright, but enough that web pages stall for a second or two and video calls break up. On WiFi this is usually signal or interference: move closer, or switch channel. On ethernet, suspect the cable or the port."
+    # G3 — the band under G1's critical floor.
+    add_diag warn G3 "Your Mac is losing about ${GW_LOSS}% of the packets it sends to your own router — not enough to break the connection outright, but enough that web pages stall for a second or two and video calls break up. Try moving closer to your router or rebooting it. On ethernet, check the cable."
   fi
 
   # P1/P2 — public unreachable. The gateway guard was `== 0` exactly until
@@ -77,6 +61,16 @@ diagnosis_run() {
   # without it a skipped-DNS run would accuse a healthy resolver.
   if [ -n "$DNS_LINES" ] && [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
     add_diag warn D1 "The internet works but some name lookups are failing — your DNS server is flaky. Switch your DNS to 1.1.1.1 (Cloudflare) or 8.8.8.8 (Google) in System Settings → Network → Details → DNS."
+  fi
+
+  # D3 — slow DNS resolver (> 250 ms)
+  if [ -n "$SYS_RES_MS" ] && is_numeric "$SYS_RES_MS" && [ "$SYS_RES_MS" -gt "$THRESH_DNS_LATENCY_WARN_MS" ] && [ "${DNS_OK:-0}" -eq 1 ]; then
+    add_diag warn D3 "Your DNS server ($SYS_RES) is very slow to respond (${SYS_RES_MS} ms) — every new website or link you click will pause before opening. Switch your DNS to 1.1.1.1 (Cloudflare) or 8.8.8.8 (Google) in System Settings → Network → Details → DNS for noticeably snappier browsing."
+  fi
+
+  # D4 — DNS hijacking / search redirection
+  if [ -n "${DNS_NXDOMAIN_HIJACK_IP:-}" ]; then
+    add_diag warn D4 "Your internet provider is intercepting mistyped website addresses and redirecting them to a search/advertising page ($DNS_NXDOMAIN_HIJACK_IP) instead of returning an error. Switch your DNS to 1.1.1.1 or 8.8.8.8 or turn on Encrypted DNS (DNS-over-HTTPS) to prevent ISP tracking."
   fi
 
   # B1/B2 — bufferbloat at gateway or ISP hop.
@@ -112,6 +106,11 @@ diagnosis_run() {
       tcp6_str=$([ "$IPV6_TCP_OK" -eq 1 ] && echo OK || echo FAIL)
       add_diag warn V6-1 "Big sites (Google, YouTube, Cloudflare-hosted apps) feel sluggish for the first second of every page load — your network has a half-working modern-internet (IPv6) setup. Your Mac tries the new way, waits ~250 ms for it to fail, then falls back to the old way. Reboot the router; if it persists, ask your ISP whether IPv6 is actually enabled (technical: loss ${IPV6_PING_LOSS}%, AAAA ${aaaa_str}, TCP6 ${tcp6_str} — Happy Eyeballs is masking the failure)."
     fi
+  fi
+
+  # V6-2 — unresponsive IPv6 DNS resolver causing fallback stalls
+  if [ -n "${IPV6_DNS_FAIL:-}" ] && [ "${DNS_OK:-0}" -eq 1 ]; then
+    add_diag warn V6-2 "Your router gave your Mac an IPv6 DNS server ($IPV6_DNS_FAIL), but it isn't responding. Every website you visit pauses for 2 to 3 seconds while your Mac waits for IPv6 to time out before falling back to IPv4. Fix: Update your router's IPv6 settings or disable IPv6 in System Settings → Network."
   fi
 
   # VPN-1 — a VPN is carrying the default route. info, never a fault: the
@@ -163,10 +162,6 @@ diagnosis_run() {
     fi
   fi
 
-  # WS-1 — congested WiFi channel.
-  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt "$THRESH_WIFI_CHANNEL_NEIGHBOURS" ]; then
-    add_diag warn WS-1 "Your WiFi channel (${WIFI_SCAN_CURRENT_CHANNEL}) is shared with ${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} neighbouring networks — they all interfere with each other. Switch to a less-crowded channel in your router's WiFi settings (good 5 GHz choices most routers don't pick automatically: 149, 153, 157, 161)."
-  fi
 
   # WD-1 — WiFi flapping.
   if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt "$THRESH_WIFI_DISCONNECTS" ]; then

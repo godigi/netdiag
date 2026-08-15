@@ -29,10 +29,12 @@ mtu_run() {
   done
   if [ -n "$MTU_PATH_SIZE" ]; then
     MTU_EFFECTIVE=$((MTU_PATH_SIZE + 28))
-    if [ "$MTU_EFFECTIVE" -ge 1500 ]; then
-      ok "Effective path MTU: ${MTU_EFFECTIVE} (full ethernet frames pass DF)"
+    if [ "$MTU_EFFECTIVE" -ge 1480 ]; then
+      ok "Effective path MTU: ${MTU_EFFECTIVE} (standard ethernet / PPPoE frames pass DF)"
+    elif [ "$MTU_EFFECTIVE" -ge 1400 ]; then
+      ok "Effective path MTU: ${MTU_EFFECTIVE} (tunneled / VPN MTU)"
     else
-      warn "Effective path MTU: ${MTU_EFFECTIVE} (< 1500) — likely PPPoE / VPN / tunnel clamp."
+      warn "Effective path MTU: ${MTU_EFFECTIVE} (< 1400) — likely restricted MTU / tunnel clamp."
     fi
   else
     bad "PMTU probe: even 1228-byte frames fail with DF. Severe MTU issue or DF stripped."

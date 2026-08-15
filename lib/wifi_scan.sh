@@ -51,9 +51,6 @@ wifi_scan_run() {
     printf '%s\n' "$neighbor_chans" | sort | uniq -c | sort -rn | head -5 \
       | awk '{printf "      ch %-4s × %d\n", $2, $1}' | log_pipe
   fi
-  if [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
-    warn "Your channel has $WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS other APs — consider switching."
-  fi
 
   if [ -n "${NETDIAG_PAR_VARS:-}" ]; then
     setvar WIFI_SCAN_CURRENT_CHANNEL "$WIFI_SCAN_CURRENT_CHANNEL"

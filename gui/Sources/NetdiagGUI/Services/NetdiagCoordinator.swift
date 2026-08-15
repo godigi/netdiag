@@ -26,6 +26,8 @@ final class NetdiagCoordinator {
     /// Owned here so one instance is shared by every view via the
     /// environment, instead of each view reading `Defaults` for itself.
     let appSettings = AppSettings()
+    /// Automated update checker against GitHub releases.
+    let updateChecker = UpdateChecker()
     /// The run in flight, phase by phase. Reset at the start of every run
     /// and fed from the child's fd-3 stream as it arrives.
     let progress = ScanProgress()
@@ -101,6 +103,12 @@ final class NetdiagCoordinator {
         // it does.
         rulesCatalog.ensureLoaded()
         if Defaults.monitoringEnabled { monitor.start() }
+
+        // Check for updates daily in background after initial startup delay
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.updateChecker.performDailyCheck()
+        }
     }
 
     func stop() {
@@ -193,7 +201,8 @@ final class NetdiagCoordinator {
         // the primary detector — so nudge it to resample now rather than
         // letting the flag and public IP sit stale for ten seconds.
         if case .pathChanged(let satisfied, _) = event, !satisfied { return }
-        log.debug("network event — refreshing history")
+        log.debug("network event — refreshing history and forcing monitor refresh")
+        monitor.forceRefresh()
         Task { await history.load() }
     }
 
@@ -257,18 +266,12 @@ final class NetdiagCoordinator {
                 guard !Task.isCancelled else { return }
                 if adoptAsReport {
                     self.latestRun = result
-                    // Not required for correctness — `reportSource` prefers
-                    // `.live` no matter which of the two was written last,
-                    // so a stale `hydratedReport` left in place would never
-                    // render again regardless. This is about memory: a
-                    // `RunDetail` carries `rawJSON`, the full `--show`
-                    // response, and there is no reason to keep holding that
-                    // once nothing can display it.
                     self.hydratedReport = nil
                     self.alerts.evaluate(run: result.snapshot)
-                } else {
-                    self.latestSpeedTest = result.snapshot.speedtest
-                    self.latestSpeedTestAt = Date()
+                }
+                if let st = result.snapshot.speedtest, st.downMbps != nil {
+                    self.latestSpeedTest = st
+                    self.latestSpeedTestAt = result.finishedAt
                 }
                 // The run appended itself to baseline.jsonl, so the charts
                 // and the network list are one record out of date until

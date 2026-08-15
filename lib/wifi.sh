@@ -96,9 +96,6 @@ wifi_run() {
         else                              bad  "SNR very low (${WIFI_SNR} dB) — heavy interference"
         fi
       fi
-    else
-      warn "Rich WiFi metrics (RSSI/noise/channel) need sudo. Re-run as:"
-      info "sudo netdiag    # for RSSI, noise, channel, PHY, tx rate"
     fi
 
     # macOS Tahoe redacts SSID/BSSID by default for unprivileged callers.

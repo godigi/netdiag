@@ -81,7 +81,19 @@ All notable changes to `netdiag` are recorded here. Format follows
   - CI gained a broken-jq smoke test: `jq` is shadowed by a failing stub
     earlier in `PATH` than either Homebrew prefix — jq is present and
     resolves, it just fails — and a real `--json --quick` run is
-    asserted to exit anything but 3 and to parse with `python3`.
+## [0.9.1] - 2026-08-15
+
+Adds GitHub auto-update checks to the GUI, new layperson-tailored diagnostics for DNS and IPv6, router gateway admin quick access, and speed test retention.
+
+### Added
+
+- **GitHub Auto-Update Capability**: Daily automated background update checks against `godigi/netdiag` releases and in-app updating/relaunching from Settings.
+- **`D3` Diagnostic**: Slow DNS resolver latency warning with actionable recommendation for Cloudflare (1.1.1.1) / Google (8.8.8.8).
+- **`D4` Diagnostic**: DNS NXDOMAIN hijacking and ISP search redirection detection.
+- **`V6-2` Diagnostic**: Dead IPv6 DNS resolver fallback delay warning.
+- **`double-nat` Alert**: Plain-English alert and recommendation for chained home routers (Double NAT).
+- **Router Gateway Admin Access**: Clickable router gateway IP in dropdown to instantly open the router admin page.
+- **Speed Test Retention**: Retains speed test metrics permanently in memory and dropdown view across scans.
 
 ## [0.9.0] - 2026-08-12
 

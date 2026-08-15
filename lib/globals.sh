@@ -104,6 +104,9 @@ MTU_EFFECTIVE=""
 DNS_OK=0
 SYS_RES=""               # first configured nameserver — what dig is aimed at
 SYS_RES_ALL=""           # every configured nameserver, deduped, in order
+SYS_RES_MS=""            # primary resolver response latency in ms
+DNS_NXDOMAIN_HIJACK_IP="" # IP returned for non-existent domain (if hijacked)
+IPV6_DNS_FAIL=""         # unresponsive IPv6 nameserver (if any)
 DNS_LINES=""             # one "resolver|name|answer|OK|FAIL" per line
 
 # IPv6 (lib/ipv6.sh)

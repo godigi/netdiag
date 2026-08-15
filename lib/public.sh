@@ -14,7 +14,7 @@ public_run() {
   hdr "Public reachability"
   PUBLIC_CHECKED=1
   local pub_out captive
-  pub_out="$(curl -s -m 4 https://ifconfig.co/json 2>/dev/null)"
+  pub_out="$(curl -4 -s -m 4 https://ifconfig.co/json 2>/dev/null || curl -s -m 4 https://ifconfig.co/json 2>/dev/null)"
   if [ -n "$pub_out" ]; then
     PUBLIC_OK=1
     PUB_IP="$(printf '%s' "$pub_out"   | sed -n 's/.*"ip": *"\([^"]*\)".*/\1/p')"

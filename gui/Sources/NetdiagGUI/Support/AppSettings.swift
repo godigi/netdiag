@@ -65,6 +65,9 @@ final class AppSettings {
     var hasOnboarded: Bool {
         didSet { Defaults.hasOnboarded = hasOnboarded }
     }
+    var autoCheckUpdates: Bool {
+        didSet { Defaults.autoCheckUpdates = autoCheckUpdates }
+    }
 
     /// Pass-through, not a preference: the on-demand latency test's own
     /// sampling window. See `Defaults.latencyTestInterval` for why it
@@ -93,5 +96,6 @@ final class AppSettings {
         binaryPath = Defaults.binaryPath
         disabledAlerts = Defaults.disabledAlerts
         hasOnboarded = Defaults.hasOnboarded
+        autoCheckUpdates = Defaults.autoCheckUpdates
     }
 }

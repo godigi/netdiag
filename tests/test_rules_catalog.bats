@@ -278,7 +278,7 @@ assert len(ids) == len(set(ids)), sorted(set(x for x in ids if ids.count(x) > 1)
   # — see the comment above the @test block.
   local extracted_count
   extracted_count="$(printf '%s\n' "$extracted" | grep -c '.')"
-  [ "$extracted_count" -ge 30 ]
+  [ "$extracted_count" -ge 25 ]
 
   run "$NETDIAG" --rules-catalog
   [ "$status" -eq 0 ]

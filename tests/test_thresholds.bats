@@ -112,32 +112,26 @@ setup() {
 # -70 is "your signal is bad enough to explain the packets going missing".
 # Collapsing them would change which fix the user is told to try.
 
-@test "W1 and G1 read different RSSI cutoffs" {
-  [ "$THRESH_WIFI_RSSI_WEAK_DBM" -ne "$THRESH_WIFI_RSSI_G1_DBM" ]
-  [ "$THRESH_WIFI_RSSI_WEAK_DBM" -lt "$THRESH_WIFI_RSSI_G1_DBM" ]
-}
-
-@test "at -72 dBm with gateway loss, G1 blames the radio while W1 stays quiet" {
+@test "at 25% gateway loss, G2 fires as critical while G3 stays quiet" {
   # shellcheck source=../lib/diagnosis.sh
   . "$REPO/lib/diagnosis.sh"
-  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-72 GW_LOSS=25 PUBLIC_OK=1
-  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
-  diagnosis_run >/dev/null
-  local rules=" ${DIAG_RULE[*]} "
-  [[ "$rules" == *" G1 "* ]]
-  [[ "$rules" != *" G2 "* ]]
-  [[ "$rules" != *" W1 "* ]]
-}
-
-@test "at -60 dBm the same loss blames the router instead" {
-  # shellcheck source=../lib/diagnosis.sh
-  . "$REPO/lib/diagnosis.sh"
-  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-60 GW_LOSS=25 PUBLIC_OK=1
+  GATEWAY=192.168.1.1 IS_WIFI=1 GW_LOSS=25 PUBLIC_OK=1
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
   local rules=" ${DIAG_RULE[*]} "
   [[ "$rules" == *" G2 "* ]]
-  [[ "$rules" != *" G1 "* ]]
+  [[ "$rules" != *" G3 "* ]]
+}
+
+@test "at 10% gateway loss, G3 fires as warn while G2 stays quiet" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.1.1 IS_WIFI=1 GW_LOSS=10 PUBLIC_OK=1
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  local rules=" ${DIAG_RULE[*]} "
+  [[ "$rules" == *" G3 "* ]]
+  [[ "$rules" != *" G2 "* ]]
 }
 
 @test "raising a threshold in one place changes the rule that reads it" {

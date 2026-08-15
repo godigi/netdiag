@@ -62,7 +62,12 @@ FEATURES = [
     "show",
     "redact",
     "speed-only",
+    "dns-only",
+    "bufferbloat-only",
+    "ping-only",
     "watcher",
+    "watcher-status",
+    "prune-history",
     "rules-catalog",
 ]
 

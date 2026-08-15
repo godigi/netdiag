@@ -22,7 +22,7 @@ setup() {
   TMP="$BATS_TEST_TMPDIR"
   LOG_DIR="$TMP/net-diag"
   LOG="/dev/null"
-  NETDIAG_VERSION="0.9.0"
+  NETDIAG_VERSION="$(sed -n 's/^NETDIAG_VERSION="\([^"]*\)".*/\1/p' "$REPO/bin/netdiag" | head -1)"
   TARGET=""
   RUN_MODE="quick"
   TIMESTAMP_ISO="2026-01-01T00:00:00Z"

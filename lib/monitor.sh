@@ -275,6 +275,17 @@ _mon_probe_tcp() {
   MON_TCP_OK="$any"
 }
 
+_mon_probe_internet() {
+  MON_INET_LOSS=""; MON_INET_RTT=""
+  [ "$MON_LINK_UP" -eq 1 ] || return 0
+  local out
+  out="$(with_timeout 3 ping -q -c 5 -i 0.2 1.1.1.1 2>/dev/null || true)"
+  MON_INET_LOSS="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
+  MON_INET_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  is_numeric "$MON_INET_LOSS" || MON_INET_LOSS=""
+  is_numeric "$MON_INET_RTT"  || MON_INET_RTT=""
+}
+
 _mon_probe_wifi_signal() {
   MON_WIFI_RSSI=""; MON_WIFI_NOISE=""; MON_WIFI_SNR=""; MON_WIFI_CHAN=""
   [ "$MON_IFACE_TYPE" = "wifi" ] || return 0
@@ -304,7 +315,7 @@ _mon_probe_public() {
   MON_PUBLIC_OK=""; MON_CAPTIVE=""
   [ "$MON_LINK_UP" -eq 1 ] || return 0
   local out
-  out="$(curl -s -m 4 https://ifconfig.co/json 2>/dev/null || true)"
+  out="$(curl -4 -s -m 4 https://ifconfig.co/json 2>/dev/null || curl -s -m 4 https://ifconfig.co/json 2>/dev/null || true)"
   if [ -n "$out" ]; then
     MON_PUBLIC_OK=1
     MON_PUB_IP="$(printf   '%s' "$out" | sed -n 's/.*"ip": *"\([^"]*\)".*/\1/p')"
@@ -369,12 +380,7 @@ _mon_rules() {
   # ping numbers are not to be trusted, and the alert engine — whose job
   # this is — declines to notify. Same facts, one place to decide.
   if loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
-    if [ "$MON_IFACE_TYPE" = "wifi" ] && [ -n "$MON_WIFI_RSSI" ] \
-       && [ "$MON_WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_G1_DBM" ]; then
-      _mon_add_rule critical G1
-    else
-      _mon_add_rule critical G2
-    fi
+    _mon_add_rule critical G2
   elif loss_at_least "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
     _mon_add_rule warn G3
   fi
@@ -393,14 +399,6 @@ _mon_rules() {
   # D1 — resolution failing while the internet itself is reachable.
   if [ "${MON_DNS_OK:-}" = "0" ] && [ "${MON_PUBLIC_OK:-}" = "1" ]; then
     _mon_add_rule warn D1
-  fi
-
-  if [ "$MON_IFACE_TYPE" = "wifi" ] && [ -n "$MON_WIFI_RSSI" ] \
-     && [ "$MON_WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then
-    _mon_add_rule warn W1
-  fi
-  if [ -n "$MON_WIFI_SNR" ] && [ "$MON_WIFI_SNR" -lt "$THRESH_WIFI_SNR_LOW_DB" ]; then
-    _mon_add_rule warn W2
   fi
 
   if [ "${MON_CAPTIVE:-}" = "1" ]; then
@@ -457,6 +455,8 @@ _mon_emit() {
   NETDIAG_MON_VPN_NAME="$MON_VPN_NAME" \
   NETDIAG_MON_GW_LOSS="$MON_GW_LOSS" \
   NETDIAG_MON_GW_RTT="$MON_GW_RTT" \
+  NETDIAG_MON_INET_LOSS="$MON_INET_LOSS" \
+  NETDIAG_MON_INET_RTT="$MON_INET_RTT" \
   NETDIAG_MON_WIFI_RSSI="$MON_WIFI_RSSI" \
   NETDIAG_MON_WIFI_NOISE="$MON_WIFI_NOISE" \
   NETDIAG_MON_WIFI_SNR="$MON_WIFI_SNR" \
@@ -551,7 +551,10 @@ monitor_run() {
       MON_REFRESHED+="fast "
       _mon_probe_link
       _mon_probe_vpn
-      [ "$MON_LINK_UP" -eq 1 ] && _mon_probe_gateway
+      if [ "$MON_LINK_UP" -eq 1 ]; then
+        _mon_probe_gateway
+        _mon_probe_internet
+      fi
     fi
 
     network_changed=0

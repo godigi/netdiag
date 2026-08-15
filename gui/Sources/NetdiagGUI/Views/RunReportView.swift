@@ -141,12 +141,12 @@ struct RunReportView: View {
         out.append(Row(label: "Name lookups (DNS)",
                        value: s.dns.isEmpty ? "not measured"
                             : "\(s.dns.filter(\.ok).count) of \(s.dns.count) resolvers OK",
-                       health: health(["D1", "DH-2"], ["dns", "dhcp"]),
+                       health: health(["D1", "D3", "D4", "DH-2"], ["dns", "dhcp"]),
                        metricKey: nil))
-        if let wifi = s.wifi {
+        if let wifi = s.wifi, let rssi = wifi.rssi {
             out.append(Row(label: "Wi-Fi signal",
-                           value: wifi.rssi.map { "\($0) dBm" } ?? "needs sudo to measure",
-                           health: health(["W1", "W2", "WS-1", "WD-1"], ["wifi"]),
+                           value: "\(rssi) dBm",
+                           health: health(["WD-1"], ["wifi"]),
                            metricKey: "wifi_rssi_dbm"))
         }
         out.append(Row(label: "Under load",

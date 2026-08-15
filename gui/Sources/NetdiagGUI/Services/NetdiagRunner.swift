@@ -89,6 +89,9 @@ struct NetdiagRunner {
         /// the caller must not adopt it as the current report — see Part B
         /// of docs/design/watching-it-happen.md.
         case speedOnly
+        case dnsOnly
+        case bufferbloatOnly
+        case pingOnly
 
         var arguments: [String] {
             switch self {
@@ -96,6 +99,9 @@ struct NetdiagRunner {
             case .quick:          return ["--json", "--no-gping", "--quick"]
             case .alertTriggered: return ["--json", "--no-gping", "--no-bufferbloat", "--no-speed"]
             case .speedOnly:      return ["--json", "--no-gping", "--speed-only"]
+            case .dnsOnly:        return ["--json", "--no-gping", "--dns-only"]
+            case .bufferbloatOnly: return ["--json", "--no-gping", "--bufferbloat-only"]
+            case .pingOnly:       return ["--json", "--no-gping", "--ping-only"]
             }
         }
 
@@ -108,6 +114,9 @@ struct NetdiagRunner {
             case .quick:          return "about 10 seconds"
             case .alertTriggered: return "about 30 seconds"
             case .speedOnly:      return "about 30 seconds"
+            case .dnsOnly:        return "about 5 seconds"
+            case .bufferbloatOnly: return "about 20 seconds"
+            case .pingOnly:       return "about 5 seconds"
             }
         }
     }
@@ -173,17 +182,57 @@ struct NetdiagRunner {
         return out
     }
 
-    /// `netdiag --history`, decoded.
-    static func history(limit: Int = 0) async throws -> HistoryDocument {
+    /// `netdiag --history`, decoded with optional filters.
+    static func history(limit: Int = 0, network: String? = nil, since: String? = nil, mode: String? = nil) async throws -> HistoryDocument {
         try await CapabilityStore.shared.requireSupport(for: .history)
-        let arg = limit > 0 ? "--history=\(limit)" : "--history"
-        let (out, _, status) = try await execute(arguments: [arg])
+        var args: [String] = []
+        if limit > 0 { args.append("--history=\(limit)") } else { args.append("--history") }
+        if let network, !network.isEmpty { args.append("--history-network=\(network)") }
+        if let since, !since.isEmpty { args.append("--history-since=\(since)") }
+        if let mode, !mode.isEmpty { args.append("--history-mode=\(mode)") }
+
+        let (out, _, status) = try await execute(arguments: args)
         if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
         guard let data = out.data(using: .utf8),
               let doc = try? JSONDecoder().decode(HistoryDocument.self, from: data) else {
             throw NetdiagError.badJSON(String(out.prefix(200)))
         }
         return doc
+    }
+
+    /// `netdiag --prune-history[=DAYS]`.
+    static func pruneHistory(days: Int = 90) async throws {
+        let arg = days != 90 ? "--prune-history=\(days)" : "--prune-history"
+        let (out, _, status) = try await execute(arguments: [arg])
+        if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
+    }
+
+    /// Structured output of `netdiag --watcher-status`.
+    struct WatcherStatus: Decodable, Sendable {
+        var installed: Bool = false
+        var plistPath: String?
+        var intervalS: Int?
+        var lastRunTimestamp: String?
+        var lastRunStatus: String = "unknown"
+
+        enum CodingKeys: String, CodingKey {
+            case installed
+            case plistPath = "plist_path"
+            case intervalS = "interval_s"
+            case lastRunTimestamp = "last_run_timestamp"
+            case lastRunStatus = "last_run_status"
+        }
+    }
+
+    /// `netdiag --watcher-status`, decoded.
+    static func watcherStatus() async throws -> WatcherStatus {
+        let (out, _, status) = try await execute(arguments: ["--watcher-status"])
+        if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
+        guard let data = out.data(using: .utf8),
+              let ws = try? JSONDecoder().decode(WatcherStatus.self, from: data) else {
+            throw NetdiagError.badJSON(String(out.prefix(200)))
+        }
+        return ws
     }
 
     /// `netdiag --show=<id>`, decoded, with the bytes kept alongside.

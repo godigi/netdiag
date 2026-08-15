@@ -110,11 +110,11 @@ THRESH_WIFI_DISCONNECTS=3
 THRESH_IPV6_LOSS_PCT=20
 
 # ── Path MTU ─────────────────────────────────────────────────────────────
-# M1 — anything under the standard 1500 is a warning; under this floor it
-# is a critical, because at that point ordinary HTTPS responses stop
-# fitting and pages hang half-loaded rather than merely slowing down.
-THRESH_MTU_STANDARD=1500
-THRESH_MTU_CRIT=1400
+# M1 — effective MTU below 1400 is a warning (standard PPPoE is 1492/1480,
+# standard WireGuard is 1420); under 1280 (IPv6 minimum) it is a critical,
+# because at that point ordinary HTTPS responses stop fitting.
+THRESH_MTU_STANDARD=1400
+THRESH_MTU_CRIT=1280
 
 # ── Clock ────────────────────────────────────────────────────────────────
 # NT-1 — drift in seconds. Past the critical floor, certificate validity
@@ -122,6 +122,12 @@ THRESH_MTU_CRIT=1400
 # the range where some authenticated services object and most don't.
 THRESH_NTP_DRIFT_CRIT_S=30
 THRESH_NTP_DRIFT_WARN_S=1
+
+# ── DNS ──────────────────────────────────────────────────────────────────
+# D3 — warn when the primary resolver takes > 250 ms to answer. Public resolvers
+# like Cloudflare (1.1.1.1) and Google (8.8.8.8) answer in 10-30 ms; taking > 250 ms
+# makes every new website and link click noticeably stall before loading.
+THRESH_DNS_LATENCY_WARN_MS=250
 
 # ── DHCP ─────────────────────────────────────────────────────────────────
 # DH-1 — warn when the lease has less than an hour left. Renewal is

@@ -60,7 +60,7 @@ monitor_rules() {
 # reach. Everything the monitor cannot measure (NT-1, DI-*, DH-1, BL-1,
 # M1, MT1, V6-1, B1/B2, WS-1, WD-1) is scan-only by design and must not be
 # claimed by the stream.
-MONITOR_VOCABULARY='^(N1|G1|G2|G3|P1|P2|D1|W1|W2|TCP-1|VPN-1)$'
+MONITOR_VOCABULARY='^(N1|G1|G2|G3|P1|P2|D1|TCP-1|VPN-1)$'
 
 scanner_rules() {
   . "$REPO/lib/diagnosis.sh"
@@ -77,20 +77,12 @@ scanner_rules() {
   [ -z "$(monitor_rules)" ]
 }
 
-@test "parity: heavy gateway loss on a strong signal blames the router (G2)" {
-  reset_state; MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-60 WIFI_RSSI=-60
+@test "parity: heavy gateway loss produces G2 on both" {
+  reset_state; MON_GW_LOSS=25 GW_LOSS=25
   local m s; m="$(monitor_rules)"; reset_state
-  MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-60 WIFI_RSSI=-60; s="$(scanner_rules)"
+  MON_GW_LOSS=25 GW_LOSS=25; s="$(scanner_rules)"
   [ "$m" = "$s" ]
   [[ "$m" == *"G2"* ]]
-}
-
-@test "parity: the same loss on a weak signal blames the radio (G1)" {
-  reset_state; MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-72 WIFI_RSSI=-72
-  local m; m="$(monitor_rules)"; reset_state
-  MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-72 WIFI_RSSI=-72
-  [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"G1"* ]]
 }
 
 @test "parity: loss in the warn band produces G3 on both" {
@@ -101,12 +93,9 @@ scanner_rules() {
 }
 
 @test "parity: on an ICMP-filtering network both name TCP-1 alongside the loss rule" {
-  # The monitor must not quietly withhold G2 here. Suppression is the alert
-  # engine's job; withholding the rule would make the stream disagree with
-  # a scan taken one second later on the same link.
-  reset_state; MON_GW_LOSS=100 GW_LOSS=100 MON_WIFI_RSSI=-50 WIFI_RSSI=-50
+  reset_state; MON_GW_LOSS=100 GW_LOSS=100
   local m; m="$(monitor_rules)"; reset_state
-  MON_GW_LOSS=100 GW_LOSS=100 MON_WIFI_RSSI=-50 WIFI_RSSI=-50
+  MON_GW_LOSS=100 GW_LOSS=100
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"TCP-1"* ]]
   [[ "$m" == *"G2"* ]]
@@ -138,20 +127,6 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state; MON_DNS_OK=0 DNS_OK=0
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"D1"* ]]
-}
-
-@test "parity: a weak signal is W1 on both" {
-  reset_state; MON_WIFI_RSSI=-80 WIFI_RSSI=-80
-  local m; m="$(monitor_rules)"; reset_state; MON_WIFI_RSSI=-80 WIFI_RSSI=-80
-  [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"W1"* ]]
-}
-
-@test "parity: a noisy channel is W2 on both" {
-  reset_state; MON_WIFI_SNR=10 WIFI_SNR=10
-  local m; m="$(monitor_rules)"; reset_state; MON_WIFI_SNR=10 WIFI_SNR=10
-  [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"W2"* ]]
 }
 
 @test "parity: an active VPN is VPN-1 on both" {

@@ -57,9 +57,17 @@ final class ScanProgress {
         var mbps: Double?
     }
 
+    struct Bufferbloat: Equatable {
+        var stage: String
+        var progress: Double?
+        var gwMs: Double?
+        var inetMs: Double?
+    }
+
     private(set) var mode: String?
     private(set) var phases: [Phase] = []
     private(set) var speed: Speed?
+    private(set) var bufferbloat: Bufferbloat?
     private(set) var exitCode: Int32?
     /// True once the CLI has announced a plan. False through a whole run
     /// means the installed netdiag predates `--progress` — the UI falls
@@ -79,6 +87,7 @@ final class ScanProgress {
         mode = nil
         phases = []
         speed = nil
+        bufferbloat = nil
         exitCode = nil
         hasPlan = false
         isFinished = false
@@ -140,6 +149,10 @@ final class ScanProgress {
         case "speed":
             speed = Speed(stage: event.stage ?? "", progress: event.progress,
                           mbps: event.mbps)
+
+        case "bufferbloat":
+            bufferbloat = Bufferbloat(stage: event.stage ?? "", progress: event.progress,
+                                      gwMs: event.gwMs, inetMs: event.inetMs)
 
         case "run":
             if event.state == "done" { finish(exit: event.exit) }
@@ -215,9 +228,13 @@ struct ProgressEvent: Decodable, Sendable {
     var stage: String?
     var progress: Double?
     var mbps: Double?
+    var gwMs: Double?
+    var inetMs: Double?
 
     enum CodingKeys: String, CodingKey {
         case t, name, state, phases, mode, rc, ms, why, exit, stage, progress, mbps
+        case gwMs = "gw_ms"
+        case inetMs = "inet_ms"
     }
 }
 
@@ -241,5 +258,7 @@ extension ProgressEvent {
         stage = c.lenient(.stage)
         progress = c.lenient(.progress)
         mbps = c.lenient(.mbps)
+        gwMs = c.lenient(.gwMs)
+        inetMs = c.lenient(.inetMs)
     }
 }

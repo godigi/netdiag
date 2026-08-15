@@ -223,3 +223,36 @@ spin() {
   diagnosis_run >/dev/null
   [[ " ${DIAG_RULE[*]:-} " == *" V6-1 "* ]]
 }
+
+@test "D3 fires when primary DNS latency exceeds threshold" {
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 SYS_RES="192.168.15.1" SYS_RES_MS=300
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]:-} " == *" D3 "* ]]
+}
+
+@test "D3 stays silent when primary DNS latency is fast" {
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 SYS_RES="1.1.1.1" SYS_RES_MS=25
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]:-} " != *" D3 "* ]]
+}
+
+@test "D4 fires when DNS NXDOMAIN is hijacked to an IP" {
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 SYS_RES="192.168.15.1" DNS_NXDOMAIN_HIJACK_IP="198.105.254.11"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]:-} " == *" D4 "* ]]
+}
+
+@test "V6-2 fires when configured IPv6 DNS resolver is unresponsive" {
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 IPV6_DNS_FAIL="2001:4860:4860::8888"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]:-} " == *" V6-2 "* ]]
+}
+

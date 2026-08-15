@@ -70,6 +70,53 @@ struct SettingsView: View {
                     ForEach(MenuBarStyle.allCases) { Text($0.label).tag($0) }
                 }
             }
+
+            Section("Updates") {
+                Toggle("Automatically check for updates daily", isOn: $appSettings.autoCheckUpdates)
+
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(coordinator.updateChecker.statusMessage)
+                            .font(.callout)
+                            .fontWeight(coordinator.updateChecker.hasUpdate ? .semibold : .regular)
+                            .foregroundStyle(coordinator.updateChecker.hasUpdate ? .orange : .primary)
+
+                        if let last = coordinator.updateChecker.lastCheckedDate {
+                            Text("Last checked: \(RelativeTime.string(from: last))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if coordinator.updateChecker.isChecking {
+                        ProgressView().controlSize(.small)
+                    } else if coordinator.updateChecker.isDownloading {
+                        ProgressView(value: coordinator.updateChecker.downloadProgress)
+                            .progressViewStyle(.linear)
+                            .frame(width: 80)
+                    } else if coordinator.updateChecker.hasUpdate {
+                        Button("Install Update") {
+                            coordinator.updateChecker.downloadAndInstallUpdate()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    } else {
+                        Button("Check Now") {
+                            coordinator.updateChecker.checkForUpdates(manual: true)
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                .padding(.vertical, 2)
+
+                if let err = coordinator.updateChecker.errorMessage {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
         }
         .formStyle(.grouped)
         // The monitor restarts once, when the window closes, rather than

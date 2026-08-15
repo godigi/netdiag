@@ -53,13 +53,14 @@ struct RunSnapshot: Decodable, Sendable {
     var dhcp: DHCP = .init()
     var mtr: MTR = .init()
     var timings: Timings = .init()
+    var suitability: Suitability?
     var diagnosis: [Diagnosis] = []
     var mostLikelyRootCause: String?
 
     enum CodingKeys: String, CodingKey {
         case version, timestamp, network, wifi, gateway, dns, traceroute
         case bufferbloat, mtu, ipv6, vpn, speedtest, ntp, dhcp, mtr, timings
-        case diagnosis
+        case suitability, diagnosis
         case runMode = "run_mode"
         case runID = "run_id"
         case interfaceInfo = "interface"
@@ -313,6 +314,20 @@ struct RunSnapshot: Decodable, Sendable {
         }
     }
 
+    struct Suitability: Decodable, Sendable {
+        var webBrowsing: String?
+        var videoCalls: String?
+        var gaming: String?
+        var largeDownloads: String?
+
+        enum CodingKeys: String, CodingKey {
+            case gaming
+            case webBrowsing = "web_browsing"
+            case videoCalls = "video_calls"
+            case largeDownloads = "large_downloads"
+        }
+    }
+
     /// The only prose the app displays about a network fault. `summary` is
     /// rendered verbatim; `rule` is the expert layer's link into
     /// docs/DIAGNOSIS-RULES.md.
@@ -320,9 +335,17 @@ struct RunSnapshot: Decodable, Sendable {
         var severity: String = "info"
         var rule: String?
         var summary: String = ""
+        var action: Action?
         var id: String { "\(rule ?? "?")-\(summary.prefix(24))" }
 
-        enum CodingKeys: String, CodingKey { case severity, rule, summary }
+        enum CodingKeys: String, CodingKey { case severity, rule, summary, action }
+
+        struct Action: Decodable, Sendable {
+            var id: String
+            var label: String
+            var hint: String?
+            var url: String?
+        }
 
         var health: Health {
             switch severity {

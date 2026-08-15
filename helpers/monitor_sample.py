@@ -136,6 +136,10 @@ def main() -> None:
             "loss_pct": _f("GW_LOSS"),
             "rtt_avg_ms": _f("GW_RTT"),
         },
+        "internet": {
+            "loss_pct": _f("INET_LOSS"),
+            "rtt_avg_ms": _f("INET_RTT"),
+        },
         "wifi": ({
             "rssi": _i("WIFI_RSSI"),
             "noise": _i("WIFI_NOISE"),

@@ -66,11 +66,9 @@ METRICS: list[tuple[str, str, str, float | None]] = [
     ("bufferbloat.gw_delta_ms",   "bufferbloat gw Δ",    "spike", 3.0),
     ("bufferbloat.inet_delta_ms", "bufferbloat inet Δ",  "spike", 3.0),
     ("mtu.effective",             "path MTU",            "change", None),
-    ("wifi.rssi",                 "WiFi RSSI",           "drop", 1.15),  # current < median * 1.15 → worse
     ("speedtest.down_mbps",       "speedtest down",      "drop", 0.5),
     ("speedtest.up_mbps",         "speedtest up",        "drop", 0.5),
     ("public.isp",                "ISP",                 "change", None),
-    ("wifi.channel",              "WiFi channel",        "change", None),
 ]
 
 

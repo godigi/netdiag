@@ -209,6 +209,22 @@ decides a critical diagnosis. It costs ~4 s.
 - Severity: `warn`
 - Recommendation: change resolver (1.1.1.1 or 8.8.8.8).
 
+### D3 — Slow DNS resolver latency
+
+- Trigger: `dns.resolver_ms > 250 AND dns.ok == true`
+- Severity: `warn`
+- Evidence: query response time in ms from primary system resolver.
+- Recommendation: change resolver to Cloudflare (1.1.1.1) or Google (8.8.8.8) in network settings.
+- Rationale: High DNS latency stalls initial TCP/TLS connections for every new domain or hyperlink clicked.
+
+### D4 — DNS hijacking and search redirection
+
+- Trigger: non-existent domain query returns an IP address instead of NXDOMAIN
+- Severity: `warn`
+- Evidence: redirected IP returned by system resolver.
+- Recommendation: switch to public DNS (1.1.1.1 / 8.8.8.8) or enable Encrypted DNS (DoH).
+- Rationale: ISPs intercept failed queries to show search ads or track user activity.
+
 ### B1 — Bufferbloat at gateway hop
 
 - Trigger: `bufferbloat.gw_grade ∈ {C, D, F}`
@@ -267,6 +283,13 @@ All of the below are implemented and can fire.
   (large-CDN, Google, Cloudflare) by exactly the timeout window before
   v4 wins, ~250 ms — enough to feel like "the internet is laggy" without
   any v4-side culprit.
+### V6-2 — Unresponsive IPv6 DNS resolver
+
+- Trigger: an IPv6 nameserver is configured in system settings but fails to respond while IPv4 DNS works.
+- Severity: `warn`
+- Evidence: unresponsive IPv6 nameserver address from `scutil --dns`.
+- Recommendation: update router IPv6 configuration or disable IPv6 in network settings if unsupported by ISP.
+- Rationale: macOS queries IPv6 DNS first, waiting 2–3 seconds for a timeout before falling back to IPv4.
 ### VPN-1 — VPN is carrying the default route
 
 - Trigger: `vpn.active == true` (any of: scutil --nc shows Connected,

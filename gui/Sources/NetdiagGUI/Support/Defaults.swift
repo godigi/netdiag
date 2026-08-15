@@ -62,9 +62,27 @@ enum Defaults {
         static let scanOnNewNetwork   = "scanOnNewNetwork"
         static let scanOnAlert        = "scanOnAlert"
         static let disabledAlerts     = "disabledAlerts"
+        static let autoCheckUpdates   = "autoCheckUpdates"
+        static let lastUpdateCheck    = "lastUpdateCheck"
+    }
+
+    // MARK: - Updates
+
+    static var autoCheckUpdates: Bool {
+        get { d.object(forKey: Key.autoCheckUpdates) as? Bool ?? true }
+        set { d.set(newValue, forKey: Key.autoCheckUpdates) }
+    }
+
+    static var lastUpdateCheck: Date? {
+        get { d.object(forKey: Key.lastUpdateCheck) as? Date }
+        set { d.set(newValue, forKey: Key.lastUpdateCheck) }
     }
 
     // MARK: - Monitoring
+
+    static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.9.1"
+    }
 
     static var monitoringEnabled: Bool {
         get { d.bool(forKey: Key.monitoringEnabled) }

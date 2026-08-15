@@ -109,7 +109,7 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 # itself. Unset it before anything downstream can read it.
 unset NETDIAG_RUN_ID
 
-NETDIAG_VERSION="0.9.0"
+NETDIAG_VERSION="0.9.1"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
@@ -357,6 +357,9 @@ Flags:
                     history as a speed-only run, so it adds a throughput
                     reading without counting as a check of your network's
                     health.
+  --dns-only        run only the DNS checks and resolvers probe
+  --bufferbloat-only run only the bufferbloat load test
+  --ping-only       run only gateway and internet latency / packet loss probes
   --log PATH        write the human-readable log to PATH (default
                     ~/net-diag/<timestamp>.log)
   --baseline        compare this run against medians of the last 10 runs
@@ -390,6 +393,8 @@ Modes (exit after running, don't run the normal check battery):
   --install-watcher        install a launchd plist that runs netdiag
                            every 15 min in the background.
   --uninstall-watcher      remove the launchd plist.
+  --watcher-status         print JSON status of the background watcher.
+  --prune-history[=DAYS]   prune history records older than DAYS (default 90).
   --version                print "netdiag VERSION" and exit.
   --capabilities           print one JSON object describing this install:
                            per-mode schema numbers, a feature list, and

@@ -3,7 +3,7 @@
 # 8.8.8.8 for apple.com, cloudflare.com, and (if set) $TARGET.
 #
 # Reads:  TARGET, DHCP_DNS_SERVERS
-# Writes: DNS_OK, DNS_LINES, SYS_RES
+# Writes: DNS_OK, DNS_LINES, SYS_RES, SYS_RES_ALL, SYS_RES_MS, DNS_NXDOMAIN_HIJACK_IP, IPV6_DNS_FAIL
 # Entry:  dns_run
 #
 # Safe to run in parallel — does not contend on the WAN link.
@@ -46,6 +46,43 @@ dns_run() {
   done
   [ "$dns_fail" -eq 0 ] && DNS_OK=1
 
+  # Latency check on primary system resolver
+  if [ -n "$SYS_RES" ]; then
+    local t0 t1 probe_ans
+    t0="${EPOCHREALTIME:-}"
+    probe_ans="$(with_timeout 3 dig +time=2 +tries=1 +short @"$SYS_RES" cloudflare.com 2>/dev/null | head -1 || true)"
+    t1="${EPOCHREALTIME:-}"
+    if [ -n "$t0" ] && [ -n "$t1" ] && [ -n "$probe_ans" ]; then
+      SYS_RES_MS="$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.0f", (b-a)*1000}')"
+    fi
+  fi
+
+  # NXDOMAIN hijacking probe against SYS_RES
+  if [ -n "$SYS_RES" ]; then
+    local nx_probe="probe-nx-$$-$RANDOM-$RANDOM.example.invalid"
+    local nx_ans
+    nx_ans="$(with_timeout 3 dig +time=2 +tries=1 +short @"$SYS_RES" "$nx_probe" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    if [ -n "$nx_ans" ]; then
+      DNS_NXDOMAIN_HIJACK_IP="$nx_ans"
+      warn "DNS hijacking detected: $SYS_RES resolved non-existent domain $nx_probe to $nx_ans"
+    fi
+  fi
+
+  # IPv6 nameserver check
+  if [ -n "$SYS_RES_ALL" ]; then
+    for r in $SYS_RES_ALL; do
+      if [[ "$r" == *":"* ]]; then
+        local v6_ans
+        v6_ans="$(with_timeout 3 dig +time=2 +tries=1 +short @"$r" apple.com 2>/dev/null | head -1 || true)"
+        if [ -z "$v6_ans" ]; then
+          IPV6_DNS_FAIL="$r"
+          warn "IPv6 DNS resolver $r is configured but not responding"
+          break
+        fi
+      fi
+    done
+  fi
+
   # If launched via launch_parallel, persist the writes back across the
   # subshell boundary. setvar is a no-op when called from a normal sync
   # function (no NETDIAG_PAR_VARS), so this is safe either way.
@@ -54,5 +91,8 @@ dns_run() {
     setvar DNS_LINES "$DNS_LINES"
     setvar SYS_RES "$SYS_RES"
     setvar SYS_RES_ALL "$SYS_RES_ALL"
+    setvar SYS_RES_MS "$SYS_RES_MS"
+    setvar DNS_NXDOMAIN_HIJACK_IP "$DNS_NXDOMAIN_HIJACK_IP"
+    setvar IPV6_DNS_FAIL "$IPV6_DNS_FAIL"
   fi
 }

@@ -336,6 +336,13 @@ final class MonitorStream {
 
     var isPausedForAnyReason: Bool { !pauseHolders.isEmpty }
 
+    /// Sends `SIGALRM` to force an immediate cycle refresh without waiting for timers.
+    func forceRefresh() {
+        guard let process, process.isRunning, !isPaused else { return }
+        kill(process.processIdentifier, SIGALRM)
+        log.debug("monitor refresh signaled (SIGALRM)")
+    }
+
     // MARK: - Reading
 
     /// Reads the pipe on a detached task and hands whole lines back to the
