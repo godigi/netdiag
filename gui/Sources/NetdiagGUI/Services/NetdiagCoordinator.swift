@@ -28,6 +28,8 @@ final class NetdiagCoordinator {
     let appSettings = AppSettings()
     /// Automated update checker against GitHub releases.
     let updateChecker = UpdateChecker()
+    /// macOS Location Services permission manager.
+    let locationPermissions = LocationPermissionStore()
     /// The run in flight, phase by phase. Reset at the start of every run
     /// and fed from the child's fd-3 stream as it arrives.
     let progress = ScanProgress()
@@ -141,16 +143,23 @@ final class NetdiagCoordinator {
     /// report landing a moment after a real one is inert, not a race worth
     /// closing.
     private func hydrateFromHistoryIfNeeded() async {
-        guard latestRun == nil, hydratedReport == nil else { return }
-        // `recentChecks(limit: 1)`, not a larger buffer: a `netdiag` new
-        // enough to stamp run ids stamps every run, so the newest already
-        // has one; one old enough not to stamps none, and no larger limit
-        // would find one either.
-        guard let id = history.recentChecks(limit: 1).compactMap(\.runID).first else { return }
-        do {
-            hydratedReport = try await details.detail(for: id)
-        } catch {
-            log.debug("cold-launch hydration skipped: \(error.localizedDescription, privacy: .public)")
+        if latestRun == nil, hydratedReport == nil {
+            if let id = history.recentChecks(limit: 1).compactMap(\.runID).first {
+                do {
+                    hydratedReport = try await details.detail(for: id)
+                } catch {
+                    log.debug("cold-launch hydration skipped: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+        if latestSpeedTest == nil {
+            if let st = hydratedReport?.run.speedtest, st.downMbps != nil {
+                latestSpeedTest = st
+                latestSpeedTestAt = hydratedReport?.run.timestamp.flatMap { HistoryDocument.iso.date(from: $0) }
+            } else if let speed = history.latestSpeedTest() {
+                latestSpeedTest = RunSnapshot.Speedtest(downMbps: speed.down, upMbps: speed.up)
+                latestSpeedTestAt = speed.date
+            }
         }
     }
 
@@ -447,11 +456,23 @@ final class NetdiagCoordinator {
         if let alert = alerts.activeSorted.first {
             return alert.body.isEmpty ? alert.title : alert.body
         }
-        if let cause = latestRun?.snapshot.mostLikelyRootCause, !cause.isEmpty {
-            return cause
-        }
         if let sample = monitor.latest, !sample.link.up {
             return "Your Mac has no network connection at all."
+        }
+        if let sample = monitor.latest, sample.status.severity == "critical" || sample.status.severity == "warn" {
+            for ruleID in sample.status.rules {
+                if let rule = rulesCatalog.catalog?[ruleID] {
+                    if let blurb = rule.blurb, !blurb.isEmpty {
+                        return blurb
+                    }
+                    if let title = rule.title, !title.isEmpty {
+                        return title
+                    }
+                }
+            }
+        }
+        if let cause = latestRun?.snapshot.mostLikelyRootCause, !cause.isEmpty {
+            return cause
         }
         if monitor.latest == nil && latestRun == nil { return "Starting up…" }
         return "Nothing obviously wrong — your network looks healthy."

@@ -23,6 +23,8 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
 
+                locationWarningBanner
+
                 if coordinator.isScanning {
                     ScanProgressView(progress: coordinator.progress)
                     Divider()
@@ -60,6 +62,58 @@ struct HomeView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .task {
+            coordinator.locationPermissions.refresh()
+        }
+    }
+
+    // MARK: - Location Banner
+
+    @ViewBuilder
+    private var locationWarningBanner: some View {
+        if isConnectedToWiFi && !coordinator.locationPermissions.isAuthorized {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "location.slash")
+                    .font(.title3)
+                    .foregroundStyle(.orange)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Wi-Fi network name & radio diagnostics are restricted")
+                        .font(.callout)
+                        .fontWeight(.medium)
+                    Text("macOS requires Location Services to display your network name and diagnose local radio strength. Basic fault isolation (Router vs ISP) remains active.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Button(coordinator.locationPermissions.isDeniedOrRestricted ? "Enable in Settings" : "Allow") {
+                    if coordinator.locationPermissions.isDeniedOrRestricted {
+                        coordinator.locationPermissions.openSystemSettings()
+                    } else {
+                        coordinator.locationPermissions.requestAuthorization()
+                    }
+                }
+                .controlSize(.small)
+            }
+            .padding(12)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.orange.opacity(0.3), lineWidth: 1)
+            )
+        }
+    }
+
+    private var isConnectedToWiFi: Bool {
+        if let isWiFi = coordinator.monitor.latest?.link.isWiFi {
+            return isWiFi
+        }
+        if let run = coordinator.latestRun {
+            return run.snapshot.wifi != nil
+        }
+        return true
     }
 
     // MARK: - Header

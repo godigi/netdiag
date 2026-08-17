@@ -142,18 +142,53 @@ struct SettingsView: View {
     private var alerts: some View {
         @Bindable var appSettings = appSettings
         return Form {
-            Section {
-                if !coordinator.alerts.notificationsAuthorized {
-                    HStack {
-                        Label("Notifications are off — alerts can't reach you.",
-                              systemImage: "bell.slash")
-                            .foregroundStyle(.orange)
-                        Spacer()
+            Section("Permissions") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Notifications")
+                        Text(coordinator.alerts.notificationsAuthorized
+                             ? "Allowed — alerts appear when connectivity drops."
+                             : "Off — netdiag cannot alert you when something breaks.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if !coordinator.alerts.notificationsAuthorized {
                         Button("Turn on") {
                             Task { await coordinator.alerts.requestAuthorization() }
                         }
+                    } else {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
                     }
                 }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Wi-Fi & Location Access")
+                        Text(coordinator.locationPermissions.isAuthorized
+                             ? "Allowed — Wi-Fi names and detailed radio diagnostics unlocked."
+                             : (coordinator.locationPermissions.isDeniedOrRestricted
+                                ? "Restricted — macOS hides Wi-Fi network names."
+                                : "Not enabled — required for Wi-Fi names and radio diagnostics."))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if !coordinator.locationPermissions.isAuthorized {
+                        Button(coordinator.locationPermissions.isDeniedOrRestricted ? "Open Settings" : "Allow") {
+                            if coordinator.locationPermissions.isDeniedOrRestricted {
+                                coordinator.locationPermissions.openSystemSettings()
+                            } else {
+                                coordinator.locationPermissions.requestAuthorization()
+                            }
+                        }
+                    } else {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+
+            Section("Automation") {
                 Toggle("Run a check automatically when something breaks", isOn: $appSettings.scanOnAlert)
                 Toggle("Run a check the first time I join a network", isOn: $appSettings.scanOnNewNetwork)
                 Text("An automatic check skips the speed test, so it won't slow down a connection that is already struggling.")
@@ -180,7 +215,10 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .task { await coordinator.alerts.refreshAuthorization() }
+        .task {
+            await coordinator.alerts.refreshAuthorization()
+            coordinator.locationPermissions.refresh()
+        }
     }
 
     // MARK: - Advanced

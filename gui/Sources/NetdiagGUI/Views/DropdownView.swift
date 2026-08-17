@@ -1,18 +1,22 @@
 import SwiftUI
+import CoreWLAN
+import AppKit
 
 /// Layer two of four: the dropdown status menu.
 ///
 /// Designed for quick at-a-glance networking health:
-/// 1. Status & connection check at top
+/// 1. Status & connection check at top with contextual remedies
 /// 2. Active alerts (if any)
-/// 3. At-a-glance facts: Public IPv4 (with flag), Internet Ping, Router Ping, Local IP, Latest Speed
-/// 4. Quick tests: Run speed test, Live latency monitor
-/// 5. Open dashboard (prominent & stand-alone)
-/// 6. System controls: Pause/resume, Settings, Quit, and version footer
+/// 3. Visual 3-Hop Link Path bar (Mac ──▶ Router ──▶ Internet)
+/// 4. At-a-glance facts: Wi-Fi, Signal, Public IP, Pings, Speed, VPN
+/// 5. Quick action grid: Copy Summary, Speed Test, Dashboard
+/// 6. System controls: Live Latency, Pause/resume, Settings, Quit, and version footer
 struct DropdownView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
     @Environment(\.openWindow) private var openWindow
+
+    @State private var copiedSummary = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,6 +26,12 @@ struct DropdownView: View {
                 alertStrip
                     .padding(.top, Theme.Spacing.xs)
             }
+
+            contextualRemedy
+            
+            Divider().padding(.vertical, Theme.Spacing.xs)
+
+            linkPathSection
             
             Divider().padding(.vertical, Theme.Spacing.xs)
             
@@ -29,17 +39,18 @@ struct DropdownView: View {
             
             Divider().padding(.vertical, Theme.Spacing.xs)
             
-            testsSection
-            
-            Divider().padding(.vertical, Theme.Spacing.xs)
-            
-            dashboardSection
+            quickActionBar
             
             Divider().padding(.vertical, Theme.Spacing.xs)
             
             controlsSection
         }
         .padding(.vertical, Theme.Spacing.sm)
+        .task {
+            if coordinator.history.document.runs.isEmpty {
+                await coordinator.history.load()
+            }
+        }
     }
 
     // MARK: - Hero & Connection Check
@@ -100,6 +111,48 @@ struct DropdownView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, 1)
                 }
+            }
+        }
+    }
+
+    // MARK: - Contextual Remedy Button
+
+    @ViewBuilder
+    private var contextualRemedy: some View {
+        if let sample = coordinator.monitor.latest, sample.status.severity == "critical" || sample.status.severity == "warn" {
+            let rules = sample.status.rules
+            if rules.contains("G2") || rules.contains("G3"), let gwIP = coordinator.monitor.latest?.link.gateway {
+                HStack(spacing: 6) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text("Router packet loss detected.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        if let url = URL(string: "http://\(gwIP)") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } label: {
+                        Text("Open Router Admin")
+                            .font(.caption2)
+                    }
+                    .controlSize(.mini)
+                }
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.top, 4)
+            } else if rules.contains("G1") || rules.contains("W1") {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text("Weak Wi-Fi signal. Move closer or switch to 5 GHz.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.top, 4)
             }
         }
     }
@@ -184,12 +237,193 @@ struct DropdownView: View {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    // MARK: - Visual 3-Hop Link Path Bar
+
+    private var linkPathSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text("LINK PATH")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+
+            HStack(spacing: 0) {
+                // Mac Node
+                pathNode(icon: "laptopcomputer", title: "Mac", subtitle: localIP ?? "en0", color: macNodeColor)
+
+                // Local Link Connector
+                pathConnector(icon: localLinkIcon, label: localLinkLabel, color: localLinkColor)
+
+                // Router Node
+                pathNode(icon: "network", title: "Router", subtitle: routerPingShort, color: routerNodeColor)
+
+                // Internet Link Connector
+                pathConnector(icon: "arrow.right", label: internetPingShort, color: internetLinkColor)
+
+                // Internet Node
+                pathNode(icon: "globe", title: "Internet", subtitle: internetStatusShort, color: internetNodeColor)
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+            .padding(.horizontal, Theme.Spacing.md)
+        }
+    }
+
+    private func pathNode(icon: String, title: String, subtitle: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(color)
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+            Text(subtitle)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func pathConnector(icon: String, label: String, color: Color) -> some View {
+        VStack(spacing: 1) {
+            HStack(spacing: 2) {
+                Rectangle().fill(color.opacity(0.4)).frame(height: 1.5)
+                Image(systemName: icon)
+                    .font(.system(size: 8))
+                    .foregroundStyle(color)
+                Rectangle().fill(color.opacity(0.4)).frame(height: 1.5)
+            }
+            Text(label)
+                .font(.system(size: 8, weight: .medium, design: .rounded))
+                .foregroundStyle(color)
+                .lineLimit(1)
+        }
+        .frame(width: 52)
+    }
+
+    // Path colors and labels
+    private var macNodeColor: Color {
+        if let link = coordinator.monitor.latest?.link, !link.up { return .red }
+        return .green
+    }
+
+    private var localLinkIcon: String {
+        if let isWiFi = coordinator.monitor.latest?.link.isWiFi, isWiFi {
+            return "wifi"
+        }
+        return "cable.connector"
+    }
+
+    private var localLinkLabel: String {
+        if let iface = CWWiFiClient.shared().interface() {
+            let rssi = iface.rssiValue()
+            if rssi != 0 {
+                return "\(rssi) dBm"
+            }
+        }
+        if let isWiFi = coordinator.monitor.latest?.link.isWiFi, isWiFi {
+            return "Wi-Fi"
+        }
+        return "LAN"
+    }
+
+    private var localLinkColor: Color {
+        if let sample = coordinator.monitor.latest {
+            if !sample.link.up { return .red }
+            if let loss = sample.gateway.lossPct, loss >= 20 { return .red }
+            if let loss = sample.gateway.lossPct, loss > 0 { return .orange }
+            if let iface = CWWiFiClient.shared().interface(), iface.rssiValue() < -75 && iface.rssiValue() != 0 {
+                return .orange
+            }
+        }
+        return .green
+    }
+
+    private var routerPingShort: String {
+        if let rtt = coordinator.monitor.latest?.gateway.rttAvgMs {
+            let loss = coordinator.monitor.latest?.gateway.lossPct ?? 0
+            if loss > 0 {
+                return String(format: "%.0fms (%.0f%%)", rtt, loss)
+            }
+            return String(format: "%.0f ms", rtt)
+        }
+        return "—"
+    }
+
+    private var routerNodeColor: Color {
+        if let sample = coordinator.monitor.latest {
+            if !sample.link.up { return .secondary }
+            if let loss = sample.gateway.lossPct, loss >= 20 { return .red }
+            if let loss = sample.gateway.lossPct, loss > 0 { return .orange }
+        }
+        return .green
+    }
+
+    private var internetPingShort: String {
+        if let rtt = coordinator.monitor.latest?.internet.rttAvgMs {
+            let loss = coordinator.monitor.latest?.internet.lossPct ?? 0
+            if loss > 0 {
+                return String(format: "%.0fms (%.0f%%)", rtt, loss)
+            }
+            return String(format: "%.0f ms", rtt)
+        }
+        return "—"
+    }
+
+    private var internetLinkColor: Color {
+        if let sample = coordinator.monitor.latest {
+            if !sample.link.up { return .secondary }
+            if let loss = sample.internet.lossPct, loss >= 20 { return .red }
+            if let loss = sample.internet.lossPct, loss > 0 { return .orange }
+            if sample.publicInfo.ok == false { return .red }
+        }
+        return .green
+    }
+
+    private var internetStatusShort: String {
+        if let country = countryISO, let flag = Flag.emoji(forISOCode: country) {
+            return flag
+        }
+        if let sample = coordinator.monitor.latest {
+            if sample.publicInfo.ok == false || sample.internet.lossPct == 100 {
+                return "Offline"
+            }
+        }
+        return "Online"
+    }
+
+    private var internetNodeColor: Color {
+        if let sample = coordinator.monitor.latest {
+            if !sample.link.up || sample.publicInfo.ok == false || sample.internet.lossPct == 100 { return .red }
+            if let loss = sample.internet.lossPct, loss >= 20 { return .red }
+            if let loss = sample.internet.lossPct, loss > 0 { return .orange }
+        }
+        return .green
+    }
+
     // MARK: - At-a-Glance Network Glance Panel
 
     private var networkGlancePanel: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Network Name (if available & clean)
-            if let name = cleanNetworkName {
+            // Wi-Fi details (Only displayed when permissions are enabled and connected to Wi-Fi)
+            if let wifi = wifiGlanceInfo {
+                if let ssid = wifi.ssid {
+                    LabeledContent {
+                        Text(ssid).fontWeight(.medium)
+                    } label: {
+                        Text("Wi-Fi")
+                    }
+                }
+                LabeledContent {
+                    Text(wifi.signal)
+                        .foregroundStyle(wifi.isWeak ? .orange : .primary)
+                } label: {
+                    Text("Wi-Fi Signal")
+                }
+            } else if let name = cleanNetworkName {
                 LabeledContent {
                     Text(name).fontWeight(.medium)
                 } label: {
@@ -281,30 +515,106 @@ struct DropdownView: View {
         .padding(.vertical, 2)
     }
 
-    // MARK: - Quick Tests Section
+    // MARK: - Quick Action Bar (Copy Summary, Speed Test, Dashboard)
 
-    private var testsSection: some View {
-        VStack(spacing: 2) {
-            dropdownButton("Run speed test", icon: "gauge.with.dots.needle.bottom.50percent") {
-                coordinator.runSpeedTest()
+    private var quickActionBar: some View {
+        HStack(spacing: 6) {
+            Button(action: copyDiagnosticSummary) {
+                HStack(spacing: 4) {
+                    Image(systemName: copiedSummary ? "checkmark" : "doc.on.doc")
+                        .foregroundStyle(copiedSummary ? .green : .secondary)
+                    Text(copiedSummary ? "Copied" : "Copy Summary")
+                }
+                .font(.caption)
+                .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
 
-            dropdownButton("Live latency monitor", icon: "waveform.path.ecg") {
-                coordinator.startLatencyTest()
+            Button {
+                coordinator.runSpeedTest()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bolt")
+                        .foregroundStyle(.secondary)
+                    Text("Speed Test")
+                }
+                .font(.caption)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button {
                 openWindow(id: WindowID.dashboard)
                 NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chart.bar")
+                        .foregroundStyle(.secondary)
+                    Text("Dashboard")
+                }
+                .font(.caption)
+                .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
+        .padding(.horizontal, Theme.Spacing.md)
     }
 
-    // MARK: - Dashboard Section
-
-    private var dashboardSection: some View {
-        VStack(spacing: 2) {
-            dropdownButton("Open dashboard", icon: "chart.bar.doc.horizontal") {
-                openWindow(id: WindowID.dashboard)
-                NSApp.activate(ignoringOtherApps: true)
+    private func copyDiagnosticSummary() {
+        var lines: [String] = []
+        let dateStr = Date().formatted(date: .abbreviated, time: .shortened)
+        lines.append("Netdiag Diagnostic Summary (\(dateStr))")
+        lines.append("─────────────────────────────────────")
+        lines.append("Status: \(coordinator.headline)")
+        
+        if let wifi = wifiGlanceInfo {
+            if let ssid = wifi.ssid {
+                lines.append("Wi-Fi: \(ssid) (\(wifi.signal))")
+            } else {
+                lines.append("Wi-Fi Signal: \(wifi.signal)")
             }
+        } else if let name = cleanNetworkName {
+            lines.append("Network: \(name)")
+        }
+        
+        if let local = localIP {
+            lines.append("Local IP: \(local)")
+        }
+        
+        if let router = routerInfo {
+            let ipStr = router.ip.map { " (\($0))" } ?? ""
+            lines.append("Router: \(router.ping)\(ipStr)")
+        }
+        
+        if let ping = internetPing {
+            let detail = ping.detail.map { " \($0)" } ?? ""
+            lines.append("Internet Ping: \(ping.current)\(detail)")
+        }
+        
+        if let ip = publicIP {
+            let flag = Flag.emoji(forISOCode: countryISO).map { "\($0) " } ?? ""
+            lines.append("Public IP: \(flag)\(ip)")
+        }
+        
+        if hasSpeedMeasurement {
+            lines.append("Speed: \(speedString)")
+        }
+        
+        if vpnActive {
+            lines.append("VPN: Active (\(vpnName ?? "connected"))")
+        }
+        
+        let text = lines.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        
+        copiedSummary = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copiedSummary = false
         }
     }
 
@@ -312,6 +622,12 @@ struct DropdownView: View {
 
     private var controlsSection: some View {
         VStack(spacing: 2) {
+            dropdownButton("Live latency monitor", icon: "waveform.path.ecg") {
+                coordinator.startLatencyTest()
+                openWindow(id: WindowID.dashboard)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+
             dropdownButton(appSettings.monitoringEnabled ? "Pause monitoring" : "Resume monitoring",
                            icon: appSettings.monitoringEnabled ? "pause" : "play") {
                 let enabled = !appSettings.monitoringEnabled
@@ -373,7 +689,66 @@ struct DropdownView: View {
 
     // MARK: - Derived Glance Values
 
+    private var wifiGlanceInfo: (ssid: String?, signal: String, isWeak: Bool)? {
+        guard coordinator.locationPermissions.isAuthorized else { return nil }
+        guard let iface = CWWiFiClient.shared().interface() else { return nil }
+        
+        let ssid = iface.ssid()
+        let rssi = iface.rssiValue()
+        guard rssi != 0 else {
+            if let ssid, !ssid.isEmpty {
+                return (ssid, "Connected", false)
+            }
+            return nil
+        }
+        
+        let chan = iface.wlanChannel()?.channelNumber
+        let band: String?
+        if let chan {
+            if chan <= 14 { band = "2.4 GHz" }
+            else if chan <= 177 { band = "5 GHz" }
+            else { band = "6 GHz" }
+        } else {
+            band = nil
+        }
+        
+        let rating: String
+        let isWeak: Bool
+        if rssi >= -55 {
+            rating = "Excellent"
+            isWeak = false
+        } else if rssi >= -65 {
+            rating = "Good"
+            isWeak = false
+        } else if rssi >= -75 {
+            rating = "Fair"
+            isWeak = false
+        } else {
+            rating = "Weak"
+            isWeak = true
+        }
+        
+        let signalDetail: String
+        if let band {
+            signalDetail = "\(rating) (\(rssi) dBm · \(band))"
+        } else {
+            signalDetail = "\(rating) (\(rssi) dBm)"
+        }
+        
+        return (ssid, signalDetail, isWeak)
+    }
+
     private var cleanNetworkName: String? {
+        // If location permissions not authorized, only show custom user-assigned name
+        if !coordinator.locationPermissions.isAuthorized {
+            if let id = coordinator.monitor.latest?.network.id, !id.isEmpty {
+                let custom = coordinator.history.displayName(for: id)
+                if !custom.isEmpty && custom != id && !custom.contains("<redacted>") && !custom.contains("hidden by macOS") && !custom.starts(with: "wifi:mac=") {
+                    return custom
+                }
+            }
+            return nil
+        }
         if let id = coordinator.monitor.latest?.network.id, !id.isEmpty {
             let custom = coordinator.history.displayName(for: id)
             if !custom.isEmpty && custom != id && !custom.contains("<redacted>") && !custom.contains("hidden by macOS") {
@@ -384,7 +759,7 @@ struct DropdownView: View {
             ?? coordinator.latestRun?.snapshot.network.label
         if let raw, !raw.isEmpty {
             if raw.contains("<redacted>") || raw.contains("hidden by macOS") || raw.starts(with: "wifi:mac=") {
-                return nil // Hide ugly redacted wifi label per user request
+                return nil // Hide ugly redacted wifi label
             }
             return raw
         }
@@ -394,18 +769,21 @@ struct DropdownView: View {
     private var publicIP: String? {
         let ip = coordinator.monitor.latest?.publicInfo.ip
             ?? coordinator.latestRun?.snapshot.publicInfo.ip
+            ?? coordinator.hydratedReport?.run.publicInfo.ip
         return (ip?.isEmpty ?? true) ? nil : ip
     }
 
     private var localIP: String? {
         let ip = coordinator.monitor.latest?.link.ip
             ?? coordinator.latestRun?.snapshot.interfaceInfo.ip
+            ?? coordinator.hydratedReport?.run.interfaceInfo.ip
         return (ip?.isEmpty ?? true) ? nil : ip
     }
 
     private var countryISO: String? {
         coordinator.monitor.latest?.publicInfo.countryISO
             ?? coordinator.latestRun?.snapshot.publicInfo.countryISO
+            ?? coordinator.hydratedReport?.run.publicInfo.countryISO
     }
 
     private var internetPing: (current: String, detail: String?)? {
@@ -418,7 +796,7 @@ struct DropdownView: View {
                 let avg = pings.reduce(0, +) / Double(pings.count)
                 detailParts.append(String(format: "avg %.0f ms", avg))
             }
-            if let loss {
+            if let loss, loss > 0 {
                 detailParts.append(String(format: "%.0f%% loss", loss))
             }
             let detail = detailParts.isEmpty ? nil : "(\(detailParts.joined(separator: " · ")))"
@@ -433,7 +811,16 @@ struct DropdownView: View {
         if let current = coordinator.latestRun?.snapshot.internetLatency.rttAvgMs {
             let currentStr = String(format: "%.0f ms", current)
             let loss = coordinator.latestRun?.snapshot.internetLatency.lossPct
-            if let loss {
+            if let loss, loss > 0 {
+                return (currentStr, "(\(String(format: "%.0f%% loss", loss)))")
+            }
+            return (currentStr, nil)
+        }
+
+        if let current = coordinator.hydratedReport?.run.internetLatency.rttAvgMs {
+            let currentStr = String(format: "%.0f ms", current)
+            let loss = coordinator.hydratedReport?.run.internetLatency.lossPct
+            if let loss, loss > 0 {
                 return (currentStr, "(\(String(format: "%.0f%% loss", loss)))")
             }
             return (currentStr, nil)
@@ -445,17 +832,22 @@ struct DropdownView: View {
     private var routerInfo: (ping: String, ip: String?)? {
         let ip = coordinator.monitor.latest?.link.gateway
             ?? coordinator.latestRun?.snapshot.gateway.ip
-        guard let current = coordinator.monitor.latest?.gateway.rttAvgMs
-            ?? coordinator.latestRun?.snapshot.gateway.rttAvgMs else {
+            ?? coordinator.hydratedReport?.run.gateway.ip
+        let rtt = coordinator.monitor.latest?.gateway.rttAvgMs
+            ?? coordinator.latestRun?.snapshot.gateway.rttAvgMs
+            ?? coordinator.hydratedReport?.run.gateway.rttAvgMs
+        let loss = coordinator.monitor.latest?.gateway.lossPct
+            ?? coordinator.latestRun?.snapshot.gateway.lossPct
+            ?? coordinator.hydratedReport?.run.gateway.lossPct
+
+        guard let current = rtt else {
             if let ip {
                 return ("—", ip)
             }
             return nil
         }
-        let loss = coordinator.monitor.latest?.gateway.lossPct
-            ?? coordinator.latestRun?.snapshot.gateway.lossPct
         let pingStr: String
-        if let loss {
+        if let loss, loss > 0 {
             pingStr = String(format: "%.0f ms · %.0f%% loss", current, loss)
         } else {
             pingStr = String(format: "%.0f ms", current)
@@ -478,17 +870,18 @@ struct DropdownView: View {
                 return String(format: "%.0f Mbps ↓", down)
             }
         }
-        let currentNetID = coordinator.monitor.latest?.network.id
-        let runs = coordinator.history.document.runs
-        for run in runs.reversed() {
-            if let netID = currentNetID, !netID.isEmpty, run.networkID != netID { continue }
-            if let down = run.metrics["speedtest.down_mbps"] {
-                let up = run.metrics["speedtest.up_mbps"]
-                if let up {
-                    return String(format: "%.0f Mbps ↓ · %.0f Mbps ↑", down, up)
-                }
+        if let speed = coordinator.hydratedReport?.run.speedtest {
+            if let down = speed.downMbps, let up = speed.upMbps {
+                return String(format: "%.0f Mbps ↓ · %.0f Mbps ↑", down, up)
+            } else if let down = speed.downMbps {
                 return String(format: "%.0f Mbps ↓", down)
             }
+        }
+        if let speed = coordinator.history.latestSpeedTest(for: coordinator.monitor.latest?.network.id) {
+            if let up = speed.up {
+                return String(format: "%.0f Mbps ↓ · %.0f Mbps ↑", speed.down, up)
+            }
+            return String(format: "%.0f Mbps ↓", speed.down)
         }
         return "Not tested yet"
     }
@@ -499,11 +892,14 @@ struct DropdownView: View {
 
     private var vpnActive: Bool {
         coordinator.monitor.latest?.vpn.active
-            ?? coordinator.latestRun?.snapshot.vpn.active ?? false
+            ?? coordinator.latestRun?.snapshot.vpn.active
+            ?? coordinator.hydratedReport?.run.vpn.active ?? false
     }
 
     private var vpnName: String? {
-        coordinator.monitor.latest?.vpn.name ?? coordinator.latestRun?.snapshot.vpn.name
+        coordinator.monitor.latest?.vpn.name
+            ?? coordinator.latestRun?.snapshot.vpn.name
+            ?? coordinator.hydratedReport?.run.vpn.name
     }
 
     private var lastCheckLine: (relative: String, badge: String?)? {

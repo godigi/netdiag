@@ -14,7 +14,6 @@ struct OnboardingView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var locationManager = CLLocationManager()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -36,9 +35,13 @@ struct OnboardingView: View {
             step(number: 2,
                  title: "Show real Wi-Fi network names",
                  detail: "Optional. macOS hides Wi-Fi names from apps unless you grant location access. netdiag never uses your location for anything else, and works fine without this — you can name your networks yourself instead.",
-                 done: locationGranted,
-                 action: "Allow") {
-                locationManager.requestWhenInUseAuthorization()
+                 done: coordinator.locationPermissions.isAuthorized,
+                 action: coordinator.locationPermissions.isDeniedOrRestricted ? "Open Settings" : "Allow") {
+                if coordinator.locationPermissions.isDeniedOrRestricted {
+                    coordinator.locationPermissions.openSystemSettings()
+                } else {
+                    coordinator.locationPermissions.requestAuthorization()
+                }
             }
 
             step(number: 3,
@@ -77,13 +80,7 @@ struct OnboardingView: View {
         .task {
             await coordinator.alerts.refreshAuthorization()
             await coordinator.watcher.refresh()
-        }
-    }
-
-    private var locationGranted: Bool {
-        switch locationManager.authorizationStatus {
-        case .authorizedAlways, .authorized: return true
-        default: return false
+            coordinator.locationPermissions.refresh()
         }
     }
 

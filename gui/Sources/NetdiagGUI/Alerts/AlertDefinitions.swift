@@ -65,13 +65,16 @@ struct AlertDefinition: Identifiable, Sendable {
         AlertDefinition(
             id: "wifi-unstable", title: "Connection is unstable",
             rules: ["G1", "G2", "G3", "WD-1"],
-            // 60 s, not 15: a single bad minute on WiFi is ordinary. The
-            // monitor's 10-packet probe already puts one dropped packet in
-            // the warn band rather than the critical one, and the dwell
-            // absorbs the rest.
-            dwell: 60, cooldown: 1800, resolves: true, scanOnly: false,
+            dwell: 25, cooldown: 1800, resolves: true, scanOnly: false,
             suppressedByICMPFilter: true, oncePerNetwork: false,
             interimBody: "Checking whether it's your Wi-Fi or your router…"),
+
+        AlertDefinition(
+            id: "internet-degraded", title: "Internet connection degraded",
+            rules: ["L1", "L2"],
+            dwell: 25, cooldown: 600, resolves: true, scanOnly: false,
+            suppressedByICMPFilter: true, oncePerNetwork: false,
+            interimBody: "Checking whether the loss is at your router or your internet provider…"),
 
         AlertDefinition(
             id: "dns-failing", title: "Websites aren't loading",

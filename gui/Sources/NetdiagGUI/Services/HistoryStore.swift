@@ -196,6 +196,33 @@ final class HistoryStore {
         return !document.networks.contains { canonicalID($0.id) == key }
     }
 
+    /// Returns the most recent speed test measurement from history.
+    func latestSpeedTest(for networkID: String? = nil) -> (down: Double, up: Double?, date: Date)? {
+        let canonicalTarget = networkID.map { canonicalID($0) }
+        let runs = document.runs.sorted { ($0.ts ?? "") > ($1.ts ?? "") }
+        
+        if let canonicalTarget {
+            for run in runs {
+                if canonicalID(run.networkID) == canonicalTarget || run.networkID == networkID {
+                    let down = run.metrics["speed_down_mbps"] ?? run.metrics["speedtest.down_mbps"]
+                    if let down {
+                        let up = run.metrics["speed_up_mbps"] ?? run.metrics["speedtest.up_mbps"]
+                        return (down, up, run.date)
+                    }
+                }
+            }
+        }
+        
+        for run in runs {
+            let down = run.metrics["speed_down_mbps"] ?? run.metrics["speedtest.down_mbps"]
+            if let down {
+                let up = run.metrics["speed_up_mbps"] ?? run.metrics["speedtest.up_mbps"]
+                return (down, up, run.date)
+            }
+        }
+        return nil
+    }
+
     // MARK: - Medians
 
     /// `median(metric:networkID:)`'s memo, keyed by canonical network id
