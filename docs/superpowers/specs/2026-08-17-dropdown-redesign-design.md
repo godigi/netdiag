@@ -1,0 +1,122 @@
+# Dropdown redesign — Adaptive Stage × Change Timeline
+
+**Date:** 2026-08-17 · **Status:** approved design, pre-plan
+**Mockups (local, not committed — `nimbalyst-local/` is gitignored):**
+`nimbalyst-local/mockups/netdiag-dropdown-concepts.mockup.html` (four explored directions),
+`nimbalyst-local/mockups/netdiag-dropdown-refined.mockup.html` (the approved fusion, both states).
+
+## Goal
+
+Replace the current `DropdownView` layout (hero + link path + glance panel + action
+grid) with a design organized around the product's two promises: *constant
+monitoring that alerts on any change* and *one-click deep diagnosis*. Privacy
+identity (public IP, exit country, VPN) is treated as first-class monitored state,
+not footer trivia. Design stance, from the approved mockup: **one swappable
+"stage" at the top; everything below it never moves.**
+
+## Layout (top to bottom)
+
+1. **Stage** — one card whose content is a function of app state (see States).
+2. **Instrument grid** — fixed 4×2:
+   - Row 1 (performance): ping, loss, download, upload (Mbps units shown).
+   - Row 2 (link + identity): router RTT, Wi-Fi signal, VPN, location.
+   - Location shows **only the country flag**. Hovering reveals a tooltip with
+     the full public IP ("203.0.113.42 · click to copy"); clicking copies it.
+   - Cells never disappear; an unmeasured value renders as `—`.
+3. **Heartbeat strip** — a thin live sparkline of fast-tier gateway RTT with
+   caption `monitoring · live` / `speeds from test <age>`. It exists to prove
+   monitoring is alive without dedicating prime space to a chart.
+4. **Change timeline** — "LAST 24 HOURS": a colored band with event ticks, a
+   time axis, the 2–3 most recent events as rows (icon, phrase, time), and an
+   "Open full history →" link into the dashboard's Activity view.
+5. **Primary CTA** — a single global "Check My Connection" button, present and
+   identically positioned in every state. No second prominent button; speed
+   test and dashboard remain reachable via the timeline link, stage links, and
+   the dashboard itself.
+6. **Footer** — Settings · Quit · version (unchanged).
+
+## Stage states
+
+| State | Content |
+|---|---|
+| healthy | "✓ All good — watching" + "Nothing has changed in *N* · on *SSID*". *N* = time since the newest stored event. |
+| alert | Card per the worst active alert: title, prose **verbatim from `diagnosis[].summary`**, `rule <ID> · <time>` attribution line, "See full report →" link. No buttons in the stage — the global CTA re-checks. |
+| testing | Section-by-section scan progress (reuse `ScanProgressView` content) driven by `--progress`. |
+| paused | "Monitoring paused" + resume affordance; instruments show last-known values, heartbeat strip flatlines. |
+| skewed | Existing capabilities-handshake messaging when the bundled CLI and GUI disagree (unchanged behavior, restyled into the stage). |
+
+Only the stage and any out-of-threshold instrument value (colored by the same
+severity the CLI reports) change between states.
+
+## Data sources — everything user-facing comes from the CLI
+
+| UI element | Source |
+|---|---|
+| Instruments row 1 | monitor `gateway.rtt_avg_ms`, `gateway.loss_pct`; speeds from the most recent stored run via history (age shown in heartbeat caption) |
+| Instruments row 2 | monitor `link.*` (interface, SSID), `vpn.*`, `wifi.rssi`; slow tier `public.ip`, `public.country_iso` → flag |
+| Alert title/prose | `status.rules` + `diagnosis[].summary` verbatim; plain-language layer via `--rules-catalog` |
+| Timeline events | **new:** `changes` array on monitor samples (below) plus scan-produced alerts |
+| Severity colors | `status.severity` / `status.rules`, thresholds already applied by `lib/monitor.sh` / `lib/diagnosis.sh`; the GUI maps severity → color only |
+| Paused state | `status.paused` (SIGUSR1/SIGUSR2 contract unchanged) |
+
+## New CLI surface required
+
+`lib/monitor.sh` gains change detection: when a tracked field differs from the
+previous sample, the emitted line includes
+`changes: [{id, field, from, to, summary}]`, where `summary` is the
+user-facing phrase (e.g. "VPN exit moved: Germany → Brazil"). Tracked fields:
+public IP, country, ISP/ASN, VPN state and name, SSID/BSSID, interface, and
+rule-set transitions (a rule newly firing or clearing). Comparing *this sample
+to the last* is state the monitor already holds; phrasing the change in bash
+keeps the "no user-facing verdict strings in Swift" rule intact. Schema:
+`monitor` bumps 1 → 2; a `monitor_changes` entry joins `--capabilities`
+features so an older CLI degrades the GUI to a tickless timeline rather than
+breaking it. Change **detection** is field inequality, not thresholds — no new
+numeric cutoffs, so `lib/thresholds.sh` is untouched.
+
+## Event persistence
+
+The monitor writes nothing to disk (existing contract). The GUI appends
+received `changes` and scan alerts to its existing local alert store, prunes
+at 24 h for the band (full history stays in the dashboard), and derives both
+the band ticks and "nothing has changed in *N*" from that store. Persistence
+and rendering of CLI-authored events is not diagnostic logic.
+
+## Privacy behavior
+
+- Default dropdown face shows no public IP — flag only; hover to reveal, click
+  to copy. Screen-sharing a menu open is the common leak path this closes.
+- Identity changes surface as events (they are the story; the static value is
+  not), with country transitions phrased by the CLI.
+
+## Removed from the current dropdown
+
+The 3-hop link path bar, the quick-action grid, and the contextual remedy row
+(remedies live in the alert stage's full report). The glance panel's facts are
+absorbed by the instrument grid. Live-latency toggle is replaced by the
+always-on heartbeat strip.
+
+## Edge cases
+
+- **Cold launch:** hydrate instruments and timeline from history + alert store
+  (existing hydration path); stage shows healthy/alert per last verdict with
+  its age.
+- **No speed test ever run:** speed cells show `—`, caption "no speed test yet".
+- **Flag rendering:** `country_iso` → regional-indicator scalars; unknown or
+  redacted → 🌐 placeholder, tooltip "location unknown".
+- **Malformed monitor lines:** skipped, as consumers already must.
+
+## Testing
+
+- bats: `changes` emission (VPN flip, SSID change, rule transition, no-change
+  sample emits no array), schema version, capabilities entry;
+  `tests/test_thresholds.bats` must stay green (no new inline cutoffs).
+- GUI: unit-test the event store pruning and "time since last change"
+  derivation; state-machine coverage that stage selection follows
+  monitor/scan/pause/skew inputs.
+
+## Out of scope
+
+Dashboard/Activity redesign, the eye-mask redaction toggle from the
+identity-first concept (revisit later), notification behavior changes, and any
+change to `--watch`.
