@@ -111,6 +111,20 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#n1b--router-present-nothing-public-responds",
     },
     {
+        "id": "G1",
+        "title": "Gateway packet loss with weak Wi-Fi",
+        "category": "wifi",
+        "severity": "critical",
+        "scope": "both",
+        "blurb": (
+            "Your Mac is losing packets to your router while your Wi-Fi "
+            "signal is weak. The wireless link is the problem, not your "
+            "router hardware or your internet provider. Moving closer to "
+            "the router or switching to a closer access point clears this."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#g1--gateway-loss--weak-wifi",
+    },
+    {
         "id": "G2",
         "title": "Router dropping packets",
         "category": "router",
@@ -174,7 +188,7 @@ RULES: list[dict[str, str]] = [
         "title": "Severe internet packet loss",
         "category": "internet",
         "severity": "critical",
-        "scope": "scan",
+        "scope": "both",
         "blurb": (
             "A large share of the traffic sent out to the internet is "
             "being dropped, while the router itself answers cleanly — "
@@ -190,7 +204,7 @@ RULES: list[dict[str, str]] = [
         "title": "Moderate internet packet loss",
         "category": "internet",
         "severity": "warn",
-        "scope": "scan",
+        "scope": "both",
         "blurb": (
             "Some traffic is being lost on the way out to the internet "
             "even though the router itself is clean — enough to cause "
@@ -206,7 +220,7 @@ RULES: list[dict[str, str]] = [
         "title": "Ping blocked, connection fine",
         "category": "internet",
         "severity": "info",
-        "scope": "scan",
+        "scope": "both",
         "blurb": (
             "Ping to the outside world fails completely, but real traffic "
             "— web pages, DNS, TCP connections — all work fine, "

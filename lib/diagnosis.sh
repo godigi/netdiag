@@ -35,9 +35,13 @@ diagnosis_run() {
     add_diag critical N1b "Your Mac has a router but nothing on the public internet responded. $_rerun for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
   fi
 
-  # G2/G3 — gateway loss.
+  # G1/G2/G3 — gateway loss.
   if loss_at_least "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
-    add_diag critical G2 "You're losing packets between your Mac and your router (${GW_LOSS}% loss) — the connection between your Mac and your router is severely degraded. Try moving closer to the router or rebooting it (unplug for 30 seconds, plug back in). On ethernet, check the cable."
+    if [ -n "$WIFI_RSSI" ] && is_numeric "$WIFI_RSSI" && [ "$WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
+      add_diag critical G1 "You're losing packets between your Mac and your router (${GW_LOSS}% loss) and your WiFi signal is weak (${WIFI_RSSI} dBm). The WiFi connection is the problem, not your router or your internet provider. Try moving closer to the router or switching to a closer access point."
+    else
+      add_diag critical G2 "You're losing packets between your Mac and your router (${GW_LOSS}% loss) — the connection between your Mac and your router is severely degraded. Try moving closer to the router or rebooting it (unplug for 30 seconds, plug back in). On ethernet, check the cable."
+    fi
   elif loss_at_least "$GW_LOSS" "$LOSS_WARN_PCT"; then
     # G3 — the band under G1's critical floor.
     add_diag warn G3 "Your Mac is losing about ${GW_LOSS}% of the packets it sends to your own router — not enough to break the connection outright, but enough that web pages stall for a second or two and video calls break up. Try moving closer to your router or rebooting it. On ethernet, check the cable."

@@ -380,7 +380,11 @@ _mon_rules() {
   # ping numbers are not to be trusted, and the alert engine — whose job
   # this is — declines to notify. Same facts, one place to decide.
   if loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
-    _mon_add_rule critical G2
+    if [ -n "$MON_WIFI_RSSI" ] && is_numeric "$MON_WIFI_RSSI" && [ "$MON_WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
+      _mon_add_rule critical G1
+    else
+      _mon_add_rule critical G2
+    fi
   elif loss_at_least "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
     _mon_add_rule warn G3
   fi
@@ -409,15 +413,28 @@ _mon_rules() {
     _mon_add_rule info VPN-1
   fi
 
-  # TCP-1 last, matching lib/diagnosis.sh's order so the two emit the same
-  # rule list in the same sequence. Real connections work, only ping is
-  # being dropped — common on hotel and corporate WiFi, and the reason a
-  # naive loss monitor is unusable there. It sets the flag the alert engine
-  # reads to hold every loss notification.
+  # TCP-1 matching lib/diagnosis.sh's logic. Real connections work, only
+  # ping is being dropped — common on hotel and corporate WiFi.
   if [ "${MON_TCP_OK:-0}" = "1" ] \
      && loss_at_least "$MON_GW_LOSS" "$THRESH_ICMP_FILTERED_LOSS_PCT"; then
     MON_ICMP_FILTERED=1
     _mon_add_rule info TCP-1
+  fi
+
+  # ── L1 / L2 — internet-side packet loss ────────────────────────────────
+  local _mon_icmp_filtered=0
+  if [ "${MON_PUBLIC_OK:-0}" = "1" ] && [ "${MON_TCP_OK:-0}" = "1" ] \
+     && loss_at_least "$MON_INET_LOSS" "$THRESH_ICMP_TOTAL_LOSS_PCT"; then
+    _mon_icmp_filtered=1
+    _mon_add_rule info ICMP-1
+  fi
+
+  if [ "$_mon_icmp_filtered" -eq 0 ] && loss_below "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
+    if loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT"; then
+      _mon_add_rule critical L1
+    elif loss_at_least "$MON_INET_LOSS" "$LOSS_WARN_PCT"; then
+      _mon_add_rule warn L2
+    fi
   fi
 
   # Cadence follows severity, not rule count: an info-level VPN notice is

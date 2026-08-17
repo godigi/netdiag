@@ -36,7 +36,8 @@ setup() {
 reset_state() {
   # monitor side
   MON_LINK_UP=1 MON_IFACE_TYPE=wifi MON_GATEWAY=192.168.1.1
-  MON_GW_LOSS=0 MON_GW_RTT=3 MON_WIFI_RSSI="" MON_WIFI_SNR=""
+  MON_GW_LOSS=0 MON_GW_RTT=3 MON_INET_LOSS="" MON_INET_RTT=""
+  MON_WIFI_RSSI="" MON_WIFI_SNR=""
   MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
   MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
   # scanner side
@@ -60,7 +61,7 @@ monitor_rules() {
 # reach. Everything the monitor cannot measure (NT-1, DI-*, DH-1, BL-1,
 # M1, MT1, V6-1, B1/B2, WS-1, WD-1) is scan-only by design and must not be
 # claimed by the stream.
-MONITOR_VOCABULARY='^(N1|G1|G2|G3|P1|P2|D1|TCP-1|VPN-1)$'
+MONITOR_VOCABULARY='^(N1|G1|G2|G3|P1|P2|D1|TCP-1|VPN-1|L1|L2|ICMP-1)$'
 
 scanner_rules() {
   . "$REPO/lib/diagnosis.sh"
@@ -134,6 +135,40 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state; MON_VPN_ACTIVE=1 VPN_ACTIVE=1
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"VPN-1"* ]]
+}
+
+@test "parity: gateway loss with weak WiFi names G1 on both, not G2" {
+  reset_state; MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-85 WIFI_RSSI=-85
+  local m; m="$(monitor_rules)"; reset_state
+  MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-85 WIFI_RSSI=-85
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"G1"* ]]
+  [[ "$m" != *"G2"* ]]
+}
+
+@test "parity: severe internet loss over a clean router is L1 on both" {
+  reset_state; MON_INET_LOSS=25 INET_LOSS=25 INET_LOSS_ALT=25
+  local m; m="$(monitor_rules)"; reset_state
+  MON_INET_LOSS=25 INET_LOSS=25 INET_LOSS_ALT=25
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"L1"* ]]
+}
+
+@test "parity: moderate internet loss is L2 on both" {
+  reset_state; MON_INET_LOSS=15 INET_LOSS=15 INET_LOSS_ALT=15
+  local m; m="$(monitor_rules)"; reset_state
+  MON_INET_LOSS=15 INET_LOSS=15 INET_LOSS_ALT=15
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"L2"* ]]
+}
+
+@test "parity: total ping loss on a working link is ICMP-1 on both, not L1" {
+  reset_state; MON_INET_LOSS=100 INET_LOSS=100 INET_LOSS_ALT=100
+  local m; m="$(monitor_rules)"; reset_state
+  MON_INET_LOSS=100 INET_LOSS=100 INET_LOSS_ALT=100
+  [ "$m" = "$(scanner_rules)" ]
+  [[ "$m" == *"ICMP-1"* ]]
+  [[ "$m" != *"L1"* ]]
 }
 
 @test "parity: no default route is N1 on both" {
