@@ -96,6 +96,77 @@ def build_tcp() -> list[dict]:
     return out
 
 
+def _changes() -> list:
+    """Field-level diff against the previous sample (NETDIAG_MON_PREV_*).
+
+    None on either side means "not measured" on that side, and an
+    unmeasured→measured transition is not a change — same convention as
+    the rest of the stream, where null is absence of measurement.
+    Rules are the exception: they are always evaluated, so set
+    difference is safe. Summaries are user-facing prose; the GUI
+    renders them verbatim (CLAUDE.md: no verdict strings in Swift).
+    """
+    if _env("HAVE_PREV") != "1":
+        return []
+    out = []
+
+    def diff(now_key, prev_key, cid, field, phrase):
+        now, prev = _env(now_key), _env(prev_key)
+        if now is None or prev is None or now == prev:
+            return
+        out.append({"id": cid, "field": field, "from": prev, "to": now,
+                    "summary": phrase(prev, now)})
+
+    vpn_now = _env("VPN_ACTIVE") == "1"
+    vpn_prev_raw = _env("PREV_VPN_ACTIVE")
+    vpn_prev = vpn_prev_raw == "1"
+    if vpn_prev_raw is not None and vpn_now != vpn_prev:
+        name = _env("VPN_NAME") or _env("PREV_VPN_NAME")
+        suffix = f" ({name})" if name else ""
+        out.append({
+            "id": "vpn-connected" if vpn_now else "vpn-disconnected",
+            "field": "vpn.active",
+            "from": "1" if vpn_prev else "0",
+            "to": "1" if vpn_now else "0",
+            "summary": (f"VPN connected{suffix}" if vpn_now
+                        else f"VPN disconnected{suffix}"),
+        })
+    elif vpn_now:
+        diff("VPN_NAME", "PREV_VPN_NAME", "vpn-name-changed", "vpn.name",
+             lambda a, b: f"VPN changed: {a} → {b}")
+
+    def exit_phrase(a, b):
+        return (f"VPN exit moved: {a} → {b}" if vpn_now
+                else f"Location changed: {a} → {b}")
+
+    diff("PUB_CC", "PREV_PUB_CC", "country-changed", "public.country",
+         exit_phrase)
+    diff("PUB_IP", "PREV_PUB_IP", "public-ip-changed", "public.ip",
+         lambda a, b: f"Public IP changed: {a} → {b}")
+    diff("PUB_ISP", "PREV_PUB_ISP", "isp-changed", "public.isp",
+         lambda a, b: f"Internet provider changed: {a} → {b}")
+    diff("SSID", "PREV_SSID", "wifi-network-changed", "link.ssid",
+         lambda a, b: f"Wi-Fi network changed: {a} → {b}")
+    if _env("SSID") == _env("PREV_SSID"):
+        diff("BSSID", "PREV_BSSID", "wifi-roamed", "link.bssid",
+             lambda a, b: "Roamed to a different Wi-Fi access point")
+    diff("INTERFACE", "PREV_INTERFACE", "interface-changed",
+         "link.interface",
+         lambda a, b: f"Network interface changed: {a} → {b}")
+
+    rules_now = set((_env("RULES") or "").split())
+    rules_prev = set((_env("PREV_RULES") or "").split())
+    for rid in sorted(rules_now - rules_prev):
+        out.append({"id": "rule-fired", "field": "status.rules",
+                    "from": None, "to": rid,
+                    "summary": f"Issue {rid} detected"})
+    for rid in sorted(rules_prev - rules_now):
+        out.append({"id": "rule-cleared", "field": "status.rules",
+                    "from": rid, "to": None,
+                    "summary": f"Issue {rid} cleared"})
+    return out
+
+
 def main() -> None:
     is_wifi = _env("IFACE_TYPE") == "wifi"
     link_up = os.environ.get("NETDIAG_MON_LINK_UP") == "1"
@@ -180,6 +251,10 @@ def main() -> None:
             "cadence_s": _i("CADENCE_S"),
         },
     }
+
+    changes = _changes()
+    if changes:
+        sample["changes"] = changes
 
     json.dump(sample, sys.stdout, separators=(",", ":"), default=str)
     sys.stdout.write("\n")

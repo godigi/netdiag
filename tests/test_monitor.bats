@@ -356,6 +356,109 @@ assert json.load(sys.stdin)['refreshed'] == ['fast','medium']
 "
 }
 
+# ── monitor_sample: changes (schema 2) ──────────────────────────────────
+
+@test "monitor_sample: no previous sample, no changes key" {
+  run emit NETDIAG_MON_HAVE_PREV=0 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=198.51.100.7
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: identical samples emit no changes key" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=203.0.113.42 \
+           NETDIAG_MON_RULES='G2 ' NETDIAG_MON_PREV_RULES='G2 '
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: public IP change is phrased by the CLI" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=198.51.100.7
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'public-ip-changed'
+assert ch[0]['field'] == 'public.ip'
+assert ch[0]['from'] == '198.51.100.7' and ch[0]['to'] == '203.0.113.42'
+assert ch[0]['summary'] == 'Public IP changed: 198.51.100.7 → 203.0.113.42'
+"
+}
+
+@test "monitor_sample: unmeasured side suppresses the change" {
+  # null means "not measured", not a value — first slow-tier result is
+  # not a change (stream convention, docs/JSON-SCHEMA.md).
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: country move phrased as VPN exit when VPN is up" {
+  run emit NETDIAG_MON_HAVE_PREV=1 NETDIAG_MON_VPN_ACTIVE=1 \
+           NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_PUB_CC=Brazil NETDIAG_MON_PREV_PUB_CC=Germany
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert ch[0]['id'] == 'country-changed'
+assert ch[0]['summary'] == 'VPN exit moved: Germany → Brazil'
+"
+}
+
+@test "monitor_sample: vpn drop and reconnect phrase both directions" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=0 NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_PREV_VPN_NAME=Mullvad
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert ch[0]['id'] == 'vpn-disconnected'
+assert ch[0]['summary'] == 'VPN disconnected (Mullvad)'
+"
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=0 \
+           NETDIAG_MON_VPN_NAME=Mullvad
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert ch[0]['id'] == 'vpn-connected'
+assert ch[0]['summary'] == 'VPN connected (Mullvad)'
+"
+}
+
+@test "monitor_sample: ssid with a double quote survives the changes array" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_SSID='Cafe "Sunset" 5G' NETDIAG_MON_PREV_SSID=HomeNet
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert ch[0]['id'] == 'wifi-network-changed'
+assert ch[0]['to'] == 'Cafe \"Sunset\" 5G'
+"
+}
+
+@test "monitor_sample: rule transitions emit fired and cleared entries" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_RULES='G2 TCP-1 ' NETDIAG_MON_PREV_RULES='VPN-1 TCP-1 '
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+ids = [(c['id'], c.get('from'), c.get('to')) for c in ch]
+assert ('rule-fired', None, 'G2') in ids, ids
+assert ('rule-cleared', 'VPN-1', None) in ids, ids
+assert len(ch) == 2, ch
+"
+}
+
 # ── Flags and exit codes ─────────────────────────────────────────────────
 # These exit during argument validation, before any probe runs.
 
