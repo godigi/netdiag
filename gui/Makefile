@@ -40,12 +40,28 @@ IDENTITY_NAME := netdiag-dev
 SIGN_IDENTITY := $(shell security find-identity -v -p codesigning 2>/dev/null \
                    | grep -F '"$(IDENTITY_NAME)"' | head -1 | awk '{print $$2}')
 
-.PHONY: all build bundle sign run install clean identity check
+.PHONY: all build bundle sign run install clean identity check test
 
 all: sign
 
 build:
 	swift build -c $(CONFIG)
+
+# This CLT-only toolchain (no Xcode.app) ships Testing.framework outside the
+# default search path swift test uses — see
+# gui/Sources/NetdiagGUI/Support/LenientDecoding.swift's sibling test-target
+# comment, gui/Tests/NetdiagGUITests/NetworkEventTests.swift, for the
+# XCTest-vs-Swift-Testing context this works around. Pass the extra -F only
+# when that framework actually exists, so the target still works unmodified
+# on a machine with Xcode installed.
+CLT_TESTING_FRAMEWORK := /Library/Developer/CommandLineTools/Library/Developer/Frameworks/Testing.framework
+
+test:
+	@if [ -d "$(CLT_TESTING_FRAMEWORK)" ]; then \
+	  swift test -Xswiftc -F -Xswiftc /Library/Developer/CommandLineTools/Library/Developer/Frameworks; \
+	else \
+	  swift test; \
+	fi
 
 bundle: build
 	@if [ -z "$(VERSION)" ]; then \

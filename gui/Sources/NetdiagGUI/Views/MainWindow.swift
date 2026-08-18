@@ -123,13 +123,13 @@ struct MainWindow: View {
     }
 
     /// "Monitoring · every 10s", checked in the same priority order as the
-    /// dropdown's own status line (`DropdownView.statusDetail`) so the two
-    /// never disagree about which state is showing: a burst (the on-demand
-    /// latency test) outranks paused, which outranks off, which outranks a
-    /// stalled monitor. Unlike that panel this line never mentions
-    /// degraded-tier or ICMP-filtered state — it states one fact, cadence
-    /// and whether the app is watching at all, never a verdict about what
-    /// the cadence found.
+    /// dropdown's own status line (`DropdownView.statusDetail`, rendered
+    /// inside `healthyStage`) so the two never disagree about which state
+    /// is showing: a burst (the on-demand latency test) outranks paused,
+    /// which outranks off, which outranks an error. Unlike that panel this
+    /// line never mentions ICMP-filtered state — it states one fact,
+    /// cadence and whether the app is watching at all, never a verdict
+    /// about what the cadence found.
     private var monitoringStatusLine: some View {
         HStack(spacing: 6) {
             Circle().fill(monitoringDotColor).frame(width: 7, height: 7)
@@ -169,7 +169,7 @@ struct MainWindow: View {
                     }
             }
         case .live:     LiveView()
-        case .activity: ActivityPlaceholder()
+        case .activity: ActivityView()
         case .trends:   HistoryView()
         case .networks:
             // Keeps its own internal NavigationStack (Browse checks →
@@ -191,33 +191,5 @@ struct MainWindow: View {
             selection = .home
             homePath = NavigationPath([route])
         }
-    }
-}
-
-/// Activity's stand-in until T13 builds the real alert-center timeline —
-/// honest that there is nothing behind this section yet rather than an
-/// empty list that reads as broken. Deliberately not its own file: T13's
-/// plan names `Views/ActivityView.swift` as new, and pre-empting that
-/// filename here would just be renamed away in a task or two.
-private struct ActivityPlaceholder: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            Text("Activity").font(.title3)
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                Label("Alerts and checks will appear here as a timeline.",
-                      systemImage: "clock.arrow.circlepath")
-                    .font(.callout)
-                Text("A running history of what fired and when arrives with a later update — this section is a placeholder until it does.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(Theme.Spacing.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cardStyle()
-            Spacer()
-        }
-        .padding(Theme.Spacing.lg)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

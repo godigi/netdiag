@@ -3,14 +3,20 @@ import Foundation
 /// One thing that changed, as told by the CLI — a monitor `changes`
 /// entry or a fired alert. The GUI stores and renders these; it never
 /// authors the summary text.
+///
+/// A stored record (persisted to `events.json`), so every property is
+/// `var` with an inline default and decodes leniently — the same
+/// discipline `MonitorSample` and `RunSnapshot` follow, for the same
+/// reason: a key this app doesn't know about yet must degrade to "not
+/// recorded", not fail the whole decode.
 struct NetworkEvent: Codable, Identifiable, Sendable, Equatable {
-    let id: UUID
-    let date: Date
+    var id = UUID()
+    var date: Date = .distantPast
     /// Stream change kind ("vpn-disconnected", "rule-fired", …) or
     /// "alert" for alert-engine events. Drives icon/tint mapping only.
-    let kind: String
-    let summary: String
-    let ruleID: String?
+    var kind: String = ""
+    var summary: String = ""
+    var ruleID: String? = nil
 
     init(id: UUID = UUID(), date: Date, kind: String,
          summary: String, ruleID: String? = nil) {
@@ -19,6 +25,17 @@ struct NetworkEvent: Codable, Identifiable, Sendable, Equatable {
         self.kind = kind
         self.summary = summary
         self.ruleID = ruleID
+    }
+}
+
+extension NetworkEvent {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.lenient(.id, UUID())
+        date = c.lenient(.date, .distantPast)
+        kind = c.lenient(.kind, "")
+        summary = c.lenient(.summary, "")
+        ruleID = c.lenient(.ruleID)
     }
 }
 
@@ -43,11 +60,15 @@ extension NetworkEvent {
 
     /// A flapping condition or a resume-from-sleep burst repeats the
     /// same CLI phrase; storing every copy would evict real history.
+    /// `events` must be newest-first (EventStore's invariant): the scan
+    /// stops at the first entry older than the window.
     static func isRepeat(kind: String, summary: String, date: Date,
-                         of newest: NetworkEvent?,
+                         in events: [NetworkEvent],
                          window: TimeInterval = 600) -> Bool {
-        guard let newest else { return false }
-        return newest.kind == kind && newest.summary == summary
-            && abs(date.timeIntervalSince(newest.date)) < window
+        for event in events {
+            if date.timeIntervalSince(event.date) > window { break }
+            if event.kind == kind && event.summary == summary { return true }
+        }
+        return false
     }
 }

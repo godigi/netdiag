@@ -32,6 +32,7 @@ struct InstrumentCell: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -57,13 +58,7 @@ struct LocationCell: View {
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture {
-            guard let publicIP else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(publicIP, forType: .string)
-            copied = true
-            Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
-        }
+        .onTapGesture { copyIP() }
         .overlay(alignment: .top) {
             if hovering, let publicIP {
                 Text(copied ? "Copied" : "\(publicIP) · click to copy")
@@ -78,7 +73,17 @@ struct LocationCell: View {
                     .allowsHitTesting(false)
             }
         }
-        .help(publicIP == nil ? "Location unknown" : "")
+        .help(publicIP == nil ? "Location unknown" : "Click to copy your public IP")
+        .accessibilityLabel("Location" + (countryISO.map { ", \($0)" } ?? ", unknown"))
+        .accessibilityAction(named: "Copy public IP") { copyIP() }
+    }
+
+    private func copyIP() {
+        guard let publicIP else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(publicIP, forType: .string)
+        copied = true
+        Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
     }
 }
 
@@ -92,7 +97,7 @@ struct HeartbeatStrip: View {
     var flatlined = false
 
     private var points: [Double] {
-        samples.suffix(60).compactMap { $0.gateway.rttAvgMs }
+        samples.suffix(60).compactMap { $0.internet.rttAvgMs }
     }
 
     var body: some View {
@@ -128,6 +133,10 @@ struct HeartbeatStrip: View {
 
 // MARK: - Timeline band
 
+/// Callers must pre-filter `events` to the window: an event older than
+/// `hours` clamps to the left edge rather than being excluded, so an
+/// unfiltered array would draw a false "just now" tick at the band's
+/// start for anything arbitrarily old.
 struct TimelineBand: View {
     let events: [NetworkEvent]
     let hours: Double
@@ -152,7 +161,7 @@ struct TimelineBand: View {
             }
             .frame(height: 20)
             HStack {
-                Text("24 h ago")
+                Text("\(Int(hours)) h ago")
                 Spacer()
                 Text("now")
             }
@@ -215,7 +224,7 @@ enum EventStyle {
         case "rule-fired", "alert": return .red
         case "rule-cleared": return .green
         case "vpn-disconnected": return .orange
-        default: return .yellow
+        default: return .secondary
         }
     }
 }

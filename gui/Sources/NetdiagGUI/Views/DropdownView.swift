@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CoreWLAN
 
 /// Layer two of four: the dropdown status menu.
 ///
@@ -7,14 +8,17 @@ import AppKit
 /// 1. Stage — a single card whose content is a function of app state
 ///    (healthy / alerted / testing / paused / skewed). Everything below it
 ///    never moves.
-/// 2. Instrument grid — fixed 4x2: ping, loss, download, upload / router,
-///    Wi-Fi, VPN, location. Cells never disappear; an unmeasured value
-///    renders as "—".
-/// 3. Heartbeat strip — a thin live sparkline proving monitoring is alive.
-/// 4. Change timeline — "LAST 24 HOURS" band plus the most recent events,
-///    sourced from `coordinator.eventLog`.
-/// 5. One primary CTA: Check My Connection.
-/// 6. Footer: Settings, Quit, version.
+/// 2. One primary CTA: Check My Connection, directly under the stage.
+/// 3. Instrument grid — fixed 4x2: internet ping, internet loss, download,
+///    upload / router, Wi-Fi, VPN, location. Cells never disappear; an
+///    unmeasured value renders as "—".
+/// 4. Heartbeat strip — a thin live sparkline of internet ping, labeled
+///    with min/avg/max, proving monitoring is alive.
+/// 5. Change timeline — "LAST 24 HOURS" header, a "History" button into
+///    the dashboard's Activity view, and the most recent events, sourced
+///    from `coordinator.eventLog`.
+/// 6. Footer: Open Dashboard, Pause/Resume Monitoring, Settings, Quit,
+///    version.
 struct DropdownView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
@@ -24,6 +28,10 @@ struct DropdownView: View {
         VStack(alignment: .leading, spacing: 0) {
             stageSection
                 .padding(.horizontal, Theme.Spacing.md)
+
+            checkButton
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.top, Theme.Spacing.sm)
 
             instrumentSection
                 .padding(.horizontal, Theme.Spacing.md)
@@ -37,10 +45,6 @@ struct DropdownView: View {
 
             timelineSection
                 .padding(.horizontal, Theme.Spacing.md)
-
-            checkButton
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.top, Theme.Spacing.sm)
 
             Divider().padding(.vertical, Theme.Spacing.xs)
 
@@ -106,6 +110,11 @@ struct DropdownView: View {
                 .foregroundStyle(.secondary)
             if let lastCheck = lastCheckLine {
                 Text("Last check \(lastCheck.relative)\(lastCheck.badge.map { " · \($0)" } ?? "")")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            if let detail = statusDetail {
+                Text(detail)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -223,8 +232,8 @@ struct DropdownView: View {
     private var instrumentSection: some View {
         VStack(spacing: Theme.Spacing.xs) {
             HStack(spacing: 0) {
-                InstrumentCell(label: "Ping", value: pingValue.text,
-                               tint: pingValue.tint)
+                InstrumentCell(label: "Internet", value: internetValue.text,
+                               tint: internetValue.tint)
                 InstrumentCell(label: "Loss", value: lossValue.text,
                                tint: lossValue.tint)
                 InstrumentCell(label: "Down", value: speedValues.down,
@@ -232,10 +241,17 @@ struct DropdownView: View {
                 InstrumentCell(label: "Up", value: speedValues.up,
                                unit: "Mbps")
             }
+            if let age = speedValues.age {
+                Text("speeds from test \(age)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
             Divider()
             HStack(spacing: 0) {
                 InstrumentCell(label: "Router",
-                               value: routerInfo?.ping ?? "—")
+                               value: routerInfo?.ping ?? "—",
+                               tint: routerTint)
                 InstrumentCell(label: "Wi-Fi", value: wifiValue)
                 InstrumentCell(label: "VPN",
                                value: vpnActive ? (vpnName ?? "on") : "off",
@@ -249,38 +265,56 @@ struct DropdownView: View {
 
     /// Cell tint keys off the CLI's fired rules, never off the number:
     /// the rule IDs are the verdict, the map below is only "which cell
-    /// does this rule talk about".
-    private static let latencyRules: Set<String> = ["G2", "G3"]
-    private static let lossRules: Set<String> = ["G1", "P1", "P2", "L1", "L2"]
+    /// does this rule talk about". The internet-side cells (ping and
+    /// loss) share L1/L2; the router cell reads G1-G3 — the two probes
+    /// measure different hops, so a cell tints only for rules about
+    /// that hop.
+    private static let internetRules: Set<String> = ["L1", "L2"]
+    private static let routerRules: Set<String> = ["G1", "G2", "G3"]
 
     private var firedRules: Set<String> {
         Set(coordinator.monitor.latest?.status.rules ?? [])
     }
 
-    private var pingValue: (text: String, tint: Color) {
-        guard let rtt = coordinator.monitor.latest?.gateway.rttAvgMs else {
+    private var internetValue: (text: String, tint: Color) {
+        guard let rtt = coordinator.monitor.latest?.internet.rttAvgMs else {
             return ("—", .primary)
         }
-        let bad = !firedRules.isDisjoint(with: Self.latencyRules)
+        let bad = !firedRules.isDisjoint(with: Self.internetRules)
         return ("\(Int(rtt.rounded())) ms", bad ? .red : .primary)
     }
 
     private var lossValue: (text: String, tint: Color) {
-        guard let loss = coordinator.monitor.latest?.gateway.lossPct else {
+        guard let loss = coordinator.monitor.latest?.internet.lossPct else {
             return ("—", .primary)
         }
-        let bad = !firedRules.isDisjoint(with: Self.lossRules)
+        let bad = !firedRules.isDisjoint(with: Self.internetRules)
         return (String(format: "%.1f%%", loss), bad ? .red : .green)
     }
 
+    private var routerTint: Color {
+        firedRules.isDisjoint(with: Self.routerRules) ? .primary : .red
+    }
+
+    /// The monitor's slow-tier RSSI covers most of a session, but not the
+    /// gap between launch and its first slow-tier cycle — falling back to
+    /// a live CoreWLAN read (when Location Services is authorized; RSSI is
+    /// gated behind it the same as `--wifi-only`) keeps the cell from
+    /// reading "—" for that whole window. `rssiValue() == 0` is CoreWLAN's
+    /// own "unavailable", not a real reading.
     private var wifiValue: String {
         guard coordinator.monitor.latest?.link.isWiFi == true else {
             return "wired"
         }
-        guard let rssi = coordinator.monitor.latest?.wifi?.rssi else {
-            return "—"
+        if let rssi = coordinator.monitor.latest?.wifi?.rssi {
+            return "\(rssi) dBm"
         }
-        return "\(rssi) dBm"
+        if coordinator.locationPermissions.isAuthorized,
+           let live = CWWiFiClient.shared().interface()?.rssiValue(),
+           live != 0 {
+            return "\(live) dBm"
+        }
+        return "—"
     }
 
     private var speedValues: (down: String, up: String, age: String?) {
@@ -309,10 +343,10 @@ struct DropdownView: View {
                                       || coordinator.monitor.isPaused)
             HStack {
                 Text(coordinator.monitor.isRunning && !coordinator.monitor.isPaused
-                     ? "monitoring · live" : "monitoring off")
+                     ? "internet ping · live" : "monitoring off")
                 Spacer()
-                if let age = speedValues.age {
-                    Text("speeds from test \(age)")
+                if let stats = heartbeatStats {
+                    Text("min \(stats.min) · avg \(stats.avg) · max \(stats.max) ms")
                 }
             }
             .font(.system(size: 9))
@@ -320,16 +354,32 @@ struct DropdownView: View {
         }
     }
 
+    /// Same 60-sample window `HeartbeatStrip` plots, summarized as
+    /// min/avg/max so the strip's shape has numbers beside it. Hidden
+    /// below two points: a min/avg/max of one number is not a range.
+    private var heartbeatStats: (min: Int, avg: Int, max: Int)? {
+        let values = coordinator.monitor.recent.suffix(60)
+            .compactMap { $0.internet.rttAvgMs }
+        guard values.count >= 2, let minV = values.min(), let maxV = values.max()
+        else { return nil }
+        let avgV = values.reduce(0, +) / Double(values.count)
+        return (Int(minV.rounded()), Int(avgV.rounded()), Int(maxV.rounded()))
+    }
+
     // MARK: - Timeline
 
     private var timelineSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            Text("LAST 24 HOURS")
-                .font(.system(size: 9))
-                .kerning(0.5)
-                .foregroundStyle(.secondary)
-            TimelineBand(events: coordinator.eventLog.within(hours: 24),
-                         hours: 24)
+            HStack {
+                Text("LAST 24 HOURS")
+                    .font(.system(size: 9))
+                    .kerning(0.5)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("History") { openActivity() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+            }
             let recent = Array(coordinator.eventLog.within(hours: 24).prefix(3))
             if recent.isEmpty {
                 Text("No changes in the last 24 hours")
@@ -340,10 +390,6 @@ struct DropdownView: View {
             } else {
                 ForEach(recent) { EventRow(event: $0) }
             }
-            Button("Open full history") { openActivity() }
-                .buttonStyle(.link)
-                .font(.caption)
-                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 
@@ -367,6 +413,17 @@ struct DropdownView: View {
 
     private var controlsSection: some View {
         VStack(spacing: 2) {
+            dropdownButton("Open Dashboard", icon: "rectangle.on.rectangle") {
+                openWindow(id: WindowID.dashboard)
+            }
+
+            dropdownButton(appSettings.monitoringEnabled ? "Pause Monitoring" : "Resume Monitoring",
+                           icon: appSettings.monitoringEnabled ? "pause" : "play") {
+                let enabled = !appSettings.monitoringEnabled
+                appSettings.monitoringEnabled = enabled
+                coordinator.setMonitoring(enabled: enabled)
+            }
+
             dropdownButton("Settings…", icon: "gearshape") {
                 openWindow(id: WindowID.settings)
                 NSApp.activate(ignoringOtherApps: true)

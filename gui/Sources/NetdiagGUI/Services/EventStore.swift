@@ -37,7 +37,7 @@ final class EventStore {
                 date: Date = .now) {
         guard !summary.isEmpty else { return }
         guard !NetworkEvent.isRepeat(kind: kind, summary: summary,
-                                     date: date, of: events.first) else {
+                                     date: date, in: events) else {
             return
         }
         events = NetworkEvent.trimmed(
@@ -60,7 +60,7 @@ final class EventStore {
         guard let data = try? Data(contentsOf: url) else { return }
         guard let stored = try? JSONDecoder().decode([NetworkEvent].self,
                                                      from: data) else {
-            log.debug("events.json exists but failed to decode — starting with an empty log")
+            log.error("events.json exists but failed to decode — starting with an empty log")
             return
         }
         events = NetworkEvent.trimmed(stored, cap: Self.cap)

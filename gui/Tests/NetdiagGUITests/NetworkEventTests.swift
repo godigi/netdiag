@@ -44,18 +44,44 @@ struct NetworkEventTests {
                            summary: "Issue G2 detected", now: now)
         #expect(NetworkEvent.isRepeat(
             kind: "rule-fired", summary: "Issue G2 detected",
-            date: now, of: newest))
+            date: now, in: [newest]))
         #expect(!NetworkEvent.isRepeat(
             kind: "rule-fired", summary: "Issue G3 detected",
-            date: now, of: newest))
+            date: now, in: [newest]))
         #expect(!NetworkEvent.isRepeat(
             kind: "alert", summary: "Issue G2 detected",
-            date: now, of: newest))
+            date: now, in: [newest]))
         #expect(!NetworkEvent.isRepeat(
             kind: "rule-fired", summary: "Issue G2 detected",
-            date: now.addingTimeInterval(700), of: newest))
+            date: now.addingTimeInterval(700), in: [newest]))
         #expect(!NetworkEvent.isRepeat(
             kind: "rule-fired", summary: "Issue G2 detected",
-            date: now, of: nil))
+            date: now, in: []))
+    }
+
+    /// A rule that clears and immediately re-fires (a flap) must not be
+    /// coalesced with the fired event two entries back — the scan has to
+    /// look past the newest entry, not stop at it. `events` is
+    /// newest-first, matching EventStore's invariant.
+    @Test func isRepeatScansPastTheNewestEntryWithinTheWindow() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let firedSummary = "Issue G2 detected"
+        let cleared = event(minutesAgo: 1, kind: "rule-cleared",
+                            summary: "Issue G2 cleared", now: now)
+        let fired = event(minutesAgo: 2, kind: "rule-fired",
+                          summary: firedSummary, now: now)
+        let events = [cleared, fired]
+
+        #expect(NetworkEvent.isRepeat(
+            kind: "rule-fired", summary: firedSummary,
+            date: now, in: events))
+
+        let longAgoCleared = event(minutesAgo: 11, kind: "rule-cleared",
+                                   summary: "Issue G2 cleared", now: now)
+        let longAgoFired = event(minutesAgo: 12, kind: "rule-fired",
+                                 summary: firedSummary, now: now)
+        #expect(!NetworkEvent.isRepeat(
+            kind: "rule-fired", summary: firedSummary,
+            date: now, in: [longAgoCleared, longAgoFired]))
     }
 }
