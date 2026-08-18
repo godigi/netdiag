@@ -146,11 +146,13 @@ RULES: list[dict[str, str]] = [
         "severity": "warn",
         "scope": "both",
         "blurb": (
-            "A smaller share of packets to your own router are going "
-            "missing — not enough to break the connection outright, "
-            "but enough that pages stall and calls occasionally break up. "
-            "On WiFi this is usually signal or interference; on ethernet, "
-            "suspect the cable or the switch port."
+            "A smaller share of packets to your router — the box that "
+            "gives you internet in your home — are going missing. This is "
+            "not your internet provider; your internet service itself "
+            "looks fine from here. Not enough to break the connection "
+            "outright, but enough that pages stall and calls occasionally "
+            "break up. On WiFi this is usually signal or interference; on "
+            "ethernet, suspect the cable or the switch port."
         ),
         "doc": "DIAGNOSIS-RULES.md#g3--gateway-loss-below-the-critical-floor",
     },

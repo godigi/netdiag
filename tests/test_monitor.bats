@@ -40,6 +40,7 @@ reset_state() {
   MON_WIFI_RSSI="" MON_WIFI_SNR=""
   MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
   MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
+  MON_GW_LOSS_STREAK=0 MON_INET_LOSS_STREAK=0
   # scanner side
   GATEWAY=192.168.1.1 IS_WIFI=1 GW_LOSS=0 WIFI_RSSI="" WIFI_SNR=""
   DNS_OK=1 DNS_LINES="x|y|z|OK" PUBLIC_OK=1 PUBLIC_CHECKED=1
@@ -87,7 +88,15 @@ scanner_rules() {
 }
 
 @test "parity: loss in the warn band produces G3 on both" {
+  # G3 only fires on the monitor once it has held for
+  # THRESH_MON_LOSS_CONFIRM_CYCLES consecutive cycles (lib/thresholds.sh) —
+  # a single cycle's loss is a blip, not a condition. The scanner has no
+  # such confirmation: its own probe already averages over 20 packets in
+  # one shot. Calling _mon_rules once before monitor_rules() drives the
+  # monitor to that confirmed state, so this stays a fair comparison
+  # instead of a false mismatch on the first cycle.
   reset_state; MON_GW_LOSS=15 GW_LOSS=15
+  _mon_rules
   local m; m="$(monitor_rules)"; reset_state; MON_GW_LOSS=15 GW_LOSS=15
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"G3"* ]]
@@ -155,7 +164,10 @@ scanner_rules() {
 }
 
 @test "parity: moderate internet loss is L2 on both" {
+  # L2 is confirmed across cycles the same way G3 is above — see that
+  # test's comment.
   reset_state; MON_INET_LOSS=15 INET_LOSS=15 INET_LOSS_ALT=15
+  _mon_rules
   local m; m="$(monitor_rules)"; reset_state
   MON_INET_LOSS=15 INET_LOSS=15 INET_LOSS_ALT=15
   [ "$m" = "$(scanner_rules)" ]
@@ -216,9 +228,49 @@ scanner_rules() {
 }
 
 @test "a fault switches the monitor to its degraded cadence" {
+  # G3 needs two cycles to confirm now (see the loss-confirmation block
+  # below); drive it there rather than asserting degraded cadence off an
+  # unconfirmed first cycle.
   reset_state; MON_GW_LOSS=15
   _mon_rules
+  _mon_rules
   [ "$MON_DEGRADED" -eq 1 ]
+}
+
+# ── Loss confirmation: a blip is not a condition ─────────────────────────
+# THRESH_MON_LOSS_CONFIRM_CYCLES (lib/thresholds.sh) exists because at
+# MONITOR_PING_COUNT=10, one dropped packet reads as exactly 10% —
+# LOSS_WARN_PCT — so a single unlucky packet used to read as G3. Only the
+# warn-band rules (G3, L2) are confirmed; critical loss (G1/G2/L1) still
+# fires on the first cycle, because a real outage must not wait.
+
+@test "loss confirmation: one cycle of warn-band gateway loss produces no G3" {
+  reset_state; MON_GW_LOSS=10
+  _mon_rules
+  [[ "$MON_RULES" != *"G3"* ]]
+}
+
+@test "loss confirmation: two consecutive cycles of warn-band gateway loss produce G3" {
+  reset_state; MON_GW_LOSS=10
+  _mon_rules
+  _mon_rules
+  [[ "$MON_RULES" == *"G3"* ]]
+}
+
+@test "loss confirmation: one cycle of critical gateway loss fires G2 immediately" {
+  reset_state; MON_GW_LOSS=25
+  _mon_rules
+  [[ "$MON_RULES" == *"G2"* ]]
+}
+
+@test "loss confirmation: a clean cycle between two blips resets the streak" {
+  reset_state; MON_GW_LOSS=10
+  _mon_rules
+  MON_GW_LOSS=0
+  _mon_rules
+  MON_GW_LOSS=10
+  _mon_rules
+  [[ "$MON_RULES" != *"G3"* ]]
 }
 
 @test "a dead link is degraded and reports nothing it did not measure" {

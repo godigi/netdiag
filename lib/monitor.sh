@@ -99,6 +99,13 @@ MON_VPN_TYPE=""
 MON_VPN_NAME=""
 MON_GW_LOSS=""
 MON_GW_RTT=""
+# How many consecutive cycles the warn-band loss condition has held for
+# each leg — gateway and internet — used to confirm G3/L2 before either
+# fires (see THRESH_MON_LOSS_CONFIRM_CYCLES in lib/thresholds.sh). Declared
+# here, not just assigned inside _mon_rules, because bin/netdiag runs under
+# `set -u` and the very first cycle reads them before ever writing them.
+MON_GW_LOSS_STREAK=0
+MON_INET_LOSS_STREAK=0
 MON_WIFI_RSSI=""
 MON_WIFI_NOISE=""
 MON_WIFI_SNR=""
@@ -379,6 +386,10 @@ _mon_rules() {
   if [ "$MON_LINK_UP" -eq 0 ]; then
     _mon_add_rule critical N1
     MON_DEGRADED=1
+    # No link means neither leg was probed this cycle — a streak the link
+    # drop interrupted is not a streak that held.
+    MON_GW_LOSS_STREAK=0
+    MON_INET_LOSS_STREAK=0
     return 0
   fi
 
@@ -393,14 +404,27 @@ _mon_rules() {
   # over a red report. So the rule fires, `status.icmp_filtered` says the
   # ping numbers are not to be trusted, and the alert engine — whose job
   # this is — declines to notify. Same facts, one place to decide.
+  # G3 is confirmed rather than immediate: a single cycle's loss is a blip
+  # (see THRESH_MON_LOSS_CONFIRM_CYCLES), so the warn band only fires once
+  # it has held for THRESH_MON_LOSS_CONFIRM_CYCLES consecutive cycles.
+  # Critical never waits — a real outage must not sit behind a confirmation
+  # window — and any cycle that is not in the warn band (clean, or escalated
+  # to critical) resets the streak, so a one-off blip followed by a clean
+  # cycle can never quietly accumulate toward firing later.
   if loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+    MON_GW_LOSS_STREAK=0
     if [ -n "$MON_WIFI_RSSI" ] && is_numeric "$MON_WIFI_RSSI" && [ "$MON_WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
       _mon_add_rule critical G1
     else
       _mon_add_rule critical G2
     fi
   elif loss_at_least "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
-    _mon_add_rule warn G3
+    MON_GW_LOSS_STREAK=$((MON_GW_LOSS_STREAK + 1))
+    if [ "$MON_GW_LOSS_STREAK" -ge "$THRESH_MON_LOSS_CONFIRM_CYCLES" ]; then
+      _mon_add_rule warn G3
+    fi
+  else
+    MON_GW_LOSS_STREAK=0
   fi
 
   # P1/P2 need the slow tier to have run at least once. An unmeasured
@@ -443,12 +467,24 @@ _mon_rules() {
     _mon_add_rule info ICMP-1
   fi
 
+  # L2 is confirmed the same way G3 is, and for the same reason; L1 stays
+  # immediate. Falling out of the gateway-is-quiet guard above also resets
+  # the streak — a cycle where the condition could not even be evaluated is
+  # not a cycle where it held.
   if [ "$_mon_icmp_filtered" -eq 0 ] && loss_below "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
     if loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT"; then
+      MON_INET_LOSS_STREAK=0
       _mon_add_rule critical L1
     elif loss_at_least "$MON_INET_LOSS" "$LOSS_WARN_PCT"; then
-      _mon_add_rule warn L2
+      MON_INET_LOSS_STREAK=$((MON_INET_LOSS_STREAK + 1))
+      if [ "$MON_INET_LOSS_STREAK" -ge "$THRESH_MON_LOSS_CONFIRM_CYCLES" ]; then
+        _mon_add_rule warn L2
+      fi
+    else
+      MON_INET_LOSS_STREAK=0
     fi
+  else
+    MON_INET_LOSS_STREAK=0
   fi
 
   # Cadence follows severity, not rule count: an info-level VPN notice is

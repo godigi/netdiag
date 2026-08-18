@@ -287,6 +287,12 @@ output_run() {
   # numbers are worth storing and its verdict is not worth comparing.
   if [ "$NO_BASELINE" -eq 0 ] && [ "$BASELINE" -eq 1 ] && [ "$QUICK" -eq 0 ]; then
     mkdir -p "$LOG_DIR"
+    # THRESH_SPEED_* judge a speedtest drop the same way THRESH_COMPARE_*
+    # judge a --show comparison: through the environment, from
+    # lib/thresholds.sh, because a cutoff that decides whether a number is
+    # normal lives in exactly one place. baseline.py refuses to run without
+    # them rather than carrying a default.
+    export THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS
     baseline_out="$(python3 "$HELPERS_DIR/baseline.py" \
       --history "$LOG_DIR/baseline.jsonl" --current "$json_tmp" --n 10 2>/dev/null || true)"
     BASELINE_JSON="$baseline_out"
