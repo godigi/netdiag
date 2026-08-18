@@ -33,9 +33,28 @@ struct MonitorSample: Decodable, Sendable {
     var publicInfo: PublicInfo = .init()
     var status: Status = .init()
 
+    /// Field-level differences from the previous sample, phrased by the
+    /// CLI (schema 2+). Absent — and therefore empty — when nothing
+    /// changed. `kind` is the stream's stable `id` string; `from`/`to`
+    /// are nullable (rule transitions carry null on one side).
+    var changes: [Change] = []
+
+    struct Change: Decodable, Sendable, Equatable {
+        var kind: String = ""
+        var field: String?
+        var from: String?
+        var to: String?
+        var summary: String = ""
+
+        enum CodingKeys: String, CodingKey {
+            case kind = "id"
+            case field, from, to, summary
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case schema, version, ts, seq, refreshed, link, network, vpn
-        case gateway, internet, wifi, dns, tcp, status
+        case gateway, internet, wifi, dns, tcp, status, changes
         case publicInfo = "public"
     }
 
@@ -225,6 +244,18 @@ extension MonitorSample {
         tcp = c.lenient(.tcp, TCP())
         publicInfo = c.lenient(.publicInfo, PublicInfo())
         status = c.lenient(.status, Status())
+        changes = c.lenient(.changes, [])
+    }
+}
+
+extension MonitorSample.Change {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = c.lenient(.kind, "")
+        field = c.lenient(.field)
+        from = c.lenient(.from)
+        to = c.lenient(.to)
+        summary = c.lenient(.summary, "")
     }
 }
 
