@@ -9,11 +9,11 @@ import CoreWLAN
 ///    (healthy / alerted / testing / paused / skewed). Everything below it
 ///    never moves.
 /// 2. One primary CTA: Check My Connection, directly under the stage.
-/// 3. Instrument grid — fixed 4x2: internet ping, internet loss, download,
+/// 3. Heartbeat strip — a thin live sparkline of internet ping, labeled
+///    with min/avg/max, directly under the CTA, proving monitoring is alive.
+/// 4. Instrument grid — fixed 4x2: internet ping, internet loss, download,
 ///    upload / router, Wi-Fi, VPN, location. Cells never disappear; an
 ///    unmeasured value renders as "—".
-/// 4. Heartbeat strip — a thin live sparkline of internet ping, labeled
-///    with min/avg/max, proving monitoring is alive.
 /// 5. Change timeline — "LAST 24 HOURS" header, a "History" button into
 ///    the dashboard's Activity view, and the most recent events, sourced
 ///    from `coordinator.eventLog`.
@@ -37,11 +37,11 @@ struct DropdownView: View {
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.top, Theme.Spacing.sm)
 
-            instrumentSection
+            heartbeatSection
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.top, Theme.Spacing.sm)
 
-            heartbeatSection
+            instrumentSection
                 .padding(.horizontal, Theme.Spacing.md)
                 .padding(.top, Theme.Spacing.xs)
 
@@ -475,6 +475,14 @@ struct DropdownView: View {
     private var controlsSection: some View {
         VStack(spacing: 2) {
             dropdownButton("Open Dashboard", icon: "rectangle.on.rectangle") {
+                // Explicit, not just "whatever the window happens to be
+                // showing": without this, a single earlier trip to Activity
+                // (via `openActivity()` below) would leave every later
+                // "Open Dashboard" landing back on Activity forever — this
+                // row's whole point is Home. `MainWindow` applies the
+                // request whether it's opening the window fresh (`.task`)
+                // or the window is already open (`.onChange`).
+                coordinator.requestedDestination = .home
                 openWindow(id: WindowID.dashboard)
                 // Opened from a menu-bar extra the window arrives behind
                 // whatever is frontmost; every other window-opening row
@@ -488,6 +496,14 @@ struct DropdownView: View {
                 appSettings.monitoringEnabled = enabled
                 coordinator.setMonitoring(enabled: enabled)
             }
+
+            // Open Dashboard + Pause/Resume above the line, Settings + Quit
+            // below — the same horizontal inset the rows themselves use
+            // (via `dropdownButton`) so it doesn't run flush to the panel
+            // edge the way an unpadded Divider would.
+            Divider()
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.vertical, Theme.Spacing.xs)
 
             dropdownButton("Settings…", icon: "gearshape") {
                 openWindow(id: WindowID.settings)

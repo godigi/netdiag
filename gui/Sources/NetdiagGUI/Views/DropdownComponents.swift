@@ -149,7 +149,10 @@ struct EventRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
-            Text(RelativeTime.string(from: event.date))
+            // Not a plain `Text(RelativeTime.string(...))`: see
+            // `RelativeTimeText`'s header for why a static leaf view like
+            // this row freezes at whatever age it first rendered otherwise.
+            RelativeTimeText(date: event.date)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .layoutPriority(1)
