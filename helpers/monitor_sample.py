@@ -77,7 +77,7 @@ def _tri(name: str) -> bool | None:
 
 def build_tcp() -> list[dict]:
     """NETDIAG_MON_TCP_LINES is one 'host|port|ok|elapsed_ms' per line."""
-    raw = os.environ.get("NETDIAG_MON_TCP_LINES", "")
+    raw = _env("TCP_LINES") or ""
     out: list[dict] = []
     for line in raw.splitlines():
         if not line.strip():
@@ -189,7 +189,7 @@ def _changes() -> list[dict]:
 def main() -> None:
     is_wifi = _env("IFACE_TYPE") == "wifi"
     link_up = os.environ.get("NETDIAG_MON_LINK_UP") == "1"
-    rules = (os.environ.get("NETDIAG_MON_RULES", "") or "").split()
+    rules = (_env("RULES") or "").split()
 
     sample = {
         "schema": _i("SCHEMA") or 1,
@@ -199,7 +199,7 @@ def main() -> None:
         # Which tiers actually refreshed this cycle. Everything outside
         # this list is carried over from an earlier sample, which a
         # consumer plotting a series needs to know before it draws a point.
-        "refreshed": (os.environ.get("NETDIAG_MON_REFRESHED", "") or "").split(),
+        "refreshed": (_env("REFRESHED") or "").split(),
         "link": {
             "up": link_up,
             "interface": _env("INTERFACE"),
