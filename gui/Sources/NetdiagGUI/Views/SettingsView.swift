@@ -178,7 +178,7 @@ struct SettingsView: View {
                             if coordinator.locationPermissions.isDeniedOrRestricted {
                                 coordinator.locationPermissions.openSystemSettings()
                             } else {
-                                coordinator.locationPermissions.requestAuthorization()
+                                coordinator.locationPermissions.requestOrOpenSettings()
                             }
                         }
                     } else {
