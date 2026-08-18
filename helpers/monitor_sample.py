@@ -192,7 +192,9 @@ def main() -> None:
     rules = (_env("RULES") or "").split()
 
     sample = {
-        "schema": _i("SCHEMA") or 1,
+        # Fallback exists only for standalone/test invocation; it must
+        # track NETDIAG_MON_SCHEMA in lib/monitor.sh.
+        "schema": _i("SCHEMA") or 2,
         "version": _env("VERSION"),
         "ts": _env("TS"),
         "seq": _i("SEQ") or 0,

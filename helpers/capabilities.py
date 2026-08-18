@@ -16,7 +16,7 @@ a verdict. Nothing here reads lib/thresholds.sh.
 `schemas` mirrors the schema number already embedded in four other
 outputs, and declares two more that don't carry one yet:
   * monitor       — lib/monitor.sh's _mon_emit() sets
-    NETDIAG_MON_SCHEMA=2, read by helpers/monitor_sample.py.
+    NETDIAG_MON_SCHEMA, read by helpers/monitor_sample.py.
   * show          — helpers/history.py's build_detail(), literal
     "schema": 1.
   * history       — helpers/history.py's main() --history branch,

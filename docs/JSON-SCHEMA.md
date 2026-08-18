@@ -374,7 +374,9 @@ it would accumulate forever.
               "degraded": false, "paused": false, "cadence_s": 10},
   "changes": [                    // schema 2+; ABSENT when nothing changed
     {"id": "vpn-disconnected", "field": "vpn.active",
-     "from": "1", "to": "0", "summary": "VPN disconnected (Mullvad)"}
+     "from": "1", "to": "0", "summary": "VPN disconnected (Mullvad)"},
+    {"id": "rule-fired", "field": "status.rules",
+     "from": null, "to": "G2", "summary": "Issue G2 detected"}
   ]
 }
 ```
@@ -416,7 +418,10 @@ it would accumulate forever.
   (a link-down sample must not erase the baseline). Rules are the
   deliberate exception — they are always evaluated, so `rule-fired`/
   `rule-cleared` come from plain set difference; do not "fix" the
-  rules path to match the null rule. A flapping condition emits one
+  rules path to match the null rule. Rule transitions carry the rule
+  ID on one side and `null` on the other (`rule-fired`: `from` null;
+  `rule-cleared`: `to` null), so consumers must treat `from`/`to` as
+  nullable. A flapping condition emits one
   fired/cleared pair per transition; consumers that display events
   should be prepared to coalesce repeats. The key is omitted entirely
   when nothing changed — including on every first sample of a run.
