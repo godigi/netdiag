@@ -33,6 +33,13 @@ final class NetdiagCoordinator {
     /// The run in flight, phase by phase. Reset at the start of every run
     /// and fed from the child's fd-3 stream as it arrives.
     let progress = ScanProgress()
+    /// Durable history of CLI-reported changes (monitor `changes` entries
+    /// and fired alerts) — the dropdown's timeline and its
+    /// time-since-last-change headline both read this. Named `eventLog`
+    /// rather than `events` because that name is already `events:
+    /// NetworkEventWatcher` above, a different thing (CoreWLAN/NWPath
+    /// notifications, not stored history).
+    let eventLog = EventStore()
 
     private(set) var latestRun: RunResult?
     /// Home's fallback for a session that has not run a scan yet.
@@ -183,6 +190,15 @@ final class NetdiagCoordinator {
 
     private func handleSample(_ sample: MonitorSample) {
         alerts.evaluate(sample: sample)
+
+        for change in sample.changes {
+            eventLog.record(
+                kind: change.kind,
+                summary: change.summary,
+                ruleID: change.field == "status.rules"
+                    ? (change.to ?? change.from) : nil,
+                date: sample.timestamp)
+        }
 
         guard let id = sample.network.id, !id.isEmpty else { return }
         guard id != lastNetworkID else { return }
@@ -344,6 +360,8 @@ final class NetdiagCoordinator {
         // connection that is *already* failing makes the user's situation
         // worse in the middle of whatever broke.
         runScan(depth: .alertTriggered, reason: "checking \(def.title.lowercased())")
+        eventLog.record(kind: "alert", summary: def.title,
+                        ruleID: def.rules.first)
     }
 
     // MARK: - Power
