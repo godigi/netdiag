@@ -462,13 +462,20 @@ assert len(ch) == 2, ch
 }
 
 @test "monitor_sample: vpn name change is suppressed for utun-route tunnels" {
+  # A real utun reconnect rotates both the tunnel interface and its
+  # utun-route "name" (they're the same value) — the end state should be
+  # one meaningful interface-changed row, not a duplicate vpn-name-changed
+  # entry and not silence.
   run emit NETDIAG_MON_HAVE_PREV=1 \
            NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=1 \
            NETDIAG_MON_VPN_TYPE=utun-route \
-           NETDIAG_MON_VPN_NAME=utun6 NETDIAG_MON_PREV_VPN_NAME=utun4
+           NETDIAG_MON_VPN_NAME=utun6 NETDIAG_MON_PREV_VPN_NAME=utun4 \
+           NETDIAG_MON_INTERFACE=utun6 NETDIAG_MON_PREV_INTERFACE=utun4
   printf '%s' "$output" | python3 -c "
 import json,sys
-assert 'changes' not in json.load(sys.stdin)
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'interface-changed', ch
 "
 }
 
@@ -742,4 +749,66 @@ not_alive()    { ! alive "$1"; }
   # present and do nothing.
   run grep -cE 'kill -0 "\$parent_pid"' "$REPO/lib/monitor.sh"
   [ "$output" -eq 1 ]
+}
+
+# ── previous-sample snapshot ────────────────────────────────────────────
+
+@test "_mon_snapshot_prev copies identity fields and arms HAVE_PREV" {
+  MON_PUB_IP="203.0.113.42"; MON_PUB_CC="Brazil"; MON_PUB_ISP="ExampleNet"
+  MON_VPN_ACTIVE=1; MON_VPN_NAME="Mullvad"
+  MON_SSID="HomeNet"; MON_BSSID="aa:bb:cc:dd:ee:ff"; MON_INTERFACE="en0"
+  MON_RULES="G2 "
+  MON_HAVE_PREV=0
+  _mon_snapshot_prev
+  [ "$MON_HAVE_PREV" = "1" ]
+  [ "$MON_PREV_PUB_IP" = "203.0.113.42" ]
+  [ "$MON_PREV_PUB_CC" = "Brazil" ]
+  [ "$MON_PREV_VPN_ACTIVE" = "1" ]
+  [ "$MON_PREV_VPN_NAME" = "Mullvad" ]
+  [ "$MON_PREV_SSID" = "HomeNet" ]
+  [ "$MON_PREV_BSSID" = "aa:bb:cc:dd:ee:ff" ]
+  [ "$MON_PREV_INTERFACE" = "en0" ]
+  [ "$MON_PREV_RULES" = "G2 " ]
+}
+
+@test "_mon_snapshot_prev keeps last-known identity across an empty sample" {
+  # The diff in monitor_sample.py suppresses comparisons where either
+  # side is null. If a link-down sample (empty interface/SSID) clobbered
+  # the snapshot, en0 → "" → en5 would never report interface-changed.
+  # Identity fields keep their last known value; rules and the VPN flag
+  # snapshot unconditionally (their empties are meaningful — that is
+  # what lets rule-cleared fire).
+  MON_PUB_IP="203.0.113.42"; MON_PUB_CC="Brazil"; MON_PUB_ISP="ExampleNet"
+  MON_VPN_ACTIVE=1; MON_VPN_NAME="Mullvad"
+  MON_SSID="HomeNet"; MON_BSSID="aa:bb:cc:dd:ee:ff"; MON_INTERFACE="en0"
+  MON_RULES="G2 "
+  _mon_snapshot_prev
+  MON_INTERFACE=""; MON_SSID=""; MON_BSSID=""; MON_VPN_NAME=""
+  MON_RULES=""; MON_VPN_ACTIVE=0
+  _mon_snapshot_prev
+  [ "$MON_PREV_INTERFACE" = "en0" ]
+  [ "$MON_PREV_SSID" = "HomeNet" ]
+  [ "$MON_PREV_BSSID" = "aa:bb:cc:dd:ee:ff" ]
+  [ "$MON_PREV_VPN_NAME" = "Mullvad" ]
+  [ "$MON_PREV_RULES" = "" ]
+  [ "$MON_PREV_VPN_ACTIVE" = "0" ]
+}
+
+@test "monitor state block initializes every MON_PREV_ variable" {
+  # bin/netdiag runs set -u: an uninitialized MON_PREV_* would abort the
+  # first emit. Every var _mon_emit forwards must be declared.
+  for v in MON_HAVE_PREV MON_PREV_PUB_IP MON_PREV_PUB_CC MON_PREV_PUB_ISP \
+           MON_PREV_VPN_ACTIVE MON_PREV_VPN_NAME MON_PREV_SSID \
+           MON_PREV_BSSID MON_PREV_INTERFACE MON_PREV_RULES; do
+    grep -qE "^${v}=" "$REPO/lib/monitor.sh" || {
+      echo "missing init: $v"; return 1; }
+  done
+}
+
+@test "_mon_emit forwards prev state to the sample helper" {
+  for v in HAVE_PREV PREV_PUB_IP PREV_PUB_CC PREV_PUB_ISP PREV_VPN_ACTIVE \
+           PREV_VPN_NAME PREV_SSID PREV_BSSID PREV_INTERFACE PREV_RULES; do
+    grep -q "NETDIAG_MON_${v}=" "$REPO/lib/monitor.sh" || {
+      echo "not forwarded: $v"; return 1; }
+  done
 }

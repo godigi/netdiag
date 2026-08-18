@@ -299,6 +299,29 @@ Append to `tests/test_monitor.bats` (sourced-function style — `setup()` alread
   [ "$MON_PREV_RULES" = "G2 " ]
 }
 
+@test "_mon_snapshot_prev keeps last-known identity across an empty sample" {
+  # The diff in monitor_sample.py suppresses comparisons where either
+  # side is null. If a link-down sample (empty interface/SSID) clobbered
+  # the snapshot, en0 → "" → en5 would never report interface-changed.
+  # Identity fields keep their last known value; rules and the VPN flag
+  # snapshot unconditionally (their empties are meaningful — that is
+  # what lets rule-cleared fire).
+  MON_PUB_IP="203.0.113.42"; MON_PUB_CC="Brazil"; MON_PUB_ISP="ExampleNet"
+  MON_VPN_ACTIVE=1; MON_VPN_NAME="Mullvad"
+  MON_SSID="HomeNet"; MON_BSSID="aa:bb:cc:dd:ee:ff"; MON_INTERFACE="en0"
+  MON_RULES="G2 "
+  _mon_snapshot_prev
+  MON_INTERFACE=""; MON_SSID=""; MON_BSSID=""; MON_VPN_NAME=""
+  MON_RULES=""; MON_VPN_ACTIVE=0
+  _mon_snapshot_prev
+  [ "$MON_PREV_INTERFACE" = "en0" ]
+  [ "$MON_PREV_SSID" = "HomeNet" ]
+  [ "$MON_PREV_BSSID" = "aa:bb:cc:dd:ee:ff" ]
+  [ "$MON_PREV_VPN_NAME" = "Mullvad" ]
+  [ "$MON_PREV_RULES" = "" ]
+  [ "$MON_PREV_VPN_ACTIVE" = "0" ]
+}
+
 @test "monitor state block initializes every MON_PREV_ variable" {
   # bin/netdiag runs set -u: an uninitialized MON_PREV_* would abort the
   # first emit. Every var _mon_emit forwards must be declared.
@@ -351,17 +374,25 @@ MON_PREV_RULES=""
 ```bash
 # ── Previous-sample snapshot ─────────────────────────────────────────────
 # Called after each successful emit, so the next sample diffs against
-# what the consumer actually saw. Paused re-emits carry unchanged
-# values, so snapshotting there too is a no-op by construction.
+# what the consumer actually saw.
+#
+# Identity fields keep their last KNOWN value: the diff in
+# monitor_sample.py suppresses comparisons where either side is null,
+# so an empty value here (a link-down sample, a fetch that failed)
+# must not erase the baseline — otherwise en0 → "" → en5 never
+# reports interface-changed. Rules and the VPN flag are always
+# evaluated, so they snapshot unconditionally; their empties are
+# meaningful (that is what lets rule-cleared and vpn-disconnected
+# fire).
 _mon_snapshot_prev() {
-  MON_PREV_PUB_IP="$MON_PUB_IP"
-  MON_PREV_PUB_CC="$MON_PUB_CC"
-  MON_PREV_PUB_ISP="$MON_PUB_ISP"
+  [ -n "$MON_PUB_IP" ]    && MON_PREV_PUB_IP="$MON_PUB_IP"
+  [ -n "$MON_PUB_CC" ]    && MON_PREV_PUB_CC="$MON_PUB_CC"
+  [ -n "$MON_PUB_ISP" ]   && MON_PREV_PUB_ISP="$MON_PUB_ISP"
+  [ -n "$MON_VPN_NAME" ]  && MON_PREV_VPN_NAME="$MON_VPN_NAME"
+  [ -n "$MON_SSID" ]      && MON_PREV_SSID="$MON_SSID"
+  [ -n "$MON_BSSID" ]     && MON_PREV_BSSID="$MON_BSSID"
+  [ -n "$MON_INTERFACE" ] && MON_PREV_INTERFACE="$MON_INTERFACE"
   MON_PREV_VPN_ACTIVE="$MON_VPN_ACTIVE"
-  MON_PREV_VPN_NAME="$MON_VPN_NAME"
-  MON_PREV_SSID="$MON_SSID"
-  MON_PREV_BSSID="$MON_BSSID"
-  MON_PREV_INTERFACE="$MON_INTERFACE"
   MON_PREV_RULES="$MON_RULES"
   MON_HAVE_PREV=1
   return 0
@@ -459,9 +490,16 @@ Add a bullet to "Conventions specific to the stream" (~378-401):
   `rule-fired`, `rule-cleared`), `summary` is display prose consumers
   render verbatim. A null on either side of a comparison means "not
   measured" and suppresses the entry, so a first slow-tier result is
-  not a "change". The key is omitted entirely when nothing changed —
-  including on every first sample of a run. Consumers gate on
-  `--capabilities` `schemas.monitor >= 2`.
+  not a "change"; to keep that sound, the previous-sample snapshot
+  retains the last *known* value of every null-suppressed field
+  (a link-down sample must not erase the baseline). Rules are the
+  deliberate exception — they are always evaluated, so `rule-fired`/
+  `rule-cleared` come from plain set difference; do not "fix" the
+  rules path to match the null rule. A flapping condition emits one
+  fired/cleared pair per transition; consumers that display events
+  should be prepared to coalesce repeats. The key is omitted entirely
+  when nothing changed — including on every first sample of a run.
+  Consumers gate on `--capabilities` `schemas.monitor >= 2`.
 ```
 
 In the capabilities literal (~745): `"monitor": 1` → `"monitor": 2`.

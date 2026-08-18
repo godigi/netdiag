@@ -130,6 +130,20 @@ MON_HW_PORTS=""
 # file has to be excused from.
 MON_INIT_PID=1
 
+# Previous-sample identity, for the schema-2 changes array. Snapshotted
+# by _mon_snapshot_prev after every successful emit; MON_HAVE_PREV=0
+# suppresses a spurious "everything changed" on the first sample.
+MON_HAVE_PREV=0
+MON_PREV_PUB_IP=""
+MON_PREV_PUB_CC=""
+MON_PREV_PUB_ISP=""
+MON_PREV_VPN_ACTIVE=""
+MON_PREV_VPN_NAME=""
+MON_PREV_SSID=""
+MON_PREV_BSSID=""
+MON_PREV_INTERFACE=""
+MON_PREV_RULES=""
+
 # ── Fast tier ────────────────────────────────────────────────────────────
 
 # One `route -n get default` for both fields: it is a syscall to the
@@ -446,6 +460,32 @@ _mon_rules() {
   return 0
 }
 
+# ── Previous-sample snapshot ─────────────────────────────────────────────
+# Called after each successful emit, so the next sample diffs against
+# what the consumer actually saw.
+#
+# Identity fields keep their last KNOWN value: the diff in
+# monitor_sample.py suppresses comparisons where either side is null,
+# so an empty value here (a link-down sample, a fetch that failed)
+# must not erase the baseline — otherwise en0 → "" → en5 never
+# reports interface-changed. Rules and the VPN flag are always
+# evaluated, so they snapshot unconditionally; their empties are
+# meaningful (that is what lets rule-cleared and vpn-disconnected
+# fire).
+_mon_snapshot_prev() {
+  [ -n "$MON_PUB_IP" ]    && MON_PREV_PUB_IP="$MON_PUB_IP"
+  [ -n "$MON_PUB_CC" ]    && MON_PREV_PUB_CC="$MON_PUB_CC"
+  [ -n "$MON_PUB_ISP" ]   && MON_PREV_PUB_ISP="$MON_PUB_ISP"
+  [ -n "$MON_VPN_NAME" ]  && MON_PREV_VPN_NAME="$MON_VPN_NAME"
+  [ -n "$MON_SSID" ]      && MON_PREV_SSID="$MON_SSID"
+  [ -n "$MON_BSSID" ]     && MON_PREV_BSSID="$MON_BSSID"
+  [ -n "$MON_INTERFACE" ] && MON_PREV_INTERFACE="$MON_INTERFACE"
+  MON_PREV_VPN_ACTIVE="$MON_VPN_ACTIVE"
+  MON_PREV_RULES="$MON_RULES"
+  MON_HAVE_PREV=1
+  return 0
+}
+
 # ── Emit ─────────────────────────────────────────────────────────────────
 # Through python3 rather than bash printf. An SSID may contain a quote, a
 # backslash, or a newline, and a JSON-escaping bug in a stream the GUI
@@ -497,6 +537,16 @@ _mon_emit() {
   NETDIAG_MON_DEGRADED="$MON_DEGRADED" \
   NETDIAG_MON_PAUSED="$MON_PAUSED" \
   NETDIAG_MON_CADENCE_S="$1" \
+  NETDIAG_MON_HAVE_PREV="$MON_HAVE_PREV" \
+  NETDIAG_MON_PREV_PUB_IP="$MON_PREV_PUB_IP" \
+  NETDIAG_MON_PREV_PUB_CC="$MON_PREV_PUB_CC" \
+  NETDIAG_MON_PREV_PUB_ISP="$MON_PREV_PUB_ISP" \
+  NETDIAG_MON_PREV_VPN_ACTIVE="$MON_PREV_VPN_ACTIVE" \
+  NETDIAG_MON_PREV_VPN_NAME="$MON_PREV_VPN_NAME" \
+  NETDIAG_MON_PREV_SSID="$MON_PREV_SSID" \
+  NETDIAG_MON_PREV_BSSID="$MON_PREV_BSSID" \
+  NETDIAG_MON_PREV_INTERFACE="$MON_PREV_INTERFACE" \
+  NETDIAG_MON_PREV_RULES="$MON_PREV_RULES" \
   python3 "$HELPERS_DIR/monitor_sample.py"
 }
 
@@ -550,6 +600,7 @@ monitor_run() {
         MON_REFRESHED=""
         MON_SEQ=$((MON_SEQ + 1))
         _mon_emit "$MONITOR_FAST_INTERVAL" || break
+        _mon_snapshot_prev
       fi
       # One second at a time so SIGUSR2 resumes promptly. The trap fires
       # during _mon_sleep's `wait`, so the real latency is immediate; this
@@ -612,6 +663,7 @@ monitor_run() {
     # A failed emit means stdout is gone — the GUI exited, or a `| head -5`
     # closed the pipe. Either way there is no one left to talk to.
     _mon_emit "$cadence" || break
+    _mon_snapshot_prev
 
     if [ "$MONITOR_COUNT" -gt 0 ] && [ "$MON_SEQ" -ge "$MONITOR_COUNT" ]; then
       break
