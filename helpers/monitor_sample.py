@@ -28,7 +28,13 @@ import json
 import os
 import sys
 
-from rules_catalog import RULES
+# A broken sibling must not take the whole stream down: without the
+# catalog we fall back to "Issue <id>" phrasing, which is worse prose
+# but a live monitor.
+try:
+    from rules_catalog import RULES
+except Exception:
+    RULES = []
 
 # Rule ID -> catalog title ("G2" -> "Router dropping packets"), so a
 # rule-fired/rule-cleared summary speaks the same plain-English name the

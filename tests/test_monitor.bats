@@ -480,6 +480,28 @@ assert ch[0]['summary'] == 'Issue ZZ-9 detected', ch
 "
 }
 
+@test "monitor_sample: a broken rules_catalog sibling does not kill the emitter" {
+  # helpers/rules_catalog.py corrupted (a bad merge, a stray edit) must not
+  # take the whole monitor stream down with it — the import is guarded in
+  # monitor_sample.py. Driven directly against a corrupted copy of
+  # helpers/, matching this file's own helper-direct style, rather than via
+  # the sourced bash rule engine.
+  local tmp="$BATS_TEST_TMPDIR/helpers"
+  cp -R "$HELPERS" "$tmp"
+  printf 'this is not python\n' > "$tmp/rules_catalog.py"
+  run env -i PATH="$PATH" NETDIAG_MON_HAVE_PREV=1 \
+      NETDIAG_MON_RULES='G2 ' NETDIAG_MON_PREV_RULES='' \
+      python3 "$tmp/monitor_sample.py"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+ch = d['changes']
+assert len(ch) == 1, ch
+assert ch[0]['summary'] == 'Issue G2 detected', ch
+"
+}
+
 @test "monitor_sample: vpn name change is suppressed for utun-route tunnels" {
   # A real utun reconnect rotates both the tunnel interface and its
   # utun-route "name" (they're the same value) — the end state should be
