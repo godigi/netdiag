@@ -8,6 +8,25 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **`--monitor` schema 2: samples describe their own changes.** When a
+  tracked field differs from the previous sample — public IP, country,
+  ISP, VPN state/name, Wi-Fi network or AP, interface, or a diagnosis
+  rule firing/clearing — the emitted line carries a `changes` array
+  (`{id, field, from, to, summary}`) with the phrasing authored by the
+  CLI, so every consumer tells the same story. Null means "not
+  measured" and never counts as a change; the key is absent when
+  nothing changed; rule summaries use the rules catalog's plain-English
+  titles ("Router dropping packets"), not bare IDs. Gate on
+  `--capabilities` `schemas.monitor >= 2`.
+- **The menu-bar dropdown was rebuilt around monitoring** (GUI): an
+  adaptive stage (healthy / alert / testing / paused / version-skew)
+  over a fixed 4×2 instrument grid, a labeled internet-ping heartbeat
+  strip with min/avg/max, and a change timeline fed by a new persistent
+  event log (monitor changes + fired alerts, coalescing repeats).
+  Location shows only the country flag — hover reveals the public IP,
+  click copies it. One primary action remains ("Check My Connection");
+  the dashboard's Activity section is now a real event list.
+
 - **`netdiag --version`** — prints `netdiag VERSION` and exits 0.
 - **`netdiag --capabilities`** — a JSON handshake describing this
   install: per-mode schema numbers, a `features` list, and which
@@ -57,6 +76,10 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Changed
 
+- **The dropdown's link-path bar, glance panel, quick-action grid, and
+  contextual remedy row were retired**; their facts moved into the
+  instrument grid and the alert stage. The footer regained Open
+  Dashboard and Pause/Resume Monitoring after user testing.
 - **jq is no longer required for the speed test.** The ~10 `jq -r` calls
   that parsed Ookla's and `speedtest-cli`'s final result JSON are now one
   call to `helpers/speedtest_result.py`, a stdlib-only parser that reads
