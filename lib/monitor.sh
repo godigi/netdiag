@@ -492,7 +492,7 @@ _mon_snapshot_prev() {
 # parses forever is a far worse trade than ~50 ms of interpreter startup
 # once per cycle. At the 10 s fast cadence that is 0.5% duty.
 _mon_emit() {
-  NETDIAG_MON_SCHEMA=1 \
+  NETDIAG_MON_SCHEMA=2 \
   NETDIAG_MON_VERSION="$NETDIAG_VERSION" \
   NETDIAG_MON_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   NETDIAG_MON_SEQ="$MON_SEQ" \

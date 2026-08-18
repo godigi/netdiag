@@ -16,7 +16,7 @@ a verdict. Nothing here reads lib/thresholds.sh.
 `schemas` mirrors the schema number already embedded in four other
 outputs, and declares two more that don't carry one yet:
   * monitor       — lib/monitor.sh's _mon_emit() sets
-    NETDIAG_MON_SCHEMA=1, read by helpers/monitor_sample.py.
+    NETDIAG_MON_SCHEMA=2, read by helpers/monitor_sample.py.
   * show          — helpers/history.py's build_detail(), literal
     "schema": 1.
   * history       — helpers/history.py's main() --history branch,
@@ -45,7 +45,7 @@ SCHEMA_CAPABILITIES = 1
 # actually lives. Named constants so there is exactly one place to bump
 # per source, not a literal buried in the dict below.
 SCHEMA_RUN = 1            # no embedded field yet (see docstring)
-SCHEMA_MONITOR = 1        # lib/monitor.sh: NETDIAG_MON_SCHEMA
+SCHEMA_MONITOR = 2        # lib/monitor.sh: NETDIAG_MON_SCHEMA
 SCHEMA_HISTORY = 1        # helpers/history.py main(): "schema"
 SCHEMA_SHOW = 1           # helpers/history.py build_detail(): "schema"
 SCHEMA_RULES_CATALOG = 1  # helpers/rules_catalog.py: SCHEMA_RULES_CATALOG

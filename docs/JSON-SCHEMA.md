@@ -352,7 +352,7 @@ it would accumulate forever.
 
 ```jsonc
 {
-  "schema": 1,
+  "schema": 2,
   "version": "0.9.0",
   "ts": "2026-08-11T16:20:51Z",
   "seq": 42,
@@ -371,7 +371,11 @@ it would accumulate forever.
               "city": "…", "country": "Brazil", "country_iso": "BR",
               "captive_portal": false},
   "status":  {"severity": "ok", "rules": [], "icmp_filtered": false,
-              "degraded": false, "paused": false, "cadence_s": 10}
+              "degraded": false, "paused": false, "cadence_s": 10},
+  "changes": [                    // schema 2+; ABSENT when nothing changed
+    {"id": "vpn-disconnected", "field": "vpn.active",
+     "from": "1", "to": "0", "summary": "VPN disconnected (Mullvad)"}
+  ]
 }
 ```
 
@@ -399,6 +403,24 @@ it would accumulate forever.
   notification that would always be wrong.
 - **`status.paused`** means `SIGUSR1` suspended probing. Every measurement
   in such a sample is stale by definition; do not plot or alert on it.
+- **`changes`** (schema 2+) lists field-level differences from the
+  *previous emitted sample*, phrased by the CLI: `id` is a stable kind
+  (`public-ip-changed`, `country-changed`, `isp-changed`,
+  `vpn-connected`, `vpn-disconnected`, `vpn-name-changed`,
+  `wifi-network-changed`, `wifi-roamed`, `interface-changed`,
+  `rule-fired`, `rule-cleared`), `summary` is display prose consumers
+  render verbatim. A null on either side of a comparison means "not
+  measured" and suppresses the entry, so a first slow-tier result is
+  not a "change"; to keep that sound, the previous-sample snapshot
+  retains the last *known* value of every null-suppressed field
+  (a link-down sample must not erase the baseline). Rules are the
+  deliberate exception — they are always evaluated, so `rule-fired`/
+  `rule-cleared` come from plain set difference; do not "fix" the
+  rules path to match the null rule. A flapping condition emits one
+  fired/cleared pair per transition; consumers that display events
+  should be prepared to coalesce repeats. The key is omitted entirely
+  when nothing changed — including on every first sample of a run.
+  Consumers gate on `--capabilities` `schemas.monitor >= 2`.
 
 ## Tiers and cadence
 
@@ -742,7 +764,7 @@ every optional dependency below is missing.
 {
   "schema": 1,
   "version": "0.9.0",
-  "schemas": {"run": 1, "monitor": 1, "history": 1, "show": 1,
+  "schemas": {"run": 1, "monitor": 2, "history": 1, "show": 1,
               "rules_catalog": 1, "progress": 1},
   "features": ["capabilities", "version", "progress", "monitor", "history",
                "show", "redact", "speed-only", "watcher"],

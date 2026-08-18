@@ -69,10 +69,13 @@ public IP, country, ISP/ASN, VPN state and name, SSID/BSSID, interface, and
 rule-set transitions (a rule newly firing or clearing). Comparing *this sample
 to the last* is state the monitor already holds; phrasing the change in bash
 keeps the "no user-facing verdict strings in Swift" rule intact. Schema:
-`monitor` bumps 1 → 2; a `monitor_changes` entry joins `--capabilities`
-features so an older CLI degrades the GUI to a tickless timeline rather than
-breaking it. Change **detection** is field inequality, not thresholds — no new
-numeric cutoffs, so `lib/thresholds.sh` is untouched.
+`monitor` bumps 1 → 2; the GUI gates the event feed on `--capabilities`
+`schemas.monitor >= 2`, so an older CLI degrades the GUI to a tickless
+timeline rather than breaking it. (Not a `features` entry: that list is
+CI-checked against literal `--help` flags, and this is a schema property,
+which `schemas` already expresses.) Change **detection** is field
+inequality, not thresholds — no new numeric cutoffs, so `lib/thresholds.sh`
+is untouched.
 
 ## Event persistence
 
