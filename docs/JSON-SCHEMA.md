@@ -376,7 +376,7 @@ it would accumulate forever.
     {"id": "vpn-disconnected", "field": "vpn.active",
      "from": "1", "to": "0", "summary": "VPN disconnected (Mullvad)"},
     {"id": "rule-fired", "field": "status.rules",
-     "from": null, "to": "G2", "summary": "Issue G2 detected"}
+     "from": null, "to": "G2", "summary": "Router dropping packets"}
   ]
 }
 ```
@@ -421,11 +421,17 @@ it would accumulate forever.
   rules path to match the null rule. Rule transitions carry the rule
   ID on one side and `null` on the other (`rule-fired`: `from` null;
   `rule-cleared`: `to` null), so consumers must treat `from`/`to` as
-  nullable. A flapping condition emits one
-  fired/cleared pair per transition; consumers that display events
-  should be prepared to coalesce repeats. The key is omitted entirely
-  when nothing changed — including on every first sample of a run.
-  Consumers gate on `--capabilities` `schemas.monitor >= 2`.
+  nullable. `rule-fired`'s `summary` is the rule's title from
+  `--rules-catalog` verbatim (e.g. `"Router dropping packets"` for G2);
+  `rule-cleared`'s is `"Resolved: "` plus that same title. A rule id the
+  bundled catalog doesn't recognize (an older `helpers/rules_catalog.py`
+  than the rule that fired) falls back to `"Issue <ID> detected"` /
+  `"Issue <ID> cleared"` rather than omitting the entry. A flapping
+  condition emits one fired/cleared pair per transition; consumers that
+  display events should be prepared to coalesce repeats. The key is
+  omitted entirely when nothing changed — including on every first
+  sample of a run. Consumers gate on `--capabilities`
+  `schemas.monitor >= 2`.
 
 ## Tiers and cadence
 

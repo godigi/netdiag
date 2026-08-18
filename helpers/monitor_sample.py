@@ -28,6 +28,15 @@ import json
 import os
 import sys
 
+from rules_catalog import RULES
+
+# Rule ID -> catalog title ("G2" -> "Router dropping packets"), so a
+# rule-fired/rule-cleared summary speaks the same plain-English name the
+# GUI's report card and `--rules-catalog` already use, rather than the bare
+# rule ID a user has never seen. Built once at import time — RULES is a
+# module-level constant, so this never changes within a process lifetime.
+_RULE_TITLES: dict[str, str] = {r["id"]: r["title"] for r in RULES}
+
 
 def _env(name: str) -> str | None:
     v = os.environ.get(f"NETDIAG_MON_{name}")
@@ -178,11 +187,13 @@ def _changes() -> list[dict]:
     for rid in sorted(rules_now - rules_prev):
         out.append({"id": "rule-fired", "field": "status.rules",
                     "from": None, "to": rid,
-                    "summary": f"Issue {rid} detected"})
+                    "summary": _RULE_TITLES.get(rid, f"Issue {rid} detected")})
     for rid in sorted(rules_prev - rules_now):
+        title = _RULE_TITLES.get(rid)
         out.append({"id": "rule-cleared", "field": "status.rules",
                     "from": rid, "to": None,
-                    "summary": f"Issue {rid} cleared"})
+                    "summary": (f"Resolved: {title}" if title
+                                else f"Issue {rid} cleared")})
     return out
 
 

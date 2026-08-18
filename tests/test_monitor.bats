@@ -458,6 +458,25 @@ ids = [(c['id'], c.get('from'), c.get('to')) for c in ch]
 assert ('rule-fired', None, 'G2') in ids, ids
 assert ('rule-cleared', 'VPN-1', None) in ids, ids
 assert len(ch) == 2, ch
+# Summaries speak the rules catalog's plain-English titles, not the bare
+# rule ID — 'Issue G2 detected' would tell a non-technical user nothing.
+by_id = {c['id']: c for c in ch}
+assert by_id['rule-fired']['summary'] == 'Router dropping packets', ch
+assert by_id['rule-cleared']['summary'] == 'Resolved: VPN carrying your traffic', ch
+"
+}
+
+@test "monitor_sample: an unknown rule id falls back to a generic phrase" {
+  # A monitor running against a newer lib/thresholds.sh than the bundled
+  # rules_catalog.py knows about must still emit something readable rather
+  # than crashing the whole sample.
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_RULES='ZZ-9 ' NETDIAG_MON_PREV_RULES=''
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['summary'] == 'Issue ZZ-9 detected', ch
 "
 }
 
