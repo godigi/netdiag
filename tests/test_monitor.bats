@@ -387,7 +387,7 @@ assert len(ch) == 1, ch
 assert ch[0]['id'] == 'public-ip-changed'
 assert ch[0]['field'] == 'public.ip'
 assert ch[0]['from'] == '198.51.100.7' and ch[0]['to'] == '203.0.113.42'
-assert ch[0]['summary'] == 'Public IP changed: 198.51.100.7 → 203.0.113.42'
+assert ch[0]['summary'] == 'Public IP changed'
 "
 }
 
@@ -421,6 +421,7 @@ assert ch[0]['summary'] == 'VPN exit moved: Germany → Brazil'
   printf '%s' "$output" | python3 -c "
 import json,sys
 ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
 assert ch[0]['id'] == 'vpn-disconnected'
 assert ch[0]['summary'] == 'VPN disconnected (Mullvad)'
 "
@@ -430,6 +431,7 @@ assert ch[0]['summary'] == 'VPN disconnected (Mullvad)'
   printf '%s' "$output" | python3 -c "
 import json,sys
 ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
 assert ch[0]['id'] == 'vpn-connected'
 assert ch[0]['summary'] == 'VPN connected (Mullvad)'
 "
@@ -456,6 +458,67 @@ ids = [(c['id'], c.get('from'), c.get('to')) for c in ch]
 assert ('rule-fired', None, 'G2') in ids, ids
 assert ('rule-cleared', 'VPN-1', None) in ids, ids
 assert len(ch) == 2, ch
+"
+}
+
+@test "monitor_sample: vpn name change is suppressed for utun-route tunnels" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_VPN_TYPE=utun-route \
+           NETDIAG_MON_VPN_NAME=utun6 NETDIAG_MON_PREV_VPN_NAME=utun4
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: vpn name change still reported for named VPNs" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_VPN_TYPE=scutil-nc \
+           NETDIAG_MON_VPN_NAME=Mullvad NETDIAG_MON_PREV_VPN_NAME=ProtonVPN
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'vpn-name-changed'
+assert ch[0]['summary'] == 'VPN changed: ProtonVPN → Mullvad'
+"
+}
+
+@test "monitor_sample: country move on the connect edge is phrased as arrival, not movement" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=0 \
+           NETDIAG_MON_PUB_CC=Sweden NETDIAG_MON_PREV_PUB_CC=Germany
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 2, ch
+ids = [c['id'] for c in ch]
+assert 'vpn-connected' in ids, ch
+country = [c for c in ch if c['id'] == 'country-changed'][0]
+assert country['summary'] == 'VPN exit is in Sweden'
+"
+}
+
+@test "monitor_sample: no roam invented on a wired link" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_BSSID=aa:bb:cc:dd:ee:01 NETDIAG_MON_PREV_BSSID=aa:bb:cc:dd:ee:02
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: interface change is reported" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_INTERFACE=en5 NETDIAG_MON_PREV_INTERFACE=en0
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'interface-changed'
+assert ch[0]['summary'] == 'Network interface changed: en0 → en5'
 "
 }
 

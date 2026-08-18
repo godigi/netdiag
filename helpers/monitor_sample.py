@@ -31,7 +31,12 @@ import sys
 
 def _env(name: str) -> str | None:
     v = os.environ.get(f"NETDIAG_MON_{name}")
-    return v if v else None
+    if not v:
+        return None
+    # Foundation's JSONDecoder drops the whole line on a surrogate escape
+    # (e.g. from a non-UTF-8 SSID) — a mojibake character beats a dropped
+    # sample.
+    return v.encode("utf-8", "replace").decode("utf-8")
 
 
 def _f(name: str) -> float | None:
@@ -96,7 +101,7 @@ def build_tcp() -> list[dict]:
     return out
 
 
-def _changes() -> list:
+def _changes() -> list[dict]:
     """Field-level diff against the previous sample (NETDIAG_MON_PREV_*).
 
     None on either side means "not measured" on that side, and an
@@ -105,10 +110,16 @@ def _changes() -> list:
     Rules are the exception: they are always evaluated, so set
     difference is safe. Summaries are user-facing prose; the GUI
     renders them verbatim (CLAUDE.md: no verdict strings in Swift).
+
+    Invariant this relies on: a field whose null suppresses the diff
+    must keep its last known value in the previous-sample snapshot
+    (bash side) — otherwise a single link-down sample with empty
+    values erases the comparison baseline and interface/SSID changes
+    are never reported.
     """
     if _env("HAVE_PREV") != "1":
         return []
-    out = []
+    out: list[dict] = []
 
     def diff(now_key, prev_key, cid, field, phrase):
         now, prev = _env(now_key), _env(prev_key)
@@ -131,23 +142,31 @@ def _changes() -> list:
             "summary": (f"VPN connected{suffix}" if vpn_now
                         else f"VPN disconnected{suffix}"),
         })
-    elif vpn_now:
+    elif vpn_now and _env("VPN_TYPE") != "utun-route":
+        # lib/monitor.sh sets MON_VPN_NAME to the tunnel interface
+        # (utun4, utun6, ...) for utun-route VPNs — that's not a name,
+        # and it duplicates interface-changed below.
         diff("VPN_NAME", "PREV_VPN_NAME", "vpn-name-changed", "vpn.name",
              lambda a, b: f"VPN changed: {a} → {b}")
 
     def exit_phrase(a, b):
-        return (f"VPN exit moved: {a} → {b}" if vpn_now
-                else f"Location changed: {a} → {b}")
+        if vpn_now and vpn_prev:
+            return f"VPN exit moved: {a} → {b}"
+        if vpn_now and not vpn_prev:
+            # Just connected: "a" was the user's real location, not a
+            # prior VPN exit, so don't imply the exit itself moved.
+            return f"VPN exit is in {b}"
+        return f"Location changed: {a} → {b}"
 
     diff("PUB_CC", "PREV_PUB_CC", "country-changed", "public.country",
          exit_phrase)
     diff("PUB_IP", "PREV_PUB_IP", "public-ip-changed", "public.ip",
-         lambda a, b: f"Public IP changed: {a} → {b}")
+         lambda a, b: "Public IP changed")
     diff("PUB_ISP", "PREV_PUB_ISP", "isp-changed", "public.isp",
          lambda a, b: f"Internet provider changed: {a} → {b}")
     diff("SSID", "PREV_SSID", "wifi-network-changed", "link.ssid",
          lambda a, b: f"Wi-Fi network changed: {a} → {b}")
-    if _env("SSID") == _env("PREV_SSID"):
+    if _env("SSID") is not None and _env("SSID") == _env("PREV_SSID"):
         diff("BSSID", "PREV_BSSID", "wifi-roamed", "link.bssid",
              lambda a, b: "Roamed to a different Wi-Fi access point")
     diff("INTERFACE", "PREV_INTERFACE", "interface-changed",
