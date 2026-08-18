@@ -111,6 +111,17 @@ final class NetdiagCoordinator {
         // fine before it resolves, they just show the inert fallback until
         // it does.
         rulesCatalog.ensureLoaded()
+        // Events stored before the CLI phrased rule changes from the
+        // catalog read "Issue G2 cleared". Rewrite them once the catalog
+        // is in hand so an upgrade doesn't leave rule IDs in a timeline
+        // whose whole point is plain language.
+        Task { [weak self] in
+            await self?.rulesCatalog.refresh()
+            guard let self else { return }
+            self.eventLog.rephraseLegacyRuleEvents { [weak self] ruleID in
+                self?.rulesCatalog.catalog?[ruleID]?.title
+            }
+        }
         // Lets AlertEngine.activeSorted rank alerts by the CLI's own
         // severity instead of raise order — read live off the catalog each
         // call, so a rank asked for before the catalog resolves degrades to

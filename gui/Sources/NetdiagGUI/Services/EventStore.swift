@@ -51,6 +51,27 @@ final class EventStore {
         NetworkEvent.within(events, hours: hours, now: now)
     }
 
+    /// Rewrites rule events stored before the CLI learned to phrase them
+    /// from the rules catalog, so an upgrade doesn't leave "Issue G2
+    /// cleared" sitting in the timeline forever. `title` resolves a rule
+    /// ID to the catalog's own wording — the prose still comes from the
+    /// CLI, this only replaces the ID-shaped placeholder it superseded.
+    func rephraseLegacyRuleEvents(title: (String) -> String?) {
+        var changed = false
+        events = events.map { event in
+            guard let ruleID = event.ruleID,
+                  event.summary == "Issue \(ruleID) detected"
+                    || event.summary == "Issue \(ruleID) cleared",
+                  let title = title(ruleID) else { return event }
+            var rewritten = event
+            rewritten.summary = event.kind == "rule-cleared"
+                ? "Resolved: \(title)" : title
+            changed = true
+            return rewritten
+        }
+        if changed { save() }
+    }
+
     var lastEventDate: Date? { events.first?.date }
 
     private func load() {

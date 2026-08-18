@@ -476,6 +476,10 @@ struct DropdownView: View {
         VStack(spacing: 2) {
             dropdownButton("Open Dashboard", icon: "rectangle.on.rectangle") {
                 openWindow(id: WindowID.dashboard)
+                // Opened from a menu-bar extra the window arrives behind
+                // whatever is frontmost; every other window-opening row
+                // here activates for the same reason.
+                NSApp.activate(ignoringOtherApps: true)
             }
 
             dropdownButton(appSettings.monitoringEnabled ? "Pause Monitoring" : "Resume Monitoring",
