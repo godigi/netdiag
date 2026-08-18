@@ -49,6 +49,9 @@ struct NetworkEventTests {
             kind: "rule-fired", summary: "Issue G3 detected",
             date: now, of: newest))
         #expect(!NetworkEvent.isRepeat(
+            kind: "alert", summary: "Issue G2 detected",
+            date: now, of: newest))
+        #expect(!NetworkEvent.isRepeat(
             kind: "rule-fired", summary: "Issue G2 detected",
             date: now.addingTimeInterval(700), of: newest))
         #expect(!NetworkEvent.isRepeat(

@@ -346,6 +346,11 @@ final class NetdiagCoordinator {
     /// the CLI's own explanation — that in-place update is the entire point
     /// of the trigger.
     private func handleAlertFired(_ def: AlertDefinition) {
+        // Recorded regardless of scanOnAlert: the timeline's job is to
+        // show every alert that fired, not just the ones the auto-scan
+        // preference happened to act on.
+        eventLog.record(kind: "alert", summary: def.title,
+                        ruleID: def.rules.first)
         guard Defaults.scanOnAlert else { return }
         // Loop guard, two clauses. A scan started by an alert never starts
         // another, and no scan starts while one is running. Between them
@@ -360,8 +365,6 @@ final class NetdiagCoordinator {
         // connection that is *already* failing makes the user's situation
         // worse in the middle of whatever broke.
         runScan(depth: .alertTriggered, reason: "checking \(def.title.lowercased())")
-        eventLog.record(kind: "alert", summary: def.title,
-                        ruleID: def.rules.first)
     }
 
     // MARK: - Power

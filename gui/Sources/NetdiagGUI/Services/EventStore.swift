@@ -54,10 +54,15 @@ final class EventStore {
     var lastEventDate: Date? { events.first?.date }
 
     private func load() {
-        guard let url, let data = try? Data(contentsOf: url),
-              let stored = try? JSONDecoder().decode([NetworkEvent].self,
-                                                     from: data)
-        else { return }
+        guard let url else { return }
+        // No file yet is the ordinary first-launch case — not worth a
+        // log line, unlike a file that exists but won't decode.
+        guard let data = try? Data(contentsOf: url) else { return }
+        guard let stored = try? JSONDecoder().decode([NetworkEvent].self,
+                                                     from: data) else {
+            log.debug("events.json exists but failed to decode — starting with an empty log")
+            return
+        }
         events = NetworkEvent.trimmed(stored, cap: Self.cap)
     }
 
