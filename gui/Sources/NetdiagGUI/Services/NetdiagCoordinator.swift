@@ -111,6 +111,19 @@ final class NetdiagCoordinator {
         // fine before it resolves, they just show the inert fallback until
         // it does.
         rulesCatalog.ensureLoaded()
+        // Lets AlertEngine.activeSorted rank alerts by the CLI's own
+        // severity instead of raise order — read live off the catalog each
+        // call, so a rank asked for before the catalog resolves degrades to
+        // 0 (raised-time order) rather than needing a second wiring step
+        // once the fetch completes.
+        alerts.severityRank = { [weak self] ruleID in
+            switch self?.rulesCatalog.catalog?[ruleID]?.severity {
+            case "critical": return 3
+            case "warn", "warning": return 2
+            case "info": return 1
+            default: return 0
+            }
+        }
         if Defaults.monitoringEnabled { monitor.start() }
 
         // Check for updates daily in background after initial startup delay

@@ -59,7 +59,7 @@ struct NetworkEventTests {
             date: now, in: []))
     }
 
-    /// A rule that clears and immediately re-fires (a flap) must not be
+    /// A rule that clears and immediately re-fires (a flap) must still be
     /// coalesced with the fired event two entries back — the scan has to
     /// look past the newest entry, not stop at it. `events` is
     /// newest-first, matching EventStore's invariant.

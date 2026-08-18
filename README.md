@@ -417,8 +417,8 @@ expert without asking anyone to declare which they are:
 | Layer | Content |
 |---|---|
 | Menu bar | health dot, country flag, optionally the public IP |
-| Dropdown | one plain sentence, current network, VPN badge, Run button, on-demand speed and latency tests |
-| Dashboard | **Status** (report card + diagnosis prose, and the live phase list while a check runs) · **Live** (gateway RTT, internet RTT and router loss over the last hour) · **History** (charts over every run) · **Networks** (per-network stats, rename, merge, and every stored check) |
+| Dropdown | a one-card stage (healthy / alerted / testing / paused) with the "Check My Connection" button pinned under it, a fixed instrument grid (internet ping, internet loss, download, upload, router, Wi-Fi, VPN, location), a live heartbeat strip, the last 24 hours of changes, and a footer (Open Dashboard, Pause/Resume Monitoring, Settings, Quit) |
+| Dashboard | **Status** (report card + diagnosis prose, and the live phase list while a check runs) · **Live** (gateway RTT, internet RTT and router loss over the last hour) · **Activity** (every CLI-reported change and fired alert, newest first) · **History** (charts over every run) · **Networks** (per-network stats, rename, merge, and every stored check) |
 | Expert | raw measurements, rule IDs, hop tables, sparklines, raw JSON |
 
 The expert layer is a disclosure whose open/closed state persists — never

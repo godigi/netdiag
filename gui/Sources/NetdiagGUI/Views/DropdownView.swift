@@ -23,6 +23,10 @@ struct DropdownView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
     @Environment(\.openWindow) private var openWindow
+    /// The Wi-Fi cell's CoreWLAN fallback, cached rather than read inside
+    /// `wifiValue` — see that property's header. Refreshed by the `.task`
+    /// below, at most once per incoming monitor sample.
+    @State private var coreWLANRSSI: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,6 +60,14 @@ struct DropdownView: View {
                 await coordinator.history.load()
             }
         }
+        // A live CoreWLAN read on every render would make the Wi-Fi cell
+        // cost a syscall per redraw of an always-visible menu; keying the
+        // task on the sample sequence number throttles it to once per
+        // incoming sample instead — the fast tier's own cadence (10 s,
+        // 5 s degraded) is throttle enough.
+        .task(id: coordinator.monitor.latest?.seq) {
+            refreshCoreWLANRSSIIfNeeded()
+        }
     }
 
     // MARK: - Stage
@@ -68,17 +80,21 @@ struct DropdownView: View {
         case healthy
     }
 
+    // Paused checks sit above the skewed check on purpose: a user who just
+    // turned monitoring off, or whose display just slept, must see
+    // "Monitoring paused" — not a stale capabilities-handshake error left
+    // over from before the pause, which `lastError` can still be holding.
     private var stage: Stage {
-        if let error = coordinator.monitor.lastError,
-           !coordinator.monitor.isRunning {
-            return .skewed(error)
-        }
         if coordinator.isScanning { return .testing }
         if !appSettings.monitoringEnabled {
             return .paused(nil)
         }
         if coordinator.monitor.isPausedForAnyReason {
             return .paused(coordinator.monitor.pauseReason)
+        }
+        if let error = coordinator.monitor.lastError,
+           !coordinator.monitor.isRunning {
+            return .skewed(error)
         }
         if let alert = coordinator.alerts.activeSorted.first {
             return .alerted(alert)
@@ -145,7 +161,13 @@ struct DropdownView: View {
     }
 
     private func alertStage(_ alert: AlertEngine.ActiveAlert) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // Folded into the CTA's own label rather than a second caption
+        // beside it — one more active alert is a fact about *this*
+        // button's destination (the full report lists all of them), not a
+        // second thing on the stage competing for the same attention the
+        // worst alert already has.
+        let moreCount = max(coordinator.alerts.activeSorted.count - 1, 0)
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
@@ -160,19 +182,32 @@ struct DropdownView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
-                Text(RelativeTime.string(from: alert.raisedAt))
+                Text(attributionText(for: alert))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Button("See full report") { openActivity() }
-                    .buttonStyle(.link)
-                    .font(.caption)
+                Button(moreCount > 0 ? "See full report (+\(moreCount))" : "See full report") {
+                    openActivity()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
             }
         }
         .padding(Theme.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.red.opacity(0.08),
                     in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+    }
+
+    /// "rule G2 · 3m ago" — the attribution line the spec calls for. Omits
+    /// the rule segment cleanly for the four event-driven alerts (VPN
+    /// dropped, public IP changed, ...) that carry no rule at all, rather
+    /// than printing "rule  · 3m ago".
+    private func attributionText(for alert: AlertEngine.ActiveAlert) -> String {
+        guard let rule = alert.rules.sorted().first else {
+            return RelativeTime.string(from: alert.raisedAt)
+        }
+        return "rule \(rule) · \(RelativeTime.string(from: alert.raisedAt))"
     }
 
     private var testingStage: some View {
@@ -252,7 +287,7 @@ struct DropdownView: View {
                 InstrumentCell(label: "Router",
                                value: routerInfo?.ping ?? "—",
                                tint: routerTint)
-                InstrumentCell(label: "Wi-Fi", value: wifiValue)
+                InstrumentCell(label: "Wi-Fi", value: wifiValue, tint: wifiTint)
                 InstrumentCell(label: "VPN",
                                value: vpnActive ? (vpnName ?? "on") : "off",
                                tint: vpnActive ? .primary : .secondary)
@@ -263,14 +298,14 @@ struct DropdownView: View {
         .cardStyle()
     }
 
-    /// Cell tint keys off the CLI's fired rules, never off the number:
-    /// the rule IDs are the verdict, the map below is only "which cell
-    /// does this rule talk about". The internet-side cells (ping and
-    /// loss) share L1/L2; the router cell reads G1-G3 — the two probes
-    /// measure different hops, so a cell tints only for rules about
-    /// that hop.
-    private static let internetRules: Set<String> = ["L1", "L2"]
-    private static let routerRules: Set<String> = ["G1", "G2", "G3"]
+    /// Categories of the currently fired rules, resolved through the
+    /// CLI's own catalog — the CLI names the rule, the catalog names
+    /// what the rule is about, and this view only maps "about" to a
+    /// cell. No rule list is hardcoded here to drift out of date.
+    private var firedCategories: Set<String> {
+        guard let catalog = coordinator.rulesCatalog.catalog else { return [] }
+        return Set(firedRules.compactMap { catalog[$0]?.category })
+    }
 
     private var firedRules: Set<String> {
         Set(coordinator.monitor.latest?.status.rules ?? [])
@@ -280,28 +315,44 @@ struct DropdownView: View {
         guard let rtt = coordinator.monitor.latest?.internet.rttAvgMs else {
             return ("—", .primary)
         }
-        let bad = !firedRules.isDisjoint(with: Self.internetRules)
-        return ("\(Int(rtt.rounded())) ms", bad ? .red : .primary)
+        return ("\(Int(rtt.rounded())) ms",
+                firedCategories.contains("internet") ? .red : .primary)
     }
 
+    /// Green here means something the other cells never claim: the CLI's
+    /// own severity, not this view's opinion of a number. Available only
+    /// once the catalog has loaded — without it there is no way to tell
+    /// "no rule fired" from "the catalog to check against never arrived",
+    /// so the safer read is no tint at all rather than a false all-clear.
     private var lossValue: (text: String, tint: Color) {
         guard let loss = coordinator.monitor.latest?.internet.lossPct else {
             return ("—", .primary)
         }
-        let bad = !firedRules.isDisjoint(with: Self.internetRules)
-        return (String(format: "%.1f%%", loss), bad ? .red : .green)
+        let text = String(format: "%.1f%%", loss)
+        if firedCategories.contains("internet") { return (text, .red) }
+        guard coordinator.rulesCatalog.catalog != nil else { return (text, .primary) }
+        return (text, coordinator.monitor.latest?.status.severity == "ok" ? .green : .primary)
     }
 
     private var routerTint: Color {
-        firedRules.isDisjoint(with: Self.routerRules) ? .primary : .red
+        firedCategories.contains("router") ? .red : .primary
     }
 
-    /// The monitor's slow-tier RSSI covers most of a session, but not the
-    /// gap between launch and its first slow-tier cycle — falling back to
-    /// a live CoreWLAN read (when Location Services is authorized; RSSI is
-    /// gated behind it the same as `--wifi-only`) keeps the cell from
-    /// reading "—" for that whole window. `rssiValue() == 0` is CoreWLAN's
-    /// own "unavailable", not a real reading.
+    private var wifiTint: Color {
+        firedCategories.contains("wifi") ? .red : .primary
+    }
+
+    /// RSSI arrives from the monitor's medium tier (`_mon_probe_wifi_signal`,
+    /// 60 s cadence) — but that probe needs `sudo -n`, which the ordinary
+    /// unprivileged GUI does not have, so `wifi.rssi` stays null for the
+    /// entire session in the common case. A live CoreWLAN read (gated on
+    /// Location Services, the same gate `--wifi-only` uses) is therefore
+    /// the PRIMARY source for most users; the monitor's own value is used
+    /// whenever it is present (a `sudo netdiag`-launched app, or a future
+    /// privileged helper). `rssiValue() == 0` is CoreWLAN's own
+    /// "unavailable", not a real reading. The read itself is cached in
+    /// `coreWLANRSSI` rather than taken here — see that property and the
+    /// view's `.task(id:)` for why a per-render syscall would be wrong.
     private var wifiValue: String {
         guard coordinator.monitor.latest?.link.isWiFi == true else {
             return "wired"
@@ -309,12 +360,22 @@ struct DropdownView: View {
         if let rssi = coordinator.monitor.latest?.wifi?.rssi {
             return "\(rssi) dBm"
         }
-        if coordinator.locationPermissions.isAuthorized,
-           let live = CWWiFiClient.shared().interface()?.rssiValue(),
-           live != 0 {
+        if let live = coreWLANRSSI {
             return "\(live) dBm"
         }
         return "—"
+    }
+
+    private func refreshCoreWLANRSSIIfNeeded() {
+        guard coordinator.monitor.latest?.link.isWiFi == true,
+              coordinator.monitor.latest?.wifi?.rssi == nil,
+              coordinator.locationPermissions.isAuthorized,
+              let live = CWWiFiClient.shared().interface()?.rssiValue(),
+              live != 0 else {
+            coreWLANRSSI = nil
+            return
+        }
+        coreWLANRSSI = live
     }
 
     private var speedValues: (down: String, up: String, age: String?) {
@@ -478,16 +539,15 @@ struct DropdownView: View {
 
     // MARK: - Kept glance values (unchanged from the pre-redesign dropdown)
 
+    /// Only two branches survive here: every other case `statusDetail` used
+    /// to cover (scanning, paused, monitoring off, a skewed CLI) now has its
+    /// own stage above `healthyStage` and can no longer reach this code —
+    /// `stage` returns `.healthy` only once scanning, paused-for-any-reason,
+    /// monitoring-off and skewed have all tested false.
     private var statusDetail: String? {
-        if coordinator.isScanning { return nil }
         if coordinator.monitor.isBursting {
             return "Latency test running — sampling every \(appSettings.latencyTestInterval)s."
         }
-        if let reason = coordinator.monitor.pauseReason {
-            return "Paused — \(reason)."
-        }
-        if !appSettings.monitoringEnabled { return "Turn monitoring on to watch continuously." }
-        if let error = coordinator.monitor.lastError { return error }
         if let sample = coordinator.monitor.latest, sample.status.icmpFiltered {
             return "This network blocks ping — real connections are fine."
         }

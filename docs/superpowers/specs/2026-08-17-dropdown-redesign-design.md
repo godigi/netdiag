@@ -125,7 +125,9 @@ always-on heartbeat strip.
 - **Cold launch:** hydrate instruments and timeline from history + alert store
   (existing hydration path); stage shows healthy/alert per last verdict with
   its age.
-- **No speed test ever run:** speed cells show `—`, caption "no speed test yet".
+- **No speed test ever run:** speed cells show `—`; the "speeds from test …"
+  caption is simply absent rather than replaced with placeholder text —
+  shown only once `speedValues.age` resolves to a real value.
 - **Flag rendering:** `country_iso` → regional-indicator scalars; unknown or
   redacted → 🌐 placeholder, tooltip "location unknown".
 - **Malformed monitor lines:** skipped, as consumers already must.

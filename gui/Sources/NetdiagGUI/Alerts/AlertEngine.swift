@@ -30,6 +30,12 @@ final class AlertEngine {
         /// Set once a triggered scan lands and replaces the holding text
         /// with the CLI's own prose.
         var enrichedByScan: Bool = false
+        /// The rule IDs from `AlertDefinition.rules` that back this alert —
+        /// empty for the four event-driven alerts (VPN dropped, public IP
+        /// changed, ...) that have no rule at all. Carried here rather than
+        /// looked up again at render time so the dropdown's attribution
+        /// line and `activeSorted`'s ranking read the exact set that fired.
+        var rules: Set<String> = []
     }
 
     private(set) var active: [String: ActiveAlert] = [:]
@@ -43,6 +49,12 @@ final class AlertEngine {
     /// Supplied by NetworkEventWatcher: true for 30 s after any network
     /// transition.
     var inNetworkGracePeriod: () -> Bool = { false }
+    /// Injected by `NetdiagCoordinator` once the rules catalog has a
+    /// version to answer from: rule ID in, the catalog's severity rank out
+    /// (higher is worse). Default ranks everything 0 — before the catalog
+    /// loads, `activeSorted` degrades to raised-time order rather than
+    /// pretending to know which alert is worse.
+    @ObservationIgnored var severityRank: (String) -> Int = { _ in 0 }
 
     /// Raised when an alert fires and the user has auto-scan on. The app
     /// wires this to NetdiagRunner; the loop guard lives there.
@@ -234,13 +246,15 @@ final class AlertEngine {
             // Still inside the cooldown: track it as active so the
             // dropdown shows it, but do not interrupt again.
             active[def.id] = ActiveAlert(id: def.id, title: def.title,
-                                         body: bodyOverride ?? def.interimBody, raisedAt: now)
+                                         body: bodyOverride ?? def.interimBody, raisedAt: now,
+                                         rules: def.rules)
             return
         }
 
         let body = bodyOverride ?? def.interimBody
         active[def.id] = ActiveAlert(id: def.id, title: def.title, body: body,
-                                     raisedAt: now, enrichedByScan: bodyOverride != nil)
+                                     raisedAt: now, enrichedByScan: bodyOverride != nil,
+                                     rules: def.rules)
         lastNotifiedAt[def.id] = now
         deliver(id: def.id, title: def.title, body: body, replacing: false)
         log.info("alert fired: \(def.id, privacy: .public)")
@@ -293,7 +307,18 @@ final class AlertEngine {
         }
     }
 
+    /// Worst first, so the dropdown's one-alert stage always shows the
+    /// alert most worth interrupting someone over rather than whichever
+    /// happened to fire most recently. Rank comes from the CLI's own
+    /// severity by way of `severityRank`, never a judgment made here; ties
+    /// (including the pre-catalog default rank of 0 for everything) fall
+    /// back to newest first.
     var activeSorted: [ActiveAlert] {
-        active.values.sorted { $0.raisedAt > $1.raisedAt }
+        active.values.sorted { a, b in
+            let rankA = a.rules.compactMap(severityRank).max() ?? 0
+            let rankB = b.rules.compactMap(severityRank).max() ?? 0
+            if rankA != rankB { return rankA > rankB }
+            return a.raisedAt > b.raisedAt
+        }
     }
 }

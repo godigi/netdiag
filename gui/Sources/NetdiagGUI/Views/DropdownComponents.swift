@@ -89,8 +89,8 @@ struct LocationCell: View {
 
 // MARK: - Heartbeat strip
 
-/// A thin live sparkline of fast-tier gateway RTT. Its job is to prove
-/// monitoring is alive, not to be read precisely — Live has the real
+/// A thin live sparkline of fast-tier internet-side RTT. Its job is to
+/// prove monitoring is alive, not to be read precisely — Live has the real
 /// charts.
 struct HeartbeatStrip: View {
     let samples: [MonitorSample]
@@ -128,46 +128,6 @@ struct HeartbeatStrip: View {
         .frame(height: 12)
         .background(.quaternary.opacity(Theme.cardOpacity),
                     in: RoundedRectangle(cornerRadius: 4))
-    }
-}
-
-// MARK: - Timeline band
-
-/// Callers must pre-filter `events` to the window: an event older than
-/// `hours` clamps to the left edge rather than being excluded, so an
-/// unfiltered array would draw a false "just now" tick at the band's
-/// start for anything arbitrarily old.
-struct TimelineBand: View {
-    let events: [NetworkEvent]
-    let hours: Double
-    var now: Date = .now
-
-    var body: some View {
-        VStack(spacing: 3) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(.green.opacity(0.15))
-                    ForEach(events) { event in
-                        let age = now.timeIntervalSince(event.date)
-                        let x = geo.size.width *
-                            CGFloat(1 - age / (hours * 3600))
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(EventStyle.tint(for: event.kind))
-                            .frame(width: 3)
-                            .offset(x: max(0, min(x, geo.size.width - 3)))
-                    }
-                }
-            }
-            .frame(height: 20)
-            HStack {
-                Text("\(Int(hours)) h ago")
-                Spacer()
-                Text("now")
-            }
-            .font(.system(size: 9))
-            .foregroundStyle(.tertiary)
-        }
     }
 }
 

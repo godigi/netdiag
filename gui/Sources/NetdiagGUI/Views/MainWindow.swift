@@ -122,14 +122,22 @@ struct MainWindow: View {
         }
     }
 
-    /// "Monitoring · every 10s", checked in the same priority order as the
-    /// dropdown's own status line (`DropdownView.statusDetail`, rendered
-    /// inside `healthyStage`) so the two never disagree about which state
-    /// is showing: a burst (the on-demand latency test) outranks paused,
-    /// which outranks off, which outranks an error. Unlike that panel this
-    /// line never mentions ICMP-filtered state — it states one fact,
-    /// cadence and whether the app is watching at all, never a verdict
-    /// about what the cadence found.
+    /// "Monitoring · every 10s". `DropdownView.stage` is the single source
+    /// of truth for which of these states shows — scanning, off, paused,
+    /// or a stale error; `DropdownView.statusDetail` no longer covers any
+    /// of them, it only distinguishes bursting from ICMP-filtered inside
+    /// the healthy state. This line reads the same underlying
+    /// `MonitorStream`/`AppSettings` state rather than deriving a verdict
+    /// of its own, so the sidebar and the dropdown never say two different
+    /// things about why monitoring looks the way it does. Its check order
+    /// (bursting, then a pause reason, then off, then a stale error)
+    /// differs from `stage`'s (off before pause), but `pauseReason` is nil
+    /// whenever monitoring is off — `MonitorStream.stop()` clears it — so
+    /// the two never actually disagree. Unlike `stage` this line has no
+    /// case for a scan in progress (a check running is a separate action,
+    /// not a monitoring state) and never mentions ICMP-filtered — it
+    /// states one fact, cadence and whether the app is watching at all,
+    /// never a verdict about what the cadence found.
     private var monitoringStatusLine: some View {
         HStack(spacing: 6) {
             Circle().fill(monitoringDotColor).frame(width: 7, height: 7)
