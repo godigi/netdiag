@@ -27,3 +27,6 @@ __pycache__/
 # SwiftPM build products for gui/
 gui/.build/
 gui/build/
+
+# Claude Code personal project settings
+.claude/settings.local.json
