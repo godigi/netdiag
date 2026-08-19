@@ -54,6 +54,24 @@ All notable changes to `netdiag` are recorded here. Format follows
   `netdiag --history` now needs `THRESH_COMPARE_MIN_SAMPLES`/
   `THRESH_COMPARE_TAIL_PCTL` in the environment for this reason, the same
   way `--show` always has.
+- **Releases are published from this file.** New
+  `.github/workflows/release.yml` turns a pushed `v*` tag into a GitHub
+  Release whose notes are the matching section below, extracted by a new
+  `helpers/changelog_section.py`. Before it, publishing a Release was a
+  step a human had to remember, and the memory failed for three months:
+  eleven tags were pushed and two became Releases, so the repo's front
+  page advertised v0.2.1 from May as "Latest" while `install.sh` was
+  fetching v0.9.1. The workflow refuses a tag whose version disagrees with
+  `bin/netdiag`'s `NETDIAG_VERSION`, or that has no section here — the two
+  drifts this repo has actually suffered — and can be re-run by hand
+  against an existing tag to repair its notes. `CONTRIBUTING.md` gains the
+  eight-step release checklist it enforces.
+- **`tests/test_changelog.bats`** — 11 structural guards on this file,
+  because every defect below was invisible until someone went looking and
+  none of them broke a build: a duplicate heading, a version documented
+  with no tag, a heading with no link reference, a section truncated
+  mid-sentence, and a version string in `bin/netdiag` with nothing here
+  describing it.
 
 ### Changed
 
@@ -81,6 +99,36 @@ All notable changes to `netdiag` are recorded here. Format follows
   - CI gained a broken-jq smoke test: `jq` is shadowed by a failing stub
     earlier in `PATH` than either Homebrew prefix — jq is present and
     resolves, it just fails — and a real `--json --quick` run is
+    asserted to exit anything but 3 and to parse with `python3`.
+
+### Fixed
+
+- **The paused-monitor test no longer fails in CI on a slow runner.** It
+  slept a fixed 4 s, sent `SIGUSR1`, slept 3 s more and read the stream's
+  last line — so on a loaded runner it read an empty file and died with a
+  JSON decode error, leaving a red `bats` badge on a public README for
+  three days. It now polls for the pause marker with the same `wait_until`
+  helper the three tests directly above it already use, and whose comment
+  documents this exact failure. The neighbouring SIGHUP test got the same
+  treatment for its pre-pause wait: pausing a monitor that had not probed
+  yet would have passed while asserting nothing.
+- **This file had a second `## [Unreleased]` heading**, buried between
+  `[0.5.2]` and `[0.5.1]`, holding notes — the one-line installer,
+  `docs/JSON-SCHEMA.md`, `CONTRIBUTING.md`, CI smoke tests, the removal of
+  `netdiag-prompt.md` — that had actually shipped in 0.6.0. They have been
+  merged into `[0.6.0]`, where the commits that made them live. Its
+  trailing "Known" note about `VPN-1` never firing went with them: 0.6.0
+  is the release that fixed it.
+- **`[0.9.1]`'s heading was written over the last line of the entry above
+  it**, which ended mid-sentence at "and a real `--json --quick` run is".
+  Restored from `3458283~1`.
+- **Four documented versions had no tag at all** — 0.1.0, 0.4.1, 0.5.0
+  and 0.9.1 — so their entries described something a reader could not
+  check out, and `install.sh` fetched a v0.9.1 that `git` had never heard
+  of. All four are now annotated tags on their release commits, dated to
+  match. Every heading also gained the Keep a Changelog link reference it
+  was missing, so each version links to its own diff.
+
 ## [0.9.1] - 2026-08-15
 
 Adds GitHub auto-update checks to the GUI, new layperson-tailored diagnostics for DNS and IPv6, router gateway admin quick access, and speed test retention.
@@ -377,6 +425,20 @@ retransmits its way through.
   never reached the Diagnosis section. It is `info` severity, so it cannot
   change the exit code; the point is to stop users blaming their router
   for the tunnel's latency.
+- **A one-line install.** `curl -fsSL .../install.sh | bash` now works.
+  `install.sh` previously symlinked `$REPO_ROOT/bin/netdiag`, so it only
+  ran inside an existing clone and could not be piped from curl at all.
+  It now detects that it has no checkout to point at, fetches one into
+  `~/.local/share/netdiag`, and `git pull`s it on re-run. Run from inside
+  a clone it uses that clone and never touches the network. Adds
+  `--uninstall`, and creates the `--prefix` directory instead of failing
+  with a bare `ln: No such file or directory`.
+- **`docs/JSON-SCHEMA.md`** documenting every top-level key of `--json`
+  as actually emitted, the `null` (didn't run) vs `[]` (ran, found
+  nothing) convention, and the `dhcp.dns_servers` string-not-array wart.
+- **`CONTRIBUTING.md`.**
+- **CI smoke tests** — a real `netdiag --json` run whose exit status and
+  JSON shape are checked, and an install/uninstall round-trip.
 
 ### Changed
 
@@ -443,6 +505,26 @@ retransmits its way through.
   `G1`/`G2`, so a total loss of internet produced no diagnosis at all. The
   guard is now "the router is not the problem" rather than "the router is
   flawless", and distinguishes a clean gateway from an unmeasured one.
+- **`.github/workflows/shellcheck.yml`** no longer carries a stale
+  `nimbalyst-local` entry in `ignore_paths`, left over from another
+  project.
+- **README no longer documents output the tool doesn't produce.** The
+  sample-output block showed a `── Diagnosis ──` section and wording
+  retired in v0.4.0; it now quotes the real Report card. The Roadmap
+  still listed the v0.3.0 module refactor as upcoming work. The rule
+  list was missing `N1`, `N1b`, `DI-2`, `WAN-1b`, `NAT-1b` and `BL-1`,
+  and listed `UP-1` without noting it is deliberately never emitted.
+- **`examples/sample-output.{txt,json}`** regenerated from real
+  `--redact` runs; the previous pair predated the current output format.
+
+### Removed
+
+- **`netdiag-prompt.md`**, the original build spec. Its JSON schema moved
+  to `docs/JSON-SCHEMA.md` (rewritten against what the emitter actually
+  produces — the spec's copy had drifted, e.g. `ping6_loss_pct` vs the
+  real `ping_loss_pct`, and predated the `wan`, `hosts_file`, `timings`
+  and `network` keys). Its acceptance criteria moved into `CLAUDE.md`.
+  Still in git history.
 
 ## [0.5.2] - 2026-08-11
 
@@ -494,56 +576,6 @@ data. Two of them told the user something untrue about their own setup.
   including the spinner-lifecycle invariant, whole-address override
   matching, and a `ping6` flag check that runs against loopback so it
   needs no network.
-
-## [Unreleased]
-
-### Added
-
-- **A one-line install.** `curl -fsSL .../install.sh | bash` now works.
-  `install.sh` previously symlinked `$REPO_ROOT/bin/netdiag`, so it only
-  ran inside an existing clone and could not be piped from curl at all.
-  It now detects that it has no checkout to point at, fetches one into
-  `~/.local/share/netdiag`, and `git pull`s it on re-run. Run from inside
-  a clone it uses that clone and never touches the network. Adds
-  `--uninstall`, and creates the `--prefix` directory instead of failing
-  with a bare `ln: No such file or directory`.
-- **`docs/JSON-SCHEMA.md`** documenting every top-level key of `--json`
-  as actually emitted, the `null` (didn't run) vs `[]` (ran, found
-  nothing) convention, and the `dhcp.dns_servers` string-not-array wart.
-- **`CONTRIBUTING.md`.**
-- **CI smoke tests** — a real `netdiag --json` run whose exit status and
-  JSON shape are checked, and an install/uninstall round-trip. Closes the
-  gap noted here previously.
-
-### Fixed
-
-- **`.github/workflows/shellcheck.yml`** no longer carries a stale
-  `nimbalyst-local` entry in `ignore_paths`, left over from another
-  project.
-- **README no longer documents output the tool doesn't produce.** The
-  sample-output block showed a `── Diagnosis ──` section and wording
-  retired in v0.4.0; it now quotes the real Report card. The Roadmap
-  still listed the v0.3.0 module refactor as upcoming work. The rule
-  list was missing `N1`, `N1b`, `DI-2`, `WAN-1b`, `NAT-1b` and `BL-1`,
-  and listed `UP-1` without noting it is deliberately never emitted.
-- **`examples/sample-output.{txt,json}`** regenerated from real
-  `--redact` runs; the previous pair predated the current output format.
-
-### Removed
-
-- **`netdiag-prompt.md`**, the original build spec. Its JSON schema moved
-  to `docs/JSON-SCHEMA.md` (rewritten against what the emitter actually
-  produces — the spec's copy had drifted, e.g. `ping6_loss_pct` vs the
-  real `ping_loss_pct`, and predated the `wan`, `hosts_file`, `timings`
-  and `network` keys). Its acceptance criteria moved into `CLAUDE.md`.
-  Still in git history.
-
-### Known
-
-- `VPN-1` is documented in the README and `docs/DIAGNOSIS-RULES.md` but
-  never fires: `lib/vpn.sh` prints a section line and calls no
-  `add_diag`. Both documents now say so. The fix is written and tested
-  and lands with the next release.
 
 ## [0.5.1] - 2026-08-11
 
@@ -1039,3 +1071,24 @@ output, the continuous-monitoring trio (--watch / --summary /
 Initial repo skeleton — the 297-line starter script wrapped in proper
 repo structure, MIT licence, and GitHub Actions CI for `shellcheck`
 (Ubuntu) and `bats-core` (macOS).
+
+<!-- Every heading above resolves to a tag below. Keep them in step: a
+     version with no tag has no diff a reader can follow, which is how
+     0.1.0, 0.4.1, 0.5.0 and 0.9.1 ended up documented but unreachable. -->
+
+[Unreleased]: https://github.com/godigi/netdiag/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/godigi/netdiag/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/godigi/netdiag/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/godigi/netdiag/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/godigi/netdiag/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/godigi/netdiag/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/godigi/netdiag/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/godigi/netdiag/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/godigi/netdiag/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/godigi/netdiag/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/godigi/netdiag/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/godigi/netdiag/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/godigi/netdiag/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/godigi/netdiag/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/godigi/netdiag/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/godigi/netdiag/releases/tag/v0.1.0
