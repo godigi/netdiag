@@ -1,0 +1,134 @@
+name: release
+
+# Turns a pushed tag into a GitHub Release whose notes come straight from
+# CHANGELOG.md.
+#
+# This exists because the manual process failed quietly and for a long
+# time: between v0.3.0 and v0.9.1, eleven tags were pushed and not one
+# became a Release, so the repo's front page advertised v0.2.1 from May as
+# "Latest" while v0.9.1 was what `install.sh` actually fetched. Nobody
+# noticed because nothing failed — creating a Release was simply a step a
+# human had to remember, and the CHANGELOG entry (which was always
+# written) gave every appearance that the release had happened.
+#
+# The three `verify` checks below are the real point of this file. They
+# turn the two silent drifts this repo has already suffered into a loud
+# red X on the tag:
+#
+#   1. a tag whose version disagrees with bin/netdiag's NETDIAG_VERSION
+#      — v0.9.1 shipped with the constant bumped and no tag at all;
+#   2. a tag with no matching CHANGELOG section — undocumented release;
+#   3. a tag that still says [Unreleased] — CHANGELOG never rolled over.
+#
+# Release notes are generated, never hand-written, so the Release and the
+# CHANGELOG cannot disagree.
+
+on:
+  push:
+    tags: ["v*"]
+  # Lets a maintainer backfill or repair a Release for a tag that already
+  # exists without having to delete and re-push the tag itself.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build a Release for (e.g. v0.9.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The tag being released, not the default branch: for a
+          # backfill the two are far apart, and the notes must come from
+          # the CHANGELOG as it stood at that tag.
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Resolve the version under release
+        id: v
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+          # Release title = the annotated tag's subject, which is already
+          # a one-line summary ("v0.9.0 — --progress on fd 3, --speed-only,
+          # run_mode, Live tab"). Falls back to the bare tag for a
+          # lightweight tag, which CONTRIBUTING.md tells maintainers not to
+          # create but which would otherwise leave the title empty.
+          subject="$(git tag -l --format='%(contents:subject)' "$tag")"
+          subject="${subject#netdiag }"
+          echo "title=${subject:-$tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the tag, the CLI and the CHANGELOG agree
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          fail=0
+
+          # 1. The version the CLI reports must be the version being tagged.
+          #    `netdiag --version` is what a user and the GUI's capabilities
+          #    handshake both read, so a mismatch here means the artefact
+          #    lies about itself.
+          cli="$(sed -n 's/^NETDIAG_VERSION="\(.*\)"$/\1/p' bin/netdiag | head -1)"
+          if [ "$cli" != "$VERSION" ]; then
+            echo "::error::bin/netdiag says NETDIAG_VERSION=\"$cli\" but the tag is $TAG"
+            echo "  bump NETDIAG_VERSION to $VERSION, or tag v$cli instead"
+            fail=1
+          else
+            echo "bin/netdiag reports $cli"
+          fi
+
+          # 2. The CHANGELOG must document it. This doubles as the notes
+          #    check: if the helper can't find the section, there is
+          #    nothing to publish.
+          if ! python3 helpers/changelog_section.py --version "$VERSION" > /tmp/notes.md; then
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' section"
+            fail=1
+          else
+            echo "CHANGELOG section found: $(wc -l < /tmp/notes.md) lines"
+          fi
+
+          # 3. A released version must not still be sitting under
+          #    [Unreleased] — that means the CHANGELOG was tagged without
+          #    being rolled over, and the Unreleased notes would be
+          #    published twice.
+          if grep -qE "^## \[Unreleased\]" CHANGELOG.md && \
+             ! grep -qE "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "::error::$VERSION is not in CHANGELOG.md; roll [Unreleased] over first"
+            fail=1
+          fi
+
+          exit "$fail"
+
+      - name: Show the notes that will be published
+        run: cat /tmp/notes.md
+
+      - name: Create or update the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          TITLE: ${{ steps.v.outputs.title }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          # A pre-1.0 tag is still marked as a normal release; the
+          # distinction this repo cares about is documented-vs-not, which
+          # the verify step above already enforces.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists — updating its notes in place"
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes-file /tmp/notes.md
+          else
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes-file /tmp/notes.md \
+              --verify-tag
+          fi
+          gh release view "$TAG" --json tagName,name,isDraft,isPrerelease
