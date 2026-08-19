@@ -28,6 +28,13 @@ on:
     tags: ["v*"]
   # Lets a maintainer backfill or repair a Release for a tag that already
   # exists without having to delete and re-push the tag itself.
+  #
+  # Two historical tags will not pass check 1, correctly: v0.1.0 predates
+  # the NETDIAG_VERSION constant entirely, and v0.2.1 shipped with it still
+  # reading "0.2.0" — the hotfix bumped the CHANGELOG and the tag but not
+  # the string the CLI reports, which is precisely the drift this check
+  # exists to catch. Their Releases were created directly with `gh` and are
+  # correct; re-running this workflow against either will fail on purpose.
   workflow_dispatch:
     inputs:
       tag:
@@ -43,11 +50,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          # The tag being released, not the default branch: for a
-          # backfill the two are far apart, and the notes must come from
-          # the CHANGELOG as it stood at that tag.
-          ref: ${{ inputs.tag || github.ref_name }}
+          # The default branch, not the tag — deliberately.
+          #
+          # CHANGELOG.md is cumulative: main's copy documents every version,
+          # and it is the copy that gets *corrected* when an old entry turns
+          # out to be wrong (0.6.0's notes, for one, were only reunited with
+          # their section long after 0.6.0 shipped). Checking out the tag
+          # would publish whatever that entry looked like at the time and
+          # silently lose every later repair — and, for any tag older than
+          # this workflow, would find no helpers/changelog_section.py to
+          # read it with at all, which makes the workflow_dispatch backfill
+          # path impossible.
+          #
+          # The one thing that must come from the tag is NETDIAG_VERSION,
+          # since the whole point of check 1 is what that specific commit
+          # claims about itself. It is read with `git show <tag>:` below.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Resolve the version under release
         id: v
@@ -75,8 +95,9 @@ jobs:
           # 1. The version the CLI reports must be the version being tagged.
           #    `netdiag --version` is what a user and the GUI's capabilities
           #    handshake both read, so a mismatch here means the artefact
-          #    lies about itself.
-          cli="$(sed -n 's/^NETDIAG_VERSION="\(.*\)"$/\1/p' bin/netdiag | head -1)"
+          #    lies about itself. Read from the tag, not the checked-out
+          #    default branch, whose NETDIAG_VERSION has usually moved on.
+          cli="$(git show "$TAG:bin/netdiag" | sed -n 's/^NETDIAG_VERSION="\(.*\)"$/\1/p' | head -1)"
           if [ "$cli" != "$VERSION" ]; then
             echo "::error::bin/netdiag says NETDIAG_VERSION=\"$cli\" but the tag is $TAG"
             echo "  bump NETDIAG_VERSION to $VERSION, or tag v$cli instead"
