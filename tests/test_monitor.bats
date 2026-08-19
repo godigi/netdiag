@@ -461,6 +461,23 @@ wait_until() {
 have_samples() { [ "$(samples)" -ge "${1:-1}" ]; }
 not_alive()    { ! alive "$1"; }
 
+# True once the stream's last line is a sample that reports itself paused.
+# An empty file, a half-written line, or a sample that predates the signal
+# are all ordinary while the monitor is mid-cycle, so each returns 1 and
+# lets the caller poll again rather than failing the test outright.
+last_is_paused() {
+  local last
+  last="$(tail -1 "$BATS_TEST_TMPDIR/stream.jsonl" 2>/dev/null)"
+  [ -n "$last" ] || return 1
+  printf '%s' "$last" | python3 -c '
+import json, sys
+try:
+    sys.exit(0 if json.load(sys.stdin)["status"]["paused"] is True else 1)
+except Exception:
+    sys.exit(1)
+'
+}
+
 @test "SIGUSR1 suspends probing and SIGUSR2 resumes it" {
   local pid; pid="$(start_monitor)"
   wait_until 30 have_samples 1 || { echo "monitor produced no samples at all"; kill -9 "$pid"; return 1; }
@@ -485,8 +502,13 @@ not_alive()    { ! alive "$1"; }
   # The actual regression. Six seconds is three times the ping probe that
   # used to orphan the process group and take it down.
   local pid; pid="$(start_monitor)"
-  sleep 4
+  # Wait for a real sample rather than sleeping: pausing a monitor that has
+  # not probed yet would still pass this test while asserting nothing, since
+  # the orphaning it guards against happens inside a probe.
+  wait_until 30 have_samples 1 || { echo "monitor produced no samples at all"; kill -9 "$pid"; return 1; }
   kill -USR1 "$pid"
+  # Still a fixed sleep, and it has to be: this asserts survival across a
+  # span of time, and there is no event that marks "did not die".
   sleep 7
   alive "$pid" || { echo "monitor died while paused"; return 1; }
   kill -TERM "$pid" 2>/dev/null || true
@@ -494,11 +516,20 @@ not_alive()    { ! alive "$1"; }
 
 @test "a paused monitor says so rather than going silently quiet" {
   local pid; pid="$(start_monitor)"
-  sleep 4
+  wait_until 30 have_samples 1 || { echo "monitor produced no samples at all"; kill -9 "$pid"; return 1; }
+
   kill -USR1 "$pid"
-  sleep 3
-  run tail -1 "$BATS_TEST_TMPDIR/stream.jsonl"
-  printf '%s' "$output" | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"]["paused"] is True'
+  # Poll, don't sleep. The pause marker is an event, so there is something
+  # to wait for — and the signal can land mid-cycle, which puts the marker
+  # behind an in-flight sample rather than immediately after the kill. The
+  # fixed `sleep 3` this replaces read an empty file on a loaded runner and
+  # failed with a JSON decode error, red on a public README for three days.
+  wait_until 30 last_is_paused || {
+    echo "last sample never reported paused; stream tail:"
+    tail -3 "$BATS_TEST_TMPDIR/stream.jsonl"
+    kill -9 "$pid"
+    return 1
+  }
   kill -TERM "$pid" 2>/dev/null || true
 }
 
