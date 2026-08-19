@@ -467,10 +467,11 @@ Full schema in [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md). Sample at
 
 Shipped: modular `lib/*.sh` (v0.3.0), NAT/WAN topology (v0.3.0),
 plain-English diagnoses and the Report card (v0.4.0), per-network
-baselines and `--redact` (v0.5.0), a one-line installer (v0.5.3),
+baselines and `--redact` (v0.5.0), a one-line installer (v0.6.0),
 packet-loss diagnosis (v0.6.0), `--monitor` / `--history` and the
 menu-bar app (v0.7.0), `--show` and run browsing (v0.8.0), `--progress`,
-`--speed-only` and the Live tab (v0.9.0).
+`--speed-only` and the Live tab (v0.9.0), in-app update checks and the
+`D3`/`D4`/`V6-2` DNS and IPv6 rules (v0.9.1).
 
 Next:
 

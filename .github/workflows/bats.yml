@@ -10,6 +10,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tests/test_changelog.bats asserts that every version documented
+          # in CHANGELOG.md, and every version the README credits a feature
+          # to, resolves to a real tag. The default checkout fetches no
+          # tags at all, so those guards saw an empty tag list and reported
+          # all 15 versions as untagged — a false red on a correct repo.
+          fetch-tags: true
+          fetch-depth: 0
       - name: Install bats-core, jq, and bash 5
         # netdiag's startup check exits 3 if bash 5 isn't at
         # /opt/homebrew/bin/bash or /usr/local/bin/bash, which makes the
