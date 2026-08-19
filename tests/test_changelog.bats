@@ -118,6 +118,20 @@ released_versions() {
   done <<< "$(released_versions)"
 }
 
+@test "every version the README credits a feature to actually exists" {
+  # The README's Roadmap said the one-line installer shipped in v0.5.3.
+  # There has never been a v0.5.3 — no tag, no CHANGELOG section — and the
+  # installer actually landed in 0.6.0. A reader chasing that version finds
+  # nothing, which is worse than an undated claim.
+  local missing=""
+  local v
+  for v in $(grep -oE '\(v[0-9]+\.[0-9]+\.[0-9]+\)' "$REPO/README.md" \
+             | tr -d '()' | sort -u); do
+    git -C "$REPO" rev-parse -q --verify "refs/tags/$v" >/dev/null || missing="$missing $v"
+  done
+  [ -z "$missing" ] || { echo "README credits versions that do not exist:$missing"; return 1; }
+}
+
 # ── The file and the CLI agree ───────────────────────────────────────────
 
 @test "NETDIAG_VERSION is documented in the CHANGELOG" {
