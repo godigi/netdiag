@@ -24,6 +24,18 @@ released_versions() {
   python3 "$SECTION" --file "$CHANGELOG" --list | cut -f1 | grep -v '^Unreleased$'
 }
 
+# The two guards below compare the docs against the tag list, so they are
+# meaningless in a checkout that has no tags — and worse than meaningless:
+# every version reads as untagged and the build goes red on a repo that is
+# entirely correct, which is exactly what `actions/checkout` (which fetches
+# no tags by default) produced the first time these ran. CI now sets
+# `fetch-tags: true`; this skip keeps a shallow or tagless clone honest
+# rather than failing it for a defect it cannot see.
+require_tags() {
+  [ -n "$(git -C "$REPO" tag -l 2>/dev/null)" ] \
+    || skip "checkout has no tags; nothing to check the docs against"
+}
+
 # ── The parser ───────────────────────────────────────────────────────────
 
 @test "changelog_section extracts a known section's prose" {
@@ -79,6 +91,7 @@ released_versions() {
 @test "every released version has a git tag" {
   # The gap this closes: a CHANGELOG entry for a version that was never
   # tagged describes something a reader cannot obtain.
+  require_tags
   local missing=""
   while read -r v; do
     [ -n "$v" ] || continue
@@ -123,6 +136,7 @@ released_versions() {
   # There has never been a v0.5.3 — no tag, no CHANGELOG section — and the
   # installer actually landed in 0.6.0. A reader chasing that version finds
   # nothing, which is worse than an undated claim.
+  require_tags
   local missing=""
   local v
   for v in $(grep -oE '\(v[0-9]+\.[0-9]+\.[0-9]+\)' "$REPO/README.md" \
