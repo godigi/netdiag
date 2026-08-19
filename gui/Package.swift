@@ -24,6 +24,11 @@ let package = Package(
         .executableTarget(
             name: "NetdiagGUI",
             path: "Sources/NetdiagGUI"
+        ),
+        .testTarget(
+            name: "NetdiagGUITests",
+            dependencies: ["NetdiagGUI"],
+            path: "Tests/NetdiagGUITests"
         )
     ]
 )

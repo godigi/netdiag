@@ -13,16 +13,18 @@ This is a capabilities *handshake*, not a diagnosis: every value below is
 a fact about this install (a version, a boolean, a schema number), never
 a verdict. Nothing here reads lib/thresholds.sh.
 
-`schemas` mirrors the schema number already embedded in four other
+`schemas` mirrors the schema number already embedded in five other
 outputs, and declares two more that don't carry one yet:
   * monitor       — lib/monitor.sh's _mon_emit() sets
-    NETDIAG_MON_SCHEMA=1, read by helpers/monitor_sample.py.
+    NETDIAG_MON_SCHEMA, read by helpers/monitor_sample.py.
   * show          — helpers/history.py's build_detail(), literal
     "schema": 1.
   * history       — helpers/history.py's main() --history branch,
     literal "schema": 1.
   * rules_catalog — helpers/rules_catalog.py's own SCHEMA_RULES_CATALOG,
     literal "schema": SCHEMA_RULES_CATALOG.
+  * signal_scale  — helpers/signal_scale.py's own SCHEMA_SIGNAL_SCALE,
+    literal "schema": SCHEMA_SIGNAL_SCALE.
   * run           — helpers/emit_json.py (the --json output) embeds no
     schema field today; defaults to 1 here so a consumer always has a
     number.
@@ -45,10 +47,11 @@ SCHEMA_CAPABILITIES = 1
 # actually lives. Named constants so there is exactly one place to bump
 # per source, not a literal buried in the dict below.
 SCHEMA_RUN = 1            # no embedded field yet (see docstring)
-SCHEMA_MONITOR = 1        # lib/monitor.sh: NETDIAG_MON_SCHEMA
+SCHEMA_MONITOR = 2        # lib/monitor.sh: NETDIAG_MON_SCHEMA
 SCHEMA_HISTORY = 1        # helpers/history.py main(): "schema"
 SCHEMA_SHOW = 1           # helpers/history.py build_detail(): "schema"
-SCHEMA_RULES_CATALOG = 1  # helpers/rules_catalog.py: SCHEMA_RULES_CATALOG
+SCHEMA_RULES_CATALOG = 2  # helpers/rules_catalog.py: SCHEMA_RULES_CATALOG
+SCHEMA_SIGNAL_SCALE = 1   # helpers/signal_scale.py: SCHEMA_SIGNAL_SCALE
 SCHEMA_PROGRESS = 1       # no embedded field yet (see docstring)
 
 # Not closed — a follow-up task appends to this list as new CLI surface
@@ -69,6 +72,7 @@ FEATURES = [
     "watcher-status",
     "prune-history",
     "rules-catalog",
+    "signal-scale",
 ]
 
 
@@ -91,6 +95,7 @@ def main() -> None:
             "history": SCHEMA_HISTORY,
             "show": SCHEMA_SHOW,
             "rules_catalog": SCHEMA_RULES_CATALOG,
+            "signal_scale": SCHEMA_SIGNAL_SCALE,
             "progress": SCHEMA_PROGRESS,
         },
         "features": FEATURES,

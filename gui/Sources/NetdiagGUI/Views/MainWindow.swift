@@ -122,14 +122,22 @@ struct MainWindow: View {
         }
     }
 
-    /// "Monitoring · every 10s", checked in the same priority order as the
-    /// dropdown's own status line (`DropdownView.statusDetail`) so the two
-    /// never disagree about which state is showing: a burst (the on-demand
-    /// latency test) outranks paused, which outranks off, which outranks a
-    /// stalled monitor. Unlike that panel this line never mentions
-    /// degraded-tier or ICMP-filtered state — it states one fact, cadence
-    /// and whether the app is watching at all, never a verdict about what
-    /// the cadence found.
+    /// "Monitoring · every 10s". `DropdownView.stage` is the single source
+    /// of truth for which of these states shows — scanning, off, paused,
+    /// or a stale error; `DropdownView.statusDetail` no longer covers any
+    /// of them, it only distinguishes bursting from ICMP-filtered inside
+    /// the healthy state. This line reads the same underlying
+    /// `MonitorStream`/`AppSettings` state rather than deriving a verdict
+    /// of its own, so the sidebar and the dropdown never say two different
+    /// things about why monitoring looks the way it does. Its check order
+    /// (bursting, then a pause reason, then off, then a stale error)
+    /// differs from `stage`'s (off before pause), but `pauseReason` is nil
+    /// whenever monitoring is off — `MonitorStream.stop()` clears it — so
+    /// the two never actually disagree. Unlike `stage` this line has no
+    /// case for a scan in progress (a check running is a separate action,
+    /// not a monitoring state) and never mentions ICMP-filtered — it
+    /// states one fact, cadence and whether the app is watching at all,
+    /// never a verdict about what the cadence found.
     private var monitoringStatusLine: some View {
         HStack(spacing: 6) {
             Circle().fill(monitoringDotColor).frame(width: 7, height: 7)
@@ -169,7 +177,7 @@ struct MainWindow: View {
                     }
             }
         case .live:     LiveView()
-        case .activity: ActivityPlaceholder()
+        case .activity: ActivityView()
         case .trends:   HistoryView()
         case .networks:
             // Keeps its own internal NavigationStack (Browse checks →
@@ -191,33 +199,5 @@ struct MainWindow: View {
             selection = .home
             homePath = NavigationPath([route])
         }
-    }
-}
-
-/// Activity's stand-in until T13 builds the real alert-center timeline —
-/// honest that there is nothing behind this section yet rather than an
-/// empty list that reads as broken. Deliberately not its own file: T13's
-/// plan names `Views/ActivityView.swift` as new, and pre-empting that
-/// filename here would just be renamed away in a task or two.
-private struct ActivityPlaceholder: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            Text("Activity").font(.title3)
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                Label("Alerts and checks will appear here as a timeline.",
-                      systemImage: "clock.arrow.circlepath")
-                    .font(.callout)
-                Text("A running history of what fired and when arrives with a later update — this section is a placeholder until it does.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(Theme.Spacing.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cardStyle()
-            Spacer()
-        }
-        .padding(Theme.Spacing.lg)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

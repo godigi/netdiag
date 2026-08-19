@@ -35,16 +35,36 @@ diagnosis_run() {
     add_diag critical N1b "Your Mac has a router but nothing on the public internet responded. $_rerun for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
   fi
 
-  # G1/G2/G3 — gateway loss.
+  # G1/G2/G3 — gateway loss. All three describe trouble on the connection
+  # between the Mac and the router *inside the home* — never the ISP or the
+  # wider internet — and say so in plain words, because a reader who
+  # doesn't know the difference between "router" and "internet" reads any
+  # mention of packet loss as "my internet is down". Each names the most
+  # likely cause too: Wi-Fi signal/interference, or on ethernet, the
+  # cable/port — mirrored from the same branch G3 uses below.
   if loss_at_least "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ -n "$WIFI_RSSI" ] && is_numeric "$WIFI_RSSI" && [ "$WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
-      add_diag critical G1 "You're losing packets between your Mac and your router (${GW_LOSS}% loss) and your WiFi signal is weak (${WIFI_RSSI} dBm). The WiFi connection is the problem, not your router or your internet provider. Try moving closer to the router or switching to a closer access point."
+      add_diag critical G1 "Your Mac is losing ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not out on the wider internet. Your Wi-Fi signal here is weak (${WIFI_RSSI} dBm), which is almost certainly the cause. Try moving closer to the router, or switching to a closer access point if you have one."
     else
-      add_diag critical G2 "You're losing packets between your Mac and your router (${GW_LOSS}% loss) — the connection between your Mac and your router is severely degraded. Try moving closer to the router or rebooting it (unplug for 30 seconds, plug back in). On ethernet, check the cable."
+      add_diag critical G2 "Your Mac is losing ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not out on the wider internet or with your provider. Try rebooting the router (unplug it for 30 seconds, then plug it back in) or moving closer to it; on ethernet, check the cable."
     fi
   elif loss_at_least "$GW_LOSS" "$LOSS_WARN_PCT"; then
-    # G3 — the band under G1's critical floor.
-    add_diag warn G3 "Your Mac is losing about ${GW_LOSS}% of the packets it sends to your own router — not enough to break the connection outright, but enough that web pages stall for a second or two and video calls break up. Try moving closer to your router or rebooting it. On ethernet, check the cable."
+    # G3 — the band under G1's critical floor. The cause sentence branches
+    # exactly like G1/G2 above: a weak signal (or, where it was actually
+    # measured, a low SNR) is blamed on the signal; a good signal still
+    # points at Wi-Fi interference, the most common cause at this level;
+    # ethernet points at the cable or the switch port.
+    local _g3_cause
+    if [ "$IS_WIFI" -eq 1 ] \
+       && { { [ -n "$WIFI_RSSI" ] && is_numeric "$WIFI_RSSI" && [ "$WIFI_RSSI" -le "$THRESH_WIFI_RSSI_WEAK_DBM" ]; } \
+         || { [ -n "$WIFI_SNR" ]  && is_numeric "$WIFI_SNR"  && [ "$WIFI_SNR" -lt "$THRESH_WIFI_SNR_LOW_DB" ]; }; }; then
+      _g3_cause="Your Wi-Fi signal here is weak, which is the likely cause — try moving closer to the router, or switching to a less crowded band or channel."
+    elif [ "$IS_WIFI" -eq 1 ]; then
+      _g3_cause="Even with a good signal, Wi-Fi interference — from microwaves, neighboring networks, or distance — is the most common cause at this level; restarting the router can help if it keeps happening."
+    else
+      _g3_cause="On ethernet this usually points to the cable or the port — try reseating or swapping the cable."
+    fi
+    add_diag warn G3 "Your Mac is losing about ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not to the wider internet, so your internet service itself looks fine from here. It's not enough to break the connection outright, but pages can stall for a second and calls can break up. $_g3_cause"
   fi
 
   # P1/P2 — public unreachable. The gateway guard was `== 0` exactly until

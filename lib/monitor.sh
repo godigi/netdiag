@@ -99,6 +99,13 @@ MON_VPN_TYPE=""
 MON_VPN_NAME=""
 MON_GW_LOSS=""
 MON_GW_RTT=""
+# How many consecutive cycles the warn-band loss condition has held for
+# each leg — gateway and internet — used to confirm G3/L2 before either
+# fires (see THRESH_MON_LOSS_CONFIRM_CYCLES in lib/thresholds.sh). Declared
+# here, not just assigned inside _mon_rules, because bin/netdiag runs under
+# `set -u` and the very first cycle reads them before ever writing them.
+MON_GW_LOSS_STREAK=0
+MON_INET_LOSS_STREAK=0
 MON_WIFI_RSSI=""
 MON_WIFI_NOISE=""
 MON_WIFI_SNR=""
@@ -129,6 +136,20 @@ MON_HW_PORTS=""
 # "no inline cutoff" guard stays a useful signal instead of something this
 # file has to be excused from.
 MON_INIT_PID=1
+
+# Previous-sample identity, for the schema-2 changes array. Snapshotted
+# by _mon_snapshot_prev after every successful emit; MON_HAVE_PREV=0
+# suppresses a spurious "everything changed" on the first sample.
+MON_HAVE_PREV=0
+MON_PREV_PUB_IP=""
+MON_PREV_PUB_CC=""
+MON_PREV_PUB_ISP=""
+MON_PREV_VPN_ACTIVE=""
+MON_PREV_VPN_NAME=""
+MON_PREV_SSID=""
+MON_PREV_BSSID=""
+MON_PREV_INTERFACE=""
+MON_PREV_RULES=""
 
 # ── Fast tier ────────────────────────────────────────────────────────────
 
@@ -365,6 +386,10 @@ _mon_rules() {
   if [ "$MON_LINK_UP" -eq 0 ]; then
     _mon_add_rule critical N1
     MON_DEGRADED=1
+    # No link means neither leg was probed this cycle — a streak the link
+    # drop interrupted is not a streak that held.
+    MON_GW_LOSS_STREAK=0
+    MON_INET_LOSS_STREAK=0
     return 0
   fi
 
@@ -379,14 +404,27 @@ _mon_rules() {
   # over a red report. So the rule fires, `status.icmp_filtered` says the
   # ping numbers are not to be trusted, and the alert engine — whose job
   # this is — declines to notify. Same facts, one place to decide.
+  # G3 is confirmed rather than immediate: a single cycle's loss is a blip
+  # (see THRESH_MON_LOSS_CONFIRM_CYCLES), so the warn band only fires once
+  # it has held for THRESH_MON_LOSS_CONFIRM_CYCLES consecutive cycles.
+  # Critical never waits — a real outage must not sit behind a confirmation
+  # window — and any cycle that is not in the warn band (clean, or escalated
+  # to critical) resets the streak, so a one-off blip followed by a clean
+  # cycle can never quietly accumulate toward firing later.
   if loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+    MON_GW_LOSS_STREAK=0
     if [ -n "$MON_WIFI_RSSI" ] && is_numeric "$MON_WIFI_RSSI" && [ "$MON_WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
       _mon_add_rule critical G1
     else
       _mon_add_rule critical G2
     fi
   elif loss_at_least "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
-    _mon_add_rule warn G3
+    MON_GW_LOSS_STREAK=$((MON_GW_LOSS_STREAK + 1))
+    if [ "$MON_GW_LOSS_STREAK" -ge "$THRESH_MON_LOSS_CONFIRM_CYCLES" ]; then
+      _mon_add_rule warn G3
+    fi
+  else
+    MON_GW_LOSS_STREAK=0
   fi
 
   # P1/P2 need the slow tier to have run at least once. An unmeasured
@@ -429,12 +467,24 @@ _mon_rules() {
     _mon_add_rule info ICMP-1
   fi
 
+  # L2 is confirmed the same way G3 is, and for the same reason; L1 stays
+  # immediate. Falling out of the gateway-is-quiet guard above also resets
+  # the streak — a cycle where the condition could not even be evaluated is
+  # not a cycle where it held.
   if [ "$_mon_icmp_filtered" -eq 0 ] && loss_below "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
     if loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT"; then
+      MON_INET_LOSS_STREAK=0
       _mon_add_rule critical L1
     elif loss_at_least "$MON_INET_LOSS" "$LOSS_WARN_PCT"; then
-      _mon_add_rule warn L2
+      MON_INET_LOSS_STREAK=$((MON_INET_LOSS_STREAK + 1))
+      if [ "$MON_INET_LOSS_STREAK" -ge "$THRESH_MON_LOSS_CONFIRM_CYCLES" ]; then
+        _mon_add_rule warn L2
+      fi
+    else
+      MON_INET_LOSS_STREAK=0
     fi
+  else
+    MON_INET_LOSS_STREAK=0
   fi
 
   # Cadence follows severity, not rule count: an info-level VPN notice is
@@ -446,13 +496,43 @@ _mon_rules() {
   return 0
 }
 
+# ── Previous-sample snapshot ─────────────────────────────────────────────
+# Called after each successful emit, so the next sample diffs against
+# what the consumer actually saw.
+#
+# Identity fields keep their last KNOWN value: the diff in
+# monitor_sample.py suppresses comparisons where either side is null,
+# so an empty value here (a link-down sample, a fetch that failed)
+# must not erase the baseline — otherwise en0 → "" → en5 never
+# reports interface-changed. Rules and the VPN flag are always
+# evaluated, so they snapshot unconditionally; their empties are
+# meaningful (that is what lets rule-cleared and vpn-disconnected
+# fire).
+_mon_snapshot_prev() {
+  [ -n "$MON_PUB_IP" ]    && MON_PREV_PUB_IP="$MON_PUB_IP"
+  [ -n "$MON_PUB_CC" ]    && MON_PREV_PUB_CC="$MON_PUB_CC"
+  [ -n "$MON_PUB_ISP" ]   && MON_PREV_PUB_ISP="$MON_PUB_ISP"
+  [ -n "$MON_VPN_NAME" ]  && MON_PREV_VPN_NAME="$MON_VPN_NAME"
+  [ -n "$MON_SSID" ]      && MON_PREV_SSID="$MON_SSID"
+  [ -n "$MON_BSSID" ]     && MON_PREV_BSSID="$MON_BSSID"
+  [ -n "$MON_INTERFACE" ] && MON_PREV_INTERFACE="$MON_INTERFACE"
+  MON_PREV_VPN_ACTIVE="$MON_VPN_ACTIVE"
+  MON_PREV_RULES="$MON_RULES"
+  MON_HAVE_PREV=1
+  return 0
+}
+
 # ── Emit ─────────────────────────────────────────────────────────────────
 # Through python3 rather than bash printf. An SSID may contain a quote, a
 # backslash, or a newline, and a JSON-escaping bug in a stream the GUI
 # parses forever is a far worse trade than ~50 ms of interpreter startup
 # once per cycle. At the 10 s fast cadence that is 0.5% duty.
 _mon_emit() {
-  NETDIAG_MON_SCHEMA=1 \
+  # The sibling import (rules_catalog.py) must not write __pycache__ into a
+  # sealed app bundle: newer Homebrew pythons do so by default, and inside
+  # the signed .app that mutates a resource the signature covers.
+  PYTHONDONTWRITEBYTECODE=1 \
+  NETDIAG_MON_SCHEMA=2 \
   NETDIAG_MON_VERSION="$NETDIAG_VERSION" \
   NETDIAG_MON_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   NETDIAG_MON_SEQ="$MON_SEQ" \
@@ -497,6 +577,16 @@ _mon_emit() {
   NETDIAG_MON_DEGRADED="$MON_DEGRADED" \
   NETDIAG_MON_PAUSED="$MON_PAUSED" \
   NETDIAG_MON_CADENCE_S="$1" \
+  NETDIAG_MON_HAVE_PREV="$MON_HAVE_PREV" \
+  NETDIAG_MON_PREV_PUB_IP="$MON_PREV_PUB_IP" \
+  NETDIAG_MON_PREV_PUB_CC="$MON_PREV_PUB_CC" \
+  NETDIAG_MON_PREV_PUB_ISP="$MON_PREV_PUB_ISP" \
+  NETDIAG_MON_PREV_VPN_ACTIVE="$MON_PREV_VPN_ACTIVE" \
+  NETDIAG_MON_PREV_VPN_NAME="$MON_PREV_VPN_NAME" \
+  NETDIAG_MON_PREV_SSID="$MON_PREV_SSID" \
+  NETDIAG_MON_PREV_BSSID="$MON_PREV_BSSID" \
+  NETDIAG_MON_PREV_INTERFACE="$MON_PREV_INTERFACE" \
+  NETDIAG_MON_PREV_RULES="$MON_PREV_RULES" \
   python3 "$HELPERS_DIR/monitor_sample.py"
 }
 
@@ -550,6 +640,7 @@ monitor_run() {
         MON_REFRESHED=""
         MON_SEQ=$((MON_SEQ + 1))
         _mon_emit "$MONITOR_FAST_INTERVAL" || break
+        _mon_snapshot_prev
       fi
       # One second at a time so SIGUSR2 resumes promptly. The trap fires
       # during _mon_sleep's `wait`, so the real latency is immediate; this
@@ -612,6 +703,7 @@ monitor_run() {
     # A failed emit means stdout is gone — the GUI exited, or a `| head -5`
     # closed the pipe. Either way there is no one left to talk to.
     _mon_emit "$cadence" || break
+    _mon_snapshot_prev
 
     if [ "$MONITOR_COUNT" -gt 0 ] && [ "$MON_SEQ" -ge "$MONITOR_COUNT" ]; then
       break

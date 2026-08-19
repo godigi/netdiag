@@ -67,6 +67,11 @@ or P2. That branch points the user at a full run rather than guessing.
 - Trigger: `gateway.loss_pct >= 20 AND wifi.rssi < -70`
 - Severity: `critical`
 - Recommendation: WiFi link is the problem, not the router or ISP.
+- Wording: the printed text calls the router "the box that gives you
+  internet in your home" and says explicitly that the loss is "not out on
+  the wider internet" — see the rationale under G3, which explains why
+  G1/G2/G3 all spell this out in plain words rather than assuming the
+  reader knows a router isn't the internet.
 
 ### G2 — Gateway loss with healthy WiFi
 
@@ -79,8 +84,15 @@ or P2. That branch points the user at a full run rather than guessing.
 - Trigger: `LOSS_WARN_PCT <= gateway.loss_pct < 20` (i.e. 10–19%)
 - Severity: `warn`
 - Evidence: gateway loss%.
-- Recommendation: on WiFi, signal or interference; on ethernet, the cable
-  or the port.
+- Recommendation: branches on what was actually measured, the same shape
+  G1/G2 use above it:
+  * WiFi with `wifi.rssi <= THRESH_WIFI_RSSI_WEAK_DBM`, or a measured
+    `wifi.snr < THRESH_WIFI_SNR_LOW_DB` — blame the weak signal; move
+    closer to the router or switch to a less crowded band/channel.
+  * WiFi with a good signal — Wi-Fi interference (microwaves,
+    neighbouring networks, distance) is still the most common cause at
+    this level; a router restart helps if it persists.
+  * Ethernet — the cable or the switch port.
 - Rationale: G1/G2 start at 20%, and until v0.6.0 nothing covered the band
   beneath them. The Report card coloured its Router row yellow from 1%
   upward, but colour is not a diagnosis: `ok()`/`warn()`/`bad()` are pure
@@ -88,6 +100,14 @@ or P2. That branch points the user at a full run rather than guessing.
   user's own router printed a yellow row directly above "Nothing obviously
   wrong — your network looks healthy" and exited 0. At that rate every
   page load stalls on a retransmit and calls break up.
+- Wording amendment: a non-technical reader does not reliably know that
+  "your router" and "your internet" are different things, so a message
+  that names only the router still gets read as "my internet is broken" —
+  and from there, as the ISP's fault. G1/G2/G3 now say in plain words that
+  the loss is on the connection *inside the home*, not with the internet
+  provider, and G3 additionally says the internet service itself looks
+  fine from here. Each also names the likely cause instead of stopping at
+  the verdict: Wi-Fi signal/interference, or on ethernet, the cable/port.
 
 ### P1 — DNS down, public unreachable
 
@@ -489,6 +509,19 @@ All of the below are implemented and can fire.
   absolute number still looks fine. Scoped per-network since v0.5.0 —
   before that, a laptop moving between home and a café reported a
   regression on every move.
+- Speedtest confirmation: a speed test result depends on who else is using
+  the link at that exact moment as much as on the network's own health, so
+  `speedtest.down_mbps` / `speedtest.up_mbps` need more than one bad
+  reading before they raise BL-1. A drop is only reported once the current
+  run **and** the `THRESH_SPEED_CONFIRM_RUNS - 1` measured runs immediately
+  before it (1 run, with the default of 2) are all below
+  `THRESH_SPEED_DROP_FACTOR` (0.5) × the median — both in
+  `lib/thresholds.sh`, read by `helpers/baseline.py` through the
+  environment the same way `helpers/history.py` reads `THRESH_COMPARE_*`.
+  One slow run while someone else streams is not a regression; two in a row
+  is. Every other metric in `helpers/baseline.py`'s table (gateway RTT,
+  bufferbloat delta, path MTU, ISP) keeps firing on a single measured run —
+  only the speed metrics need confirmation.
 
 ## Rules emitted only by `--monitor`
 

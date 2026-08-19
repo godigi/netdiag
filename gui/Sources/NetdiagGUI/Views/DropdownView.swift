@@ -1,48 +1,57 @@
 import SwiftUI
-import CoreWLAN
 import AppKit
+import CoreWLAN
 
 /// Layer two of four: the dropdown status menu.
 ///
-/// Designed for quick at-a-glance networking health:
-/// 1. Status & connection check at top with contextual remedies
-/// 2. Active alerts (if any)
-/// 3. Visual 3-Hop Link Path bar (Mac ──▶ Router ──▶ Internet)
-/// 4. At-a-glance facts: Wi-Fi, Signal, Public IP, Pings, Speed, VPN
-/// 5. Quick action grid: Copy Summary, Speed Test, Dashboard
-/// 6. System controls: Live Latency, Pause/resume, Settings, Quit, and version footer
+/// One swappable "stage" over a fixed instrument grid:
+/// 1. Stage — a single card whose content is a function of app state
+///    (healthy / alerted / testing / paused / skewed). Everything below it
+///    never moves.
+/// 2. One primary CTA: Check My Connection, directly under the stage.
+/// 3. Heartbeat strip — a thin live sparkline of internet ping, labeled
+///    with min/avg/max, directly under the CTA, proving monitoring is alive.
+/// 4. Instrument grid — fixed 4x2: internet ping, internet loss, download,
+///    upload / router, Wi-Fi, VPN, location. Cells never disappear; an
+///    unmeasured value renders as "—".
+/// 5. Change timeline — "LAST 24 HOURS" header, a "History" button into
+///    the dashboard's Activity view, and the most recent events, sourced
+///    from `coordinator.eventLog`.
+/// 6. Footer: Open Dashboard, Pause/Resume Monitoring, Settings, Quit,
+///    version.
 struct DropdownView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
     @Environment(\.openWindow) private var openWindow
-
-    @State private var copiedSummary = false
+    /// The Wi-Fi cell's CoreWLAN fallback, cached rather than read inside
+    /// `wifiCell` — see `resolvedRSSI`'s header. Refreshed by the `.task`
+    /// below, at most once per incoming monitor sample.
+    @State private var coreWLANRSSI: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            heroSection
-            
-            if !coordinator.alerts.activeSorted.isEmpty {
-                alertStrip
-                    .padding(.top, Theme.Spacing.xs)
-            }
+            stageSection
+                .padding(.horizontal, Theme.Spacing.md)
 
-            contextualRemedy
-            
+            checkButton
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.top, Theme.Spacing.sm)
+
+            heartbeatSection
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.top, Theme.Spacing.sm)
+
+            instrumentSection
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.top, Theme.Spacing.xs)
+
             Divider().padding(.vertical, Theme.Spacing.xs)
 
-            linkPathSection
-            
+            timelineSection
+                .padding(.horizontal, Theme.Spacing.md)
+
             Divider().padding(.vertical, Theme.Spacing.xs)
-            
-            networkGlancePanel
-            
-            Divider().padding(.vertical, Theme.Spacing.xs)
-            
-            quickActionBar
-            
-            Divider().padding(.vertical, Theme.Spacing.xs)
-            
+
             controlsSection
         }
         .padding(.vertical, Theme.Spacing.sm)
@@ -51,589 +60,456 @@ struct DropdownView: View {
                 await coordinator.history.load()
             }
         }
+        // A live CoreWLAN read on every render would make the Wi-Fi cell
+        // cost a syscall per redraw of an always-visible menu; keying the
+        // task on the sample sequence number throttles it to once per
+        // incoming sample instead — the fast tier's own cadence (10 s,
+        // 5 s degraded) is throttle enough.
+        .task(id: coordinator.monitor.latest?.seq) {
+            refreshCoreWLANRSSIIfNeeded()
+        }
     }
 
-    // MARK: - Hero & Connection Check
+    // MARK: - Stage
 
-    private var heroSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
-                Image(systemName: coordinator.currentHealth.symbol)
-                    .foregroundStyle(coordinator.currentHealth.tint)
-                    .font(.title3)
-                    .padding(.top, 1)
+    private enum Stage {
+        case skewed(String)
+        case testing
+        case paused(String?)
+        case alerted(AlertEngine.ActiveAlert)
+        case healthy
+    }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(coordinator.headline)
-                        .font(.callout)
-                        .fontWeight(.medium)
-                        .fixedSize(horizontal: false, vertical: true)
+    // Paused checks sit above the skewed check on purpose: a user who just
+    // turned monitoring off, or whose display just slept, must see
+    // "Monitoring paused" — not a stale capabilities-handshake error left
+    // over from before the pause, which `lastError` can still be holding.
+    private var stage: Stage {
+        if coordinator.isScanning { return .testing }
+        if !appSettings.monitoringEnabled {
+            return .paused(nil)
+        }
+        if coordinator.monitor.isPausedForAnyReason {
+            return .paused(coordinator.monitor.pauseReason)
+        }
+        if let error = coordinator.monitor.lastError,
+           !coordinator.monitor.isRunning {
+            return .skewed(error)
+        }
+        if let alert = coordinator.alerts.activeSorted.first {
+            return .alerted(alert)
+        }
+        return .healthy
+    }
 
-                    if let detail = statusDetail {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
+    @ViewBuilder
+    private var stageSection: some View {
+        switch stage {
+        case .healthy: healthyStage
+        case .alerted(let alert): alertStage(alert)
+        case .testing: testingStage
+        case .paused(let reason): pausedStage(reason)
+        case .skewed(let message): skewedStage(message)
+        }
+    }
+
+    private var healthyStage: some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("All good — watching")
+                    .font(.callout).fontWeight(.semibold)
             }
-            .padding(.horizontal, Theme.Spacing.md)
-
-            // Primary Check Action
-            if coordinator.isScanning {
-                scanningRow
-                    .padding(.horizontal, Theme.Spacing.md)
-                    .padding(.top, 4)
-            } else {
-                Button {
-                    coordinator.runScan(depth: .full, reason: "you asked")
-                } label: {
-                    HStack {
-                        Image(systemName: "stethoscope")
-                        Text("Check My Connection")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.top, 4)
-
-                if let lastCheck = lastCheckLine {
-                    HStack(spacing: 4) {
-                        Text("Last check: \(lastCheck.relative)")
-                        if let badge = lastCheck.badge {
-                            Text("· \(badge)")
-                        }
-                    }
+            Text(quietLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let lastCheck = lastCheckLine {
+                Text("Last check \(lastCheck.relative)\(lastCheck.badge.map { " · \($0)" } ?? "")")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 1)
-                }
             }
-        }
-    }
-
-    // MARK: - Contextual Remedy Button
-
-    @ViewBuilder
-    private var contextualRemedy: some View {
-        if let sample = coordinator.monitor.latest, sample.status.severity == "critical" || sample.status.severity == "warn" {
-            let rules = sample.status.rules
-            if rules.contains("G2") || rules.contains("G3"), let gwIP = coordinator.monitor.latest?.link.gateway {
-                HStack(spacing: 6) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    Text("Router packet loss detected.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        if let url = URL(string: "http://\(gwIP)") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    } label: {
-                        Text("Open Router Admin")
-                            .font(.caption2)
-                    }
-                    .controlSize(.mini)
-                }
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.top, 4)
-            } else if rules.contains("G1") || rules.contains("W1") {
-                HStack(spacing: 6) {
-                    Image(systemName: "wifi.exclamationmark")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    Text("Weak Wi-Fi signal. Move closer or switch to 5 GHz.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.top, 4)
-            }
-        }
-    }
-
-    private var statusDetail: String? {
-        if coordinator.isScanning { return nil }
-        if coordinator.monitor.isBursting {
-            return "Latency test running — sampling every \(appSettings.latencyTestInterval)s."
-        }
-        if let reason = coordinator.monitor.pauseReason {
-            return "Paused — \(reason)."
-        }
-        if !appSettings.monitoringEnabled { return "Turn monitoring on to watch continuously." }
-        if let error = coordinator.monitor.lastError { return error }
-        if let sample = coordinator.monitor.latest, sample.status.icmpFiltered {
-            return "This network blocks ping — real connections are fine."
-        }
-        return nil
-    }
-
-    private var scanningRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                ScanProgressLine(progress: coordinator.progress)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            Button("Cancel check") { coordinator.cancelScan() }
-                .controlSize(.small)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Alert Strip
-
-    @ViewBuilder
-    private var alertStrip: some View {
-        let alerts = coordinator.alerts.activeSorted
-        if !alerts.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                ForEach(alerts.prefix(3)) { alert in
-                    Button(action: openActivity) {
-                        HStack(spacing: Theme.Spacing.sm) {
-                            Image(systemName: "bell.fill")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
-                            Text(alert.title)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            Text(RelativeTime.string(from: alert.raisedAt))
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, Theme.Spacing.sm + 2)
-                        .padding(.vertical, 6)
-                        .background(Color.orange.opacity(0.12),
-                                   in: RoundedRectangle(cornerRadius: Theme.Radius.card))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.Radius.card)
-                                .stroke(Color.orange.opacity(0.25))
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, Theme.Spacing.md)
-        }
-    }
-
-    private func openActivity() {
-        coordinator.requestedDestination = .activity
-        openWindow(id: WindowID.dashboard)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    // MARK: - Visual 3-Hop Link Path Bar
-
-    private var linkPathSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text("LINK PATH")
-                    .font(.system(size: 9, weight: .bold))
+            if let detail = statusDetail {
+                Text(detail)
+                    .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Spacer()
             }
-            .padding(.horizontal, Theme.Spacing.md)
-
-            HStack(spacing: 0) {
-                // Mac Node
-                pathNode(icon: "laptopcomputer", title: "Mac", subtitle: localIP ?? "en0", color: macNodeColor)
-
-                // Local Link Connector
-                pathConnector(icon: localLinkIcon, label: localLinkLabel, color: localLinkColor)
-
-                // Router Node
-                pathNode(icon: "network", title: "Router", subtitle: routerPingShort, color: routerNodeColor)
-
-                // Internet Link Connector
-                pathConnector(icon: "arrow.right", label: internetPingShort, color: internetLinkColor)
-
-                // Internet Node
-                pathNode(icon: "globe", title: "Internet", subtitle: internetStatusShort, color: internetNodeColor)
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: Theme.Radius.card))
-            .padding(.horizontal, Theme.Spacing.md)
-        }
-    }
-
-    private func pathNode(icon: String, title: String, subtitle: String, color: Color) -> some View {
-        VStack(spacing: 2) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(color)
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-            Text(subtitle)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, Theme.Spacing.sm)
+        .cardStyle()
     }
 
-    private func pathConnector(icon: String, label: String, color: Color) -> some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 2) {
-                Rectangle().fill(color.opacity(0.4)).frame(height: 1.5)
-                Image(systemName: icon)
-                    .font(.system(size: 8))
-                    .foregroundStyle(color)
-                Rectangle().fill(color.opacity(0.4)).frame(height: 1.5)
+    /// "Nothing has changed in 3 h 12 m · on HomeNet 5G" — the headline
+    /// reassurance metric. Time comes from the event store, name from
+    /// the CLI-derived network identity.
+    private var quietLine: String {
+        var parts: [String] = []
+        if let since = NetworkEvent.timeSinceLast(coordinator.eventLog.events,
+                                                  now: .now) {
+            let f = DateComponentsFormatter()
+            f.allowedUnits = since >= 3600 ? [.hour, .minute] : [.minute]
+            f.unitsStyle = .abbreviated
+            if let s = f.string(from: since) {
+                parts.append("Nothing has changed in \(s)")
             }
-            Text(label)
-                .font(.system(size: 8, weight: .medium, design: .rounded))
-                .foregroundStyle(color)
-                .lineLimit(1)
+        } else {
+            parts.append("Watching for changes")
         }
-        .frame(width: 52)
+        if let name = coordinator.wifiDisplayName { parts.append("on \(name)") }
+        return parts.joined(separator: " · ")
     }
 
-    // Path colors and labels
-    private var macNodeColor: Color {
-        if let link = coordinator.monitor.latest?.link, !link.up { return .red }
-        return .green
-    }
-
-    private var localLinkIcon: String {
-        if let isWiFi = coordinator.monitor.latest?.link.isWiFi, isWiFi {
-            return "wifi"
-        }
-        return "cable.connector"
-    }
-
-    private var localLinkLabel: String {
-        if let iface = CWWiFiClient.shared().interface() {
-            let rssi = iface.rssiValue()
-            if rssi != 0 {
-                return "\(rssi) dBm"
+    private func alertStage(_ alert: AlertEngine.ActiveAlert) -> some View {
+        // Folded into the CTA's own label rather than a second caption
+        // beside it — one more active alert is a fact about *this*
+        // button's destination (the full report lists all of them), not a
+        // second thing on the stage competing for the same attention the
+        // worst alert already has.
+        let moreCount = max(coordinator.alerts.activeSorted.count - 1, 0)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Text(alert.title)
+                    .font(.callout).fontWeight(.semibold)
+                    .lineLimit(2)
             }
-        }
-        if let isWiFi = coordinator.monitor.latest?.link.isWiFi, isWiFi {
-            return "Wi-Fi"
-        }
-        return "LAN"
-    }
-
-    private var localLinkColor: Color {
-        if let sample = coordinator.monitor.latest {
-            if !sample.link.up { return .red }
-            if let loss = sample.gateway.lossPct, loss >= 20 { return .red }
-            if let loss = sample.gateway.lossPct, loss > 0 { return .orange }
-            if let iface = CWWiFiClient.shared().interface(), iface.rssiValue() < -75 && iface.rssiValue() != 0 {
-                return .orange
-            }
-        }
-        return .green
-    }
-
-    private var routerPingShort: String {
-        if let rtt = coordinator.monitor.latest?.gateway.rttAvgMs {
-            let loss = coordinator.monitor.latest?.gateway.lossPct ?? 0
-            if loss > 0 {
-                return String(format: "%.0fms (%.0f%%)", rtt, loss)
-            }
-            return String(format: "%.0f ms", rtt)
-        }
-        return "—"
-    }
-
-    private var routerNodeColor: Color {
-        if let sample = coordinator.monitor.latest {
-            if !sample.link.up { return .secondary }
-            if let loss = sample.gateway.lossPct, loss >= 20 { return .red }
-            if let loss = sample.gateway.lossPct, loss > 0 { return .orange }
-        }
-        return .green
-    }
-
-    private var internetPingShort: String {
-        if let rtt = coordinator.monitor.latest?.internet.rttAvgMs {
-            let loss = coordinator.monitor.latest?.internet.lossPct ?? 0
-            if loss > 0 {
-                return String(format: "%.0fms (%.0f%%)", rtt, loss)
-            }
-            return String(format: "%.0f ms", rtt)
-        }
-        return "—"
-    }
-
-    private var internetLinkColor: Color {
-        if let sample = coordinator.monitor.latest {
-            if !sample.link.up { return .secondary }
-            if let loss = sample.internet.lossPct, loss >= 20 { return .red }
-            if let loss = sample.internet.lossPct, loss > 0 { return .orange }
-            if sample.publicInfo.ok == false { return .red }
-        }
-        return .green
-    }
-
-    private var internetStatusShort: String {
-        if let country = countryISO, let flag = Flag.emoji(forISOCode: country) {
-            return flag
-        }
-        if let sample = coordinator.monitor.latest {
-            if sample.publicInfo.ok == false || sample.internet.lossPct == 100 {
-                return "Offline"
-            }
-        }
-        return "Online"
-    }
-
-    private var internetNodeColor: Color {
-        if let sample = coordinator.monitor.latest {
-            if !sample.link.up || sample.publicInfo.ok == false || sample.internet.lossPct == 100 { return .red }
-            if let loss = sample.internet.lossPct, loss >= 20 { return .red }
-            if let loss = sample.internet.lossPct, loss > 0 { return .orange }
-        }
-        return .green
-    }
-
-    // MARK: - At-a-Glance Network Glance Panel
-
-    private var networkGlancePanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Wi-Fi details (Only displayed when permissions are enabled and connected to Wi-Fi)
-            if let wifi = wifiGlanceInfo {
-                if let ssid = wifi.ssid {
-                    LabeledContent {
-                        Text(ssid).fontWeight(.medium)
-                    } label: {
-                        Text("Wi-Fi")
-                    }
-                }
-                LabeledContent {
-                    Text(wifi.signal)
-                        .foregroundStyle(wifi.isWeak ? .orange : .primary)
-                } label: {
-                    Text("Wi-Fi Signal")
-                }
-            } else if let name = cleanNetworkName {
-                LabeledContent {
-                    Text(name).fontWeight(.medium)
-                } label: {
-                    Text("Network")
-                }
-            }
-
-            // Public IP (IPv4 with Country Flag)
-            if let ip = publicIP {
-                LabeledContent {
-                    HStack(spacing: 4) {
-                        if let flag = Flag.emoji(forISOCode: countryISO) { Text(flag) }
-                        Text(ip)
-                            .font(Theme.Font.compactMonospace)
-                            .textSelection(.enabled)
-                    }
-                } label: {
-                    Text("Public IP")
-                }
-            }
-
-            // Internet Ping: Current prominent, average / loss smaller
-            if let ping = internetPing {
-                LabeledContent {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(ping.current)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        if let detail = ping.detail {
-                            Text(detail)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } label: {
-                    Text("Internet Ping")
-                }
-            }
-
-            // Router: Ping + Clickable Admin IP
-            if let router = routerInfo {
-                LabeledContent {
-                    HStack(spacing: 6) {
-                        Text(router.ping)
-
-                        if let ip = router.ip {
-                            Button {
-                                if let url = URL(string: "http://\(ip)") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            } label: {
-                                HStack(spacing: 2) {
-                                    Text(ip)
-                                        .font(Theme.Font.compactMonospace)
-                                    Image(systemName: "arrow.up.right.square")
-                                        .font(.system(size: 10))
-                                }
-                                .foregroundStyle(Color.accentColor)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Open router admin page (http://\(ip))")
-                        }
-                    }
-                } label: {
-                    Text("Router")
-                }
-            }
-
-            // Latest Speed (Down & Up)
-            LabeledContent {
-                Text(speedString)
-                    .foregroundStyle(hasSpeedMeasurement ? .primary : .secondary)
-            } label: {
-                Text("Speed")
-            }
-
-            // Active VPN Indicator
-            if vpnActive {
-                HStack(spacing: 5) {
-                    Image(systemName: "lock.shield.fill").foregroundStyle(.blue)
-                    Text(vpnName ?? "VPN active")
-                    Spacer()
-                }
+            // CLI prose verbatim — the interim body until a scan
+            // enriches it, then diagnosis[].summary.
+            Text(alert.body)
                 .font(.caption)
-                .padding(.top, 2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Text(attributionText(for: alert))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button(moreCount > 0 ? "See full report (+\(moreCount))" : "See full report") {
+                    openActivity()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
             }
         }
-        .font(.caption)
-        .padding(.horizontal, Theme.Spacing.md)
-        .padding(.vertical, 2)
+        .padding(Theme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.card))
     }
 
-    // MARK: - Quick Action Bar (Copy Summary, Speed Test, Dashboard)
-
-    private var quickActionBar: some View {
-        HStack(spacing: 6) {
-            Button(action: copyDiagnosticSummary) {
-                HStack(spacing: 4) {
-                    Image(systemName: copiedSummary ? "checkmark" : "doc.on.doc")
-                        .foregroundStyle(copiedSummary ? .green : .secondary)
-                    Text(copiedSummary ? "Copied" : "Copy Summary")
-                }
-                .font(.caption)
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Button {
-                coordinator.runSpeedTest()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "bolt")
-                        .foregroundStyle(.secondary)
-                    Text("Speed Test")
-                }
-                .font(.caption)
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Button {
-                openWindow(id: WindowID.dashboard)
-                NSApp.activate(ignoringOtherApps: true)
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chart.bar")
-                        .foregroundStyle(.secondary)
-                    Text("Dashboard")
-                }
-                .font(.caption)
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+    /// "rule G2 · 3m ago" — the attribution line the spec calls for. Omits
+    /// the rule segment cleanly for the four event-driven alerts (VPN
+    /// dropped, public IP changed, ...) that carry no rule at all, rather
+    /// than printing "rule  · 3m ago".
+    private func attributionText(for alert: AlertEngine.ActiveAlert) -> String {
+        guard let rule = alert.rules.sorted().first else {
+            return RelativeTime.string(from: alert.raisedAt)
         }
-        .padding(.horizontal, Theme.Spacing.md)
+        return "rule \(rule) · \(RelativeTime.string(from: alert.raisedAt))"
     }
 
-    private func copyDiagnosticSummary() {
-        var lines: [String] = []
-        let dateStr = Date().formatted(date: .abbreviated, time: .shortened)
-        lines.append("Netdiag Diagnostic Summary (\(dateStr))")
-        lines.append("─────────────────────────────────────")
-        lines.append("Status: \(coordinator.headline)")
-        
-        if let wifi = wifiGlanceInfo {
-            if let ssid = wifi.ssid {
-                lines.append("Wi-Fi: \(ssid) (\(wifi.signal))")
+    private var testingStage: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            scanningRow
+        }
+        .padding(.vertical, Theme.Spacing.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    private func pausedStage(_ reason: String?) -> some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "pause.circle.fill")
+                    .foregroundStyle(.secondary)
+                Text("Monitoring paused")
+                    .font(.callout).fontWeight(.semibold)
+            }
+            if let reason {
+                Text(reason).font(.caption).foregroundStyle(.secondary)
+            }
+            if !appSettings.monitoringEnabled {
+                Button("Resume monitoring") {
+                    appSettings.monitoringEnabled = true
+                    coordinator.setMonitoring(enabled: true)
+                }
+                .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Theme.Spacing.sm)
+        .cardStyle()
+    }
+
+    private func skewedStage(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.yellow)
+                Text("The netdiag command needs attention")
+                    .font(.callout).fontWeight(.semibold)
+            }
+            Text(message)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Open Settings") { openWindow(id: WindowID.settings) }
+                .controlSize(.small)
+        }
+        .padding(Theme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    // MARK: - Instruments (fixed; never move between states)
+
+    private var instrumentSection: some View {
+        VStack(spacing: Theme.Spacing.xs) {
+            HStack(spacing: 0) {
+                InstrumentCell(label: "Internet", value: internetValue.text,
+                               tint: internetValue.tint)
+                InstrumentCell(label: "Loss", value: lossValue.text,
+                               tint: lossValue.tint)
+                InstrumentCell(label: "Down", value: speedValues.down,
+                               unit: "Mbps")
+                InstrumentCell(label: "Up", value: speedValues.up,
+                               unit: "Mbps")
+            }
+            if let age = speedValues.age {
+                Text("speeds from test \(age)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            Divider()
+            HStack(spacing: 0) {
+                InstrumentCell(label: "Router",
+                               value: routerInfo?.ping ?? "—",
+                               tint: routerTint)
+                InstrumentCell(label: "Wi-Fi", value: wifiCell.value,
+                               unit: wifiCell.unit, tint: wifiCell.tint)
+                InstrumentCell(label: "VPN",
+                               value: vpnActive ? (vpnName ?? "on") : "off",
+                               tint: vpnActive ? .primary : .secondary)
+                LocationCell(countryISO: countryISO, publicIP: publicIP)
+            }
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+        .cardStyle()
+    }
+
+    /// Categories of the currently fired rules, resolved through the
+    /// CLI's own catalog — the CLI names the rule, the catalog names
+    /// what the rule is about, and this view only maps "about" to a
+    /// cell. No rule list is hardcoded here to drift out of date.
+    private var firedCategories: Set<String> {
+        guard let catalog = coordinator.rulesCatalog.catalog else { return [] }
+        return Set(firedRules.compactMap { catalog[$0]?.category })
+    }
+
+    private var firedRules: Set<String> {
+        Set(coordinator.monitor.latest?.status.rules ?? [])
+    }
+
+    private var internetValue: (text: String, tint: Color) {
+        guard let rtt = coordinator.monitor.latest?.internet.rttAvgMs else {
+            return ("—", .primary)
+        }
+        return ("\(Int(rtt.rounded())) ms",
+                firedCategories.contains("internet") ? .red : .primary)
+    }
+
+    /// Green here means something the other cells never claim: the CLI's
+    /// own severity, not this view's opinion of a number. Available only
+    /// once the catalog has loaded — without it there is no way to tell
+    /// "no rule fired" from "the catalog to check against never arrived",
+    /// so the safer read is no tint at all rather than a false all-clear.
+    private var lossValue: (text: String, tint: Color) {
+        guard let loss = coordinator.monitor.latest?.internet.lossPct else {
+            return ("—", .primary)
+        }
+        let text = String(format: "%.1f%%", loss)
+        if firedCategories.contains("internet") { return (text, .red) }
+        guard coordinator.rulesCatalog.catalog != nil else { return (text, .primary) }
+        return (text, coordinator.monitor.latest?.status.severity == "ok" ? .green : .primary)
+    }
+
+    private var routerTint: Color {
+        firedCategories.contains("router") ? .red : .primary
+    }
+
+    /// RSSI arrives from the monitor's medium tier (`_mon_probe_wifi_signal`,
+    /// 60 s cadence) — but that probe needs `sudo -n`, which the ordinary
+    /// unprivileged GUI does not have, so `wifi.rssi` stays null for the
+    /// entire session in the common case. A live CoreWLAN read (gated on
+    /// Location Services, the same gate `--wifi-only` uses) is therefore
+    /// the PRIMARY source for most users; the monitor's own value is used
+    /// whenever it is present (a `sudo netdiag`-launched app, or a future
+    /// privileged helper). `rssiValue() == 0` is CoreWLAN's own
+    /// "unavailable", not a real reading. The read itself is cached in
+    /// `coreWLANRSSI` rather than taken here — see that property and the
+    /// view's `.task(id:)` for why a per-render syscall would be wrong.
+    private var resolvedRSSI: Int? {
+        coordinator.monitor.latest?.wifi?.rssi ?? coreWLANRSSI
+    }
+
+    /// The Wi-Fi cell's (value, unit, tint) — the CLI's own word as the
+    /// value and the raw dBm underneath (`SignalScale.cellContent`,
+    /// shared with `HomeView`'s Wi-Fi row), with one override on top: a
+    /// fired `wifi`-category rule always wins the tint, the same red every
+    /// other cell in this grid uses for "the CLI found a problem here" —
+    /// a band's own tone answers "how strong is this reading", not "did
+    /// the CLI diagnose something", and the two can disagree (VPN-masked
+    /// WiFi rules, a flapping link the diagnosis names but a strong
+    /// instantaneous RSSI reading wouldn't).
+    private var wifiCell: (value: String, unit: String?, tint: Color) {
+        guard coordinator.monitor.latest?.link.isWiFi == true else {
+            return ("wired", nil, .secondary)
+        }
+        let content = SignalScale.cellContent(rssi: resolvedRSSI, scale: coordinator.signalScale.scale)
+        guard firedCategories.contains("wifi") else { return content }
+        return (content.value, content.unit, .red)
+    }
+
+    private func refreshCoreWLANRSSIIfNeeded() {
+        guard coordinator.monitor.latest?.link.isWiFi == true,
+              coordinator.monitor.latest?.wifi?.rssi == nil,
+              coordinator.locationPermissions.isAuthorized,
+              let live = CWWiFiClient.shared().interface()?.rssiValue(),
+              live != 0 else {
+            coreWLANRSSI = nil
+            return
+        }
+        coreWLANRSSI = live
+    }
+
+    private var speedValues: (down: String, up: String, age: String?) {
+        if let speed = coordinator.latestSpeedTest {
+            let age = coordinator.latestSpeedTestAt
+                .map { RelativeTime.string(from: $0) }
+            return (speed.downMbps.map { String(Int($0.rounded())) } ?? "—",
+                    speed.upMbps.map { String(Int($0.rounded())) } ?? "—",
+                    age)
+        }
+        if let stored = coordinator.history.latestSpeedTest(
+            for: coordinator.monitor.latest?.network.id) {
+            return (String(Int(stored.down.rounded())),
+                    stored.up.map { String(Int($0.rounded())) } ?? "—",
+                    RelativeTime.string(from: stored.date))
+        }
+        return ("—", "—", nil)
+    }
+
+    // MARK: - Heartbeat
+
+    private var heartbeatSection: some View {
+        VStack(spacing: 2) {
+            HeartbeatStrip(samples: coordinator.monitor.recent,
+                           flatlined: !coordinator.monitor.isRunning
+                                      || coordinator.monitor.isPaused)
+            HStack {
+                Text(coordinator.monitor.isRunning && !coordinator.monitor.isPaused
+                     ? "internet ping · live" : "monitoring off")
+                Spacer()
+                if let stats = heartbeatStats {
+                    Text("min \(stats.min) · avg \(stats.avg) · max \(stats.max) ms")
+                }
+            }
+            .font(.system(size: 9))
+            .foregroundStyle(.tertiary)
+        }
+    }
+
+    /// Same 60-sample window `HeartbeatStrip` plots, summarized as
+    /// min/avg/max so the strip's shape has numbers beside it. Hidden
+    /// below two points: a min/avg/max of one number is not a range.
+    private var heartbeatStats: (min: Int, avg: Int, max: Int)? {
+        let values = coordinator.monitor.recent.suffix(60)
+            .compactMap { $0.internet.rttAvgMs }
+        guard values.count >= 2, let minV = values.min(), let maxV = values.max()
+        else { return nil }
+        let avgV = values.reduce(0, +) / Double(values.count)
+        return (Int(minV.rounded()), Int(avgV.rounded()), Int(maxV.rounded()))
+    }
+
+    // MARK: - Timeline
+
+    private var timelineSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            HStack {
+                Text("LAST 24 HOURS")
+                    .font(.system(size: 9))
+                    .kerning(0.5)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("History") { openActivity() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+            }
+            let recent = Array(coordinator.eventLog.within(hours: 24).prefix(3))
+            if recent.isEmpty {
+                Text("No changes in the last 24 hours")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 2)
             } else {
-                lines.append("Wi-Fi Signal: \(wifi.signal)")
+                ForEach(recent) { EventRow(event: $0) }
             }
-        } else if let name = cleanNetworkName {
-            lines.append("Network: \(name)")
         }
-        
-        if let local = localIP {
-            lines.append("Local IP: \(local)")
+    }
+
+    // MARK: - The one CTA
+
+    private var checkButton: some View {
+        Button {
+            coordinator.runScan(depth: .full, reason: "you asked")
+        } label: {
+            HStack {
+                Image(systemName: "stethoscope")
+                Text("Check My Connection")
+            }
+            .frame(maxWidth: .infinity)
         }
-        
-        if let router = routerInfo {
-            let ipStr = router.ip.map { " (\($0))" } ?? ""
-            lines.append("Router: \(router.ping)\(ipStr)")
-        }
-        
-        if let ping = internetPing {
-            let detail = ping.detail.map { " \($0)" } ?? ""
-            lines.append("Internet Ping: \(ping.current)\(detail)")
-        }
-        
-        if let ip = publicIP {
-            let flag = Flag.emoji(forISOCode: countryISO).map { "\($0) " } ?? ""
-            lines.append("Public IP: \(flag)\(ip)")
-        }
-        
-        if hasSpeedMeasurement {
-            lines.append("Speed: \(speedString)")
-        }
-        
-        if vpnActive {
-            lines.append("VPN: Active (\(vpnName ?? "connected"))")
-        }
-        
-        let text = lines.joined(separator: "\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        
-        copiedSummary = true
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            copiedSummary = false
-        }
+        .buttonStyle(.borderedProminent)
+        .disabled(coordinator.isScanning)
     }
 
     // MARK: - System Controls & Footer
 
     private var controlsSection: some View {
         VStack(spacing: 2) {
-            dropdownButton("Live latency monitor", icon: "waveform.path.ecg") {
-                coordinator.startLatencyTest()
+            dropdownButton("Open Dashboard", icon: "rectangle.on.rectangle") {
+                // Explicit, not just "whatever the window happens to be
+                // showing": without this, a single earlier trip to Activity
+                // (via `openActivity()` below) would leave every later
+                // "Open Dashboard" landing back on Activity forever — this
+                // row's whole point is Home. `MainWindow` applies the
+                // request whether it's opening the window fresh (`.task`)
+                // or the window is already open (`.onChange`).
+                coordinator.requestedDestination = .home
                 openWindow(id: WindowID.dashboard)
+                // Opened from a menu-bar extra the window arrives behind
+                // whatever is frontmost; every other window-opening row
+                // here activates for the same reason.
                 NSApp.activate(ignoringOtherApps: true)
             }
 
-            dropdownButton(appSettings.monitoringEnabled ? "Pause monitoring" : "Resume monitoring",
+            dropdownButton(appSettings.monitoringEnabled ? "Pause Monitoring" : "Resume Monitoring",
                            icon: appSettings.monitoringEnabled ? "pause" : "play") {
                 let enabled = !appSettings.monitoringEnabled
                 appSettings.monitoringEnabled = enabled
                 coordinator.setMonitoring(enabled: enabled)
             }
+
+            // Open Dashboard + Pause/Resume above the line, Settings + Quit
+            // below — the same horizontal inset the rows themselves use
+            // (via `dropdownButton`) so it doesn't run flush to the panel
+            // edge the way an unpadded Divider would.
+            Divider()
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.vertical, Theme.Spacing.xs)
 
             dropdownButton("Settings…", icon: "gearshape") {
                 openWindow(id: WindowID.settings)
@@ -687,83 +563,43 @@ struct DropdownView: View {
         .buttonStyle(HighlightingButtonStyle())
     }
 
-    // MARK: - Derived Glance Values
+    // MARK: - Kept glance values (unchanged from the pre-redesign dropdown)
 
-    private var wifiGlanceInfo: (ssid: String?, signal: String, isWeak: Bool)? {
-        guard coordinator.locationPermissions.isAuthorized else { return nil }
-        guard let iface = CWWiFiClient.shared().interface() else { return nil }
-        
-        let ssid = iface.ssid()
-        let rssi = iface.rssiValue()
-        guard rssi != 0 else {
-            if let ssid, !ssid.isEmpty {
-                return (ssid, "Connected", false)
-            }
-            return nil
+    /// Only two branches survive here: every other case `statusDetail` used
+    /// to cover (scanning, paused, monitoring off, a skewed CLI) now has its
+    /// own stage above `healthyStage` and can no longer reach this code —
+    /// `stage` returns `.healthy` only once scanning, paused-for-any-reason,
+    /// monitoring-off and skewed have all tested false.
+    private var statusDetail: String? {
+        if coordinator.monitor.isBursting {
+            return "Latency test running — sampling every \(appSettings.latencyTestInterval)s."
         }
-        
-        let chan = iface.wlanChannel()?.channelNumber
-        let band: String?
-        if let chan {
-            if chan <= 14 { band = "2.4 GHz" }
-            else if chan <= 177 { band = "5 GHz" }
-            else { band = "6 GHz" }
-        } else {
-            band = nil
-        }
-        
-        let rating: String
-        let isWeak: Bool
-        if rssi >= -55 {
-            rating = "Excellent"
-            isWeak = false
-        } else if rssi >= -65 {
-            rating = "Good"
-            isWeak = false
-        } else if rssi >= -75 {
-            rating = "Fair"
-            isWeak = false
-        } else {
-            rating = "Weak"
-            isWeak = true
-        }
-        
-        let signalDetail: String
-        if let band {
-            signalDetail = "\(rating) (\(rssi) dBm · \(band))"
-        } else {
-            signalDetail = "\(rating) (\(rssi) dBm)"
-        }
-        
-        return (ssid, signalDetail, isWeak)
-    }
-
-    private var cleanNetworkName: String? {
-        // If location permissions not authorized, only show custom user-assigned name
-        if !coordinator.locationPermissions.isAuthorized {
-            if let id = coordinator.monitor.latest?.network.id, !id.isEmpty {
-                let custom = coordinator.history.displayName(for: id)
-                if !custom.isEmpty && custom != id && !custom.contains("<redacted>") && !custom.contains("hidden by macOS") && !custom.starts(with: "wifi:mac=") {
-                    return custom
-                }
-            }
-            return nil
-        }
-        if let id = coordinator.monitor.latest?.network.id, !id.isEmpty {
-            let custom = coordinator.history.displayName(for: id)
-            if !custom.isEmpty && custom != id && !custom.contains("<redacted>") && !custom.contains("hidden by macOS") {
-                return custom
-            }
-        }
-        let raw = coordinator.monitor.latest?.network.label
-            ?? coordinator.latestRun?.snapshot.network.label
-        if let raw, !raw.isEmpty {
-            if raw.contains("<redacted>") || raw.contains("hidden by macOS") || raw.starts(with: "wifi:mac=") {
-                return nil // Hide ugly redacted wifi label
-            }
-            return raw
+        if let sample = coordinator.monitor.latest, sample.status.icmpFiltered {
+            return "This network blocks ping — real connections are fine."
         }
         return nil
+    }
+
+    private var scanningRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                ScanProgressLine(progress: coordinator.progress)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            Button("Cancel check") { coordinator.cancelScan() }
+                .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func openActivity() {
+        coordinator.requestedDestination = .activity
+        openWindow(id: WindowID.dashboard)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private var publicIP: String? {
@@ -773,60 +609,10 @@ struct DropdownView: View {
         return (ip?.isEmpty ?? true) ? nil : ip
     }
 
-    private var localIP: String? {
-        let ip = coordinator.monitor.latest?.link.ip
-            ?? coordinator.latestRun?.snapshot.interfaceInfo.ip
-            ?? coordinator.hydratedReport?.run.interfaceInfo.ip
-        return (ip?.isEmpty ?? true) ? nil : ip
-    }
-
     private var countryISO: String? {
         coordinator.monitor.latest?.publicInfo.countryISO
             ?? coordinator.latestRun?.snapshot.publicInfo.countryISO
             ?? coordinator.hydratedReport?.run.publicInfo.countryISO
-    }
-
-    private var internetPing: (current: String, detail: String?)? {
-        if let current = coordinator.monitor.latest?.internet.rttAvgMs {
-            let currentStr = String(format: "%.0f ms", current)
-            let loss = coordinator.monitor.latest?.internet.lossPct
-            let pings = coordinator.monitor.recent.compactMap { $0.internet.rttAvgMs }
-            var detailParts: [String] = []
-            if pings.count >= 3 {
-                let avg = pings.reduce(0, +) / Double(pings.count)
-                detailParts.append(String(format: "avg %.0f ms", avg))
-            }
-            if let loss, loss > 0 {
-                detailParts.append(String(format: "%.0f%% loss", loss))
-            }
-            let detail = detailParts.isEmpty ? nil : "(\(detailParts.joined(separator: " · ")))"
-            return (currentStr, detail)
-        }
-
-        if let tcp = coordinator.monitor.latest?.tcp.targets.first(where: { $0.ok && $0.elapsedMs != nil }) {
-            let currentStr = String(format: "%.0f ms", tcp.elapsedMs!)
-            return (currentStr, "(TCP)")
-        }
-
-        if let current = coordinator.latestRun?.snapshot.internetLatency.rttAvgMs {
-            let currentStr = String(format: "%.0f ms", current)
-            let loss = coordinator.latestRun?.snapshot.internetLatency.lossPct
-            if let loss, loss > 0 {
-                return (currentStr, "(\(String(format: "%.0f%% loss", loss)))")
-            }
-            return (currentStr, nil)
-        }
-
-        if let current = coordinator.hydratedReport?.run.internetLatency.rttAvgMs {
-            let currentStr = String(format: "%.0f ms", current)
-            let loss = coordinator.hydratedReport?.run.internetLatency.lossPct
-            if let loss, loss > 0 {
-                return (currentStr, "(\(String(format: "%.0f%% loss", loss)))")
-            }
-            return (currentStr, nil)
-        }
-
-        return nil
     }
 
     private var routerInfo: (ping: String, ip: String?)? {
@@ -853,41 +639,6 @@ struct DropdownView: View {
             pingStr = String(format: "%.0f ms", current)
         }
         return (pingStr, ip)
-    }
-
-    private var speedString: String {
-        if let speed = coordinator.latestSpeedTest {
-            if let down = speed.downMbps, let up = speed.upMbps {
-                return String(format: "%.0f Mbps ↓ · %.0f Mbps ↑", down, up)
-            } else if let down = speed.downMbps {
-                return String(format: "%.0f Mbps ↓", down)
-            }
-        }
-        if let speed = coordinator.latestRun?.snapshot.speedtest {
-            if let down = speed.downMbps, let up = speed.upMbps {
-                return String(format: "%.0f Mbps ↓ · %.0f Mbps ↑", down, up)
-            } else if let down = speed.downMbps {
-                return String(format: "%.0f Mbps ↓", down)
-            }
-        }
-        if let speed = coordinator.hydratedReport?.run.speedtest {
-            if let down = speed.downMbps, let up = speed.upMbps {
-                return String(format: "%.0f Mbps ↓ · %.0f Mbps ↑", down, up)
-            } else if let down = speed.downMbps {
-                return String(format: "%.0f Mbps ↓", down)
-            }
-        }
-        if let speed = coordinator.history.latestSpeedTest(for: coordinator.monitor.latest?.network.id) {
-            if let up = speed.up {
-                return String(format: "%.0f Mbps ↓ · %.0f Mbps ↑", speed.down, up)
-            }
-            return String(format: "%.0f Mbps ↓", speed.down)
-        }
-        return "Not tested yet"
-    }
-
-    private var hasSpeedMeasurement: Bool {
-        speedString != "Not tested yet"
     }
 
     private var vpnActive: Bool {

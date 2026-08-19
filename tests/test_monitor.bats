@@ -40,6 +40,7 @@ reset_state() {
   MON_WIFI_RSSI="" MON_WIFI_SNR=""
   MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
   MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
+  MON_GW_LOSS_STREAK=0 MON_INET_LOSS_STREAK=0
   # scanner side
   GATEWAY=192.168.1.1 IS_WIFI=1 GW_LOSS=0 WIFI_RSSI="" WIFI_SNR=""
   DNS_OK=1 DNS_LINES="x|y|z|OK" PUBLIC_OK=1 PUBLIC_CHECKED=1
@@ -87,7 +88,15 @@ scanner_rules() {
 }
 
 @test "parity: loss in the warn band produces G3 on both" {
+  # G3 only fires on the monitor once it has held for
+  # THRESH_MON_LOSS_CONFIRM_CYCLES consecutive cycles (lib/thresholds.sh) —
+  # a single cycle's loss is a blip, not a condition. The scanner has no
+  # such confirmation: its own probe already averages over 20 packets in
+  # one shot. Calling _mon_rules once before monitor_rules() drives the
+  # monitor to that confirmed state, so this stays a fair comparison
+  # instead of a false mismatch on the first cycle.
   reset_state; MON_GW_LOSS=15 GW_LOSS=15
+  _mon_rules
   local m; m="$(monitor_rules)"; reset_state; MON_GW_LOSS=15 GW_LOSS=15
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"G3"* ]]
@@ -155,7 +164,10 @@ scanner_rules() {
 }
 
 @test "parity: moderate internet loss is L2 on both" {
+  # L2 is confirmed across cycles the same way G3 is above — see that
+  # test's comment.
   reset_state; MON_INET_LOSS=15 INET_LOSS=15 INET_LOSS_ALT=15
+  _mon_rules
   local m; m="$(monitor_rules)"; reset_state
   MON_INET_LOSS=15 INET_LOSS=15 INET_LOSS_ALT=15
   [ "$m" = "$(scanner_rules)" ]
@@ -216,9 +228,49 @@ scanner_rules() {
 }
 
 @test "a fault switches the monitor to its degraded cadence" {
+  # G3 needs two cycles to confirm now (see the loss-confirmation block
+  # below); drive it there rather than asserting degraded cadence off an
+  # unconfirmed first cycle.
   reset_state; MON_GW_LOSS=15
   _mon_rules
+  _mon_rules
   [ "$MON_DEGRADED" -eq 1 ]
+}
+
+# ── Loss confirmation: a blip is not a condition ─────────────────────────
+# THRESH_MON_LOSS_CONFIRM_CYCLES (lib/thresholds.sh) exists because at
+# MONITOR_PING_COUNT=10, one dropped packet reads as exactly 10% —
+# LOSS_WARN_PCT — so a single unlucky packet used to read as G3. Only the
+# warn-band rules (G3, L2) are confirmed; critical loss (G1/G2/L1) still
+# fires on the first cycle, because a real outage must not wait.
+
+@test "loss confirmation: one cycle of warn-band gateway loss produces no G3" {
+  reset_state; MON_GW_LOSS=10
+  _mon_rules
+  [[ "$MON_RULES" != *"G3"* ]]
+}
+
+@test "loss confirmation: two consecutive cycles of warn-band gateway loss produce G3" {
+  reset_state; MON_GW_LOSS=10
+  _mon_rules
+  _mon_rules
+  [[ "$MON_RULES" == *"G3"* ]]
+}
+
+@test "loss confirmation: one cycle of critical gateway loss fires G2 immediately" {
+  reset_state; MON_GW_LOSS=25
+  _mon_rules
+  [[ "$MON_RULES" == *"G2"* ]]
+}
+
+@test "loss confirmation: a clean cycle between two blips resets the streak" {
+  reset_state; MON_GW_LOSS=10
+  _mon_rules
+  MON_GW_LOSS=0
+  _mon_rules
+  MON_GW_LOSS=10
+  _mon_rules
+  [[ "$MON_RULES" != *"G3"* ]]
 }
 
 @test "a dead link is degraded and reports nothing it did not measure" {
@@ -353,6 +405,220 @@ assert t == [{'host':'1.1.1.1','port':443,'ok':True,'elapsed_ms':30.0},
   printf '%s' "$output" | python3 -c "
 import json,sys
 assert json.load(sys.stdin)['refreshed'] == ['fast','medium']
+"
+}
+
+# ── monitor_sample: changes (schema 2) ──────────────────────────────────
+
+@test "monitor_sample: no previous sample, no changes key" {
+  run emit NETDIAG_MON_HAVE_PREV=0 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=198.51.100.7
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: identical samples emit no changes key" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=203.0.113.42 \
+           NETDIAG_MON_RULES='G2 ' NETDIAG_MON_PREV_RULES='G2 '
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: public IP change is phrased by the CLI" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=198.51.100.7
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'public-ip-changed'
+assert ch[0]['field'] == 'public.ip'
+assert ch[0]['from'] == '198.51.100.7' and ch[0]['to'] == '203.0.113.42'
+assert ch[0]['summary'] == 'Public IP changed'
+"
+}
+
+@test "monitor_sample: unmeasured side suppresses the change" {
+  # null means "not measured", not a value — first slow-tier result is
+  # not a change (stream convention, docs/JSON-SCHEMA.md).
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_PUB_IP=203.0.113.42 NETDIAG_MON_PREV_PUB_IP=
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: country move phrased as VPN exit when VPN is up" {
+  run emit NETDIAG_MON_HAVE_PREV=1 NETDIAG_MON_VPN_ACTIVE=1 \
+           NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_PUB_CC=Brazil NETDIAG_MON_PREV_PUB_CC=Germany
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert ch[0]['id'] == 'country-changed'
+assert ch[0]['summary'] == 'VPN exit moved: Germany → Brazil'
+"
+}
+
+@test "monitor_sample: vpn drop and reconnect phrase both directions" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=0 NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_PREV_VPN_NAME=Mullvad
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'vpn-disconnected'
+assert ch[0]['summary'] == 'VPN disconnected (Mullvad)'
+"
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=0 \
+           NETDIAG_MON_VPN_NAME=Mullvad
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'vpn-connected'
+assert ch[0]['summary'] == 'VPN connected (Mullvad)'
+"
+}
+
+@test "monitor_sample: ssid with a double quote survives the changes array" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_SSID='Cafe "Sunset" 5G' NETDIAG_MON_PREV_SSID=HomeNet
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert ch[0]['id'] == 'wifi-network-changed'
+assert ch[0]['to'] == 'Cafe \"Sunset\" 5G'
+"
+}
+
+@test "monitor_sample: rule transitions emit fired and cleared entries" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_RULES='G2 TCP-1 ' NETDIAG_MON_PREV_RULES='VPN-1 TCP-1 '
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+ids = [(c['id'], c.get('from'), c.get('to')) for c in ch]
+assert ('rule-fired', None, 'G2') in ids, ids
+assert ('rule-cleared', 'VPN-1', None) in ids, ids
+assert len(ch) == 2, ch
+# Summaries speak the rules catalog's plain-English titles, not the bare
+# rule ID — 'Issue G2 detected' would tell a non-technical user nothing.
+by_id = {c['id']: c for c in ch}
+assert by_id['rule-fired']['summary'] == 'Router dropping packets', ch
+assert by_id['rule-cleared']['summary'] == 'Resolved: VPN carrying your traffic', ch
+"
+}
+
+@test "monitor_sample: an unknown rule id falls back to a generic phrase" {
+  # A monitor running against a newer lib/thresholds.sh than the bundled
+  # rules_catalog.py knows about must still emit something readable rather
+  # than crashing the whole sample.
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_RULES='ZZ-9 ' NETDIAG_MON_PREV_RULES=''
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['summary'] == 'Issue ZZ-9 detected', ch
+"
+}
+
+@test "monitor_sample: a broken rules_catalog sibling does not kill the emitter" {
+  # helpers/rules_catalog.py corrupted (a bad merge, a stray edit) must not
+  # take the whole monitor stream down with it — the import is guarded in
+  # monitor_sample.py. Driven directly against a corrupted copy of
+  # helpers/, matching this file's own helper-direct style, rather than via
+  # the sourced bash rule engine.
+  local tmp="$BATS_TEST_TMPDIR/helpers"
+  cp -R "$HELPERS" "$tmp"
+  printf 'this is not python\n' > "$tmp/rules_catalog.py"
+  run env -i PATH="$PATH" NETDIAG_MON_HAVE_PREV=1 \
+      NETDIAG_MON_RULES='G2 ' NETDIAG_MON_PREV_RULES='' \
+      python3 "$tmp/monitor_sample.py"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+ch = d['changes']
+assert len(ch) == 1, ch
+assert ch[0]['summary'] == 'Issue G2 detected', ch
+"
+}
+
+@test "monitor_sample: vpn name change is suppressed for utun-route tunnels" {
+  # A real utun reconnect rotates both the tunnel interface and its
+  # utun-route "name" (they're the same value) — the end state should be
+  # one meaningful interface-changed row, not a duplicate vpn-name-changed
+  # entry and not silence.
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_VPN_TYPE=utun-route \
+           NETDIAG_MON_VPN_NAME=utun6 NETDIAG_MON_PREV_VPN_NAME=utun4 \
+           NETDIAG_MON_INTERFACE=utun6 NETDIAG_MON_PREV_INTERFACE=utun4
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'interface-changed', ch
+"
+}
+
+@test "monitor_sample: vpn name change still reported for named VPNs" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=1 \
+           NETDIAG_MON_VPN_TYPE=scutil-nc \
+           NETDIAG_MON_VPN_NAME=Mullvad NETDIAG_MON_PREV_VPN_NAME=ProtonVPN
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'vpn-name-changed'
+assert ch[0]['summary'] == 'VPN changed: ProtonVPN → Mullvad'
+"
+}
+
+@test "monitor_sample: country move on the connect edge is phrased as arrival, not movement" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_VPN_ACTIVE=1 NETDIAG_MON_PREV_VPN_ACTIVE=0 \
+           NETDIAG_MON_PUB_CC=Sweden NETDIAG_MON_PREV_PUB_CC=Germany
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 2, ch
+ids = [c['id'] for c in ch]
+assert 'vpn-connected' in ids, ch
+country = [c for c in ch if c['id'] == 'country-changed'][0]
+assert country['summary'] == 'VPN exit is in Sweden'
+"
+}
+
+@test "monitor_sample: no roam invented on a wired link" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_BSSID=aa:bb:cc:dd:ee:01 NETDIAG_MON_PREV_BSSID=aa:bb:cc:dd:ee:02
+  printf '%s' "$output" | python3 -c "
+import json,sys
+assert 'changes' not in json.load(sys.stdin)
+"
+}
+
+@test "monitor_sample: interface change is reported" {
+  run emit NETDIAG_MON_HAVE_PREV=1 \
+           NETDIAG_MON_INTERFACE=en5 NETDIAG_MON_PREV_INTERFACE=en0
+  printf '%s' "$output" | python3 -c "
+import json,sys
+ch = json.load(sys.stdin)['changes']
+assert len(ch) == 1, ch
+assert ch[0]['id'] == 'interface-changed'
+assert ch[0]['summary'] == 'Network interface changed: en0 → en5'
 "
 }
 
@@ -607,4 +873,66 @@ except Exception:
   # present and do nothing.
   run grep -cE 'kill -0 "\$parent_pid"' "$REPO/lib/monitor.sh"
   [ "$output" -eq 1 ]
+}
+
+# ── previous-sample snapshot ────────────────────────────────────────────
+
+@test "_mon_snapshot_prev copies identity fields and arms HAVE_PREV" {
+  MON_PUB_IP="203.0.113.42"; MON_PUB_CC="Brazil"; MON_PUB_ISP="ExampleNet"
+  MON_VPN_ACTIVE=1; MON_VPN_NAME="Mullvad"
+  MON_SSID="HomeNet"; MON_BSSID="aa:bb:cc:dd:ee:ff"; MON_INTERFACE="en0"
+  MON_RULES="G2 "
+  MON_HAVE_PREV=0
+  _mon_snapshot_prev
+  [ "$MON_HAVE_PREV" = "1" ]
+  [ "$MON_PREV_PUB_IP" = "203.0.113.42" ]
+  [ "$MON_PREV_PUB_CC" = "Brazil" ]
+  [ "$MON_PREV_VPN_ACTIVE" = "1" ]
+  [ "$MON_PREV_VPN_NAME" = "Mullvad" ]
+  [ "$MON_PREV_SSID" = "HomeNet" ]
+  [ "$MON_PREV_BSSID" = "aa:bb:cc:dd:ee:ff" ]
+  [ "$MON_PREV_INTERFACE" = "en0" ]
+  [ "$MON_PREV_RULES" = "G2 " ]
+}
+
+@test "_mon_snapshot_prev keeps last-known identity across an empty sample" {
+  # The diff in monitor_sample.py suppresses comparisons where either
+  # side is null. If a link-down sample (empty interface/SSID) clobbered
+  # the snapshot, en0 → "" → en5 would never report interface-changed.
+  # Identity fields keep their last known value; rules and the VPN flag
+  # snapshot unconditionally (their empties are meaningful — that is
+  # what lets rule-cleared fire).
+  MON_PUB_IP="203.0.113.42"; MON_PUB_CC="Brazil"; MON_PUB_ISP="ExampleNet"
+  MON_VPN_ACTIVE=1; MON_VPN_NAME="Mullvad"
+  MON_SSID="HomeNet"; MON_BSSID="aa:bb:cc:dd:ee:ff"; MON_INTERFACE="en0"
+  MON_RULES="G2 "
+  _mon_snapshot_prev
+  MON_INTERFACE=""; MON_SSID=""; MON_BSSID=""; MON_VPN_NAME=""
+  MON_RULES=""; MON_VPN_ACTIVE=0
+  _mon_snapshot_prev
+  [ "$MON_PREV_INTERFACE" = "en0" ]
+  [ "$MON_PREV_SSID" = "HomeNet" ]
+  [ "$MON_PREV_BSSID" = "aa:bb:cc:dd:ee:ff" ]
+  [ "$MON_PREV_VPN_NAME" = "Mullvad" ]
+  [ "$MON_PREV_RULES" = "" ]
+  [ "$MON_PREV_VPN_ACTIVE" = "0" ]
+}
+
+@test "monitor state block initializes every MON_PREV_ variable" {
+  # bin/netdiag runs set -u: an uninitialized MON_PREV_* would abort the
+  # first emit. Every var _mon_emit forwards must be declared.
+  for v in MON_HAVE_PREV MON_PREV_PUB_IP MON_PREV_PUB_CC MON_PREV_PUB_ISP \
+           MON_PREV_VPN_ACTIVE MON_PREV_VPN_NAME MON_PREV_SSID \
+           MON_PREV_BSSID MON_PREV_INTERFACE MON_PREV_RULES; do
+    grep -qE "^${v}=" "$REPO/lib/monitor.sh" || {
+      echo "missing init: $v"; return 1; }
+  done
+}
+
+@test "_mon_emit forwards prev state to the sample helper" {
+  for v in HAVE_PREV PREV_PUB_IP PREV_PUB_CC PREV_PUB_ISP PREV_VPN_ACTIVE \
+           PREV_VPN_NAME PREV_SSID PREV_BSSID PREV_INTERFACE PREV_RULES; do
+    grep -q "NETDIAG_MON_${v}=" "$REPO/lib/monitor.sh" || {
+      echo "not forwarded: $v"; return 1; }
+  done
 }

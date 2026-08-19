@@ -163,13 +163,14 @@ for name in ('monitor', 'history', 'show', 'progress'):
   done <<< "$features"
 }
 
-@test "schemas has exactly the six documented keys, all integers" {
+@test "schemas has exactly the seven documented keys, all integers" {
   run "$NETDIAG" --capabilities
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, sys
 s = json.load(sys.stdin)['schemas']
-assert set(s) == {'run', 'monitor', 'history', 'show', 'rules_catalog', 'progress'}, sorted(s)
+assert set(s) == {'run', 'monitor', 'history', 'show', 'rules_catalog',
+                   'signal_scale', 'progress'}, sorted(s)
 for v in s.values():
     assert isinstance(v, int), s
 "
@@ -228,6 +229,19 @@ assert str(json.load(sys.stdin)['schemas']['show']) == sys.argv[1]
   printf '%s' "$output" | python3 -c "
 import json, sys
 assert str(json.load(sys.stdin)['schemas']['rules_catalog']) == sys.argv[1]
+" "$const"
+}
+
+@test "schemas.signal_scale matches the constant helpers/signal_scale.py stamps on its output" {
+  local const
+  const="$(grep -m1 '^SCHEMA_SIGNAL_SCALE = ' "$HELPERS/signal_scale.py" \
+    | sed -E 's/^SCHEMA_SIGNAL_SCALE = ([0-9]+).*/\1/')"
+  [ -n "$const" ]
+  run "$NETDIAG" --capabilities
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+assert str(json.load(sys.stdin)['schemas']['signal_scale']) == sys.argv[1]
 " "$const"
 }
 

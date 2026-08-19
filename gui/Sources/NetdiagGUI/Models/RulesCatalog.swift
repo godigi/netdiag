@@ -19,8 +19,13 @@ struct RulesCatalog: Decodable, Sendable {
     var schema: Int?
     var version: String?
     var rules: [Rule] = []
+    /// The glossary sibling array added in schema `2` — see
+    /// helpers/rules_catalog.py's module docstring for why it lives here
+    /// rather than in a standalone mode. Empty, never a decode failure,
+    /// against a CLI old enough to only emit schema `1`.
+    var metrics: [Metric] = []
 
-    enum CodingKeys: String, CodingKey { case schema, version, rules }
+    enum CodingKeys: String, CodingKey { case schema, version, rules, metrics }
 
     /// One entry from `rules`. `category` and `severity` describe the
     /// *rule*, not a specific incident — a run's own diagnosis carries the
@@ -37,12 +42,25 @@ struct RulesCatalog: Decodable, Sendable {
         var doc: String?
     }
 
+    /// One entry from `metrics` — a jargon term the report card shows,
+    /// explained in plain English. See `docs/JSON-SCHEMA.md`'s
+    /// `--rules-catalog` section for the field meanings.
+    struct Metric: Sendable, Identifiable {
+        var id: String { key }
+        let key: String
+        var label: String?
+        var help: String?
+    }
+
     /// Rule lookup by id, built once when the catalog decodes rather than
     /// scanned per call — a run's diagnosis list and a report card's rows
     /// both look one up per render.
     private var byID: [String: Rule] = [:]
+    /// Metric-glossary lookup by key, same reasoning as `byID`.
+    private var metricsByKey: [String: Metric] = [:]
 
     subscript(id: String) -> Rule? { byID[id] }
+    func metric(_ key: String) -> Metric? { metricsByKey[key] }
 }
 
 // MARK: - Lenient decoding
@@ -69,6 +87,17 @@ extension RulesCatalog {
                         blurb: entry.blurb, doc: entry.doc)
         }
         byID = Dictionary(rules.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // Same degrade-field-by-field discipline as `rules` above. Absent
+        // entirely against a CLI whose catalog predates schema `2` —
+        // `c.lenient(.metrics, [])` already returns `[]` in that case, no
+        // extra branch needed.
+        let rawMetrics = c.lenient(.metrics, [RawMetric]())
+        metrics = rawMetrics.compactMap { entry in
+            guard let key = entry.key, !key.isEmpty else { return nil }
+            return Metric(key: key, label: entry.label, help: entry.help)
+        }
+        metricsByKey = Dictionary(metrics.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// The wire shape of one `rules` entry, before the nil-id ones are
@@ -96,6 +125,22 @@ extension RulesCatalog {
             scope = c.lenient(.scope)
             blurb = c.lenient(.blurb)
             doc = c.lenient(.doc)
+        }
+    }
+
+    /// The wire shape of one `metrics` entry — same reasoning as `RawRule`.
+    private struct RawMetric: Decodable {
+        var key: String?
+        var label: String?
+        var help: String?
+
+        enum CodingKeys: String, CodingKey { case key, label, help }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = c.lenient(.key)
+            label = c.lenient(.label)
+            help = c.lenient(.help)
         }
     }
 }

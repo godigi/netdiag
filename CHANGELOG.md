@@ -8,6 +8,72 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **`netdiag --signal-scale`** — one JSON object with the four Wi-Fi
+  signal bands this install's thresholds define: Excellent / Good / Fair
+  / Weak, each a dBm floor, a tone, and a one-sentence explanation. Exists
+  because a raw RSSI number ("-62 dBm") means nothing to almost anyone —
+  a consumer now has the CLI's own word to show instead, with the dBm
+  kept as a secondary detail rather than dropped. Boundaries are
+  `lib/thresholds.sh`'s `THRESH_WIFI_RSSI_EXCELLENT_DBM` (new, -55),
+  `THRESH_WIFI_RSSI_G1_DBM` (-70, already backing rule G1) and
+  `THRESH_WIFI_RSSI_WEAK_DBM` (-75, already backing rule W1) — reused
+  rather than duplicated, and read through the environment the way
+  `helpers/history.py`'s `--show` reads `THRESH_COMPARE_*`. New
+  `helpers/signal_scale.py`; `tests/test_signal_scale.bats` covers shape,
+  band ordering, boundaries moving with the thresholds, and refusal to
+  run without them. (GUI) A new `SignalScaleStore` fetches and caches it
+  exactly the way `RulesCatalogStore` does; `DropdownView`'s Wi-Fi
+  instrument cell and a Wi-Fi row restored to `HomeView` (see below) both
+  render the CLI's label as the value and the dBm as the unit, tinted by
+  the band's tone — never a Swift-authored word or a dBm comparison in
+  Swift.
+- **`--rules-catalog` gains a `metrics` glossary (schema 1 → 2).** A
+  sibling array to `rules`: one entry per jargon term the report card
+  shows (`router`, `internet`, `dns`, `wifi_signal`, `bufferbloat`,
+  `mtu`, `speed`, `clock`, `packet_loss`, `latency`, `jitter`), each a
+  `key`/`label`/1–2 sentence `help` explaining the term to someone who's
+  never heard it — same qualitative-only discipline as `blurb`, no
+  embedded numeric threshold. (GUI) `RunReportView`'s report card is
+  restructured into columns — label (with a `questionmark.circle`
+  `HelpHint` fed by this glossary), this run's value, the network's
+  median, and a short verdict chip (`Typical`/`Better`/`Worse`/`Best`/
+  `Worst`, straight from the comparison's own `verdict` token, full CLI
+  sentence on hover) — instead of one long CLI sentence sitting inline on
+  every row.
+- **`HomeView` regains a Wi-Fi row (network name + signal).** Investigated
+  where "the dashboard used to have the Wi-Fi name and signal" actually
+  lived: never on `HomeView`/its tabbed-window predecessor at any commit
+  — only the pre-redesign single-panel `DropdownView` (commit `9aebf71`
+  and earlier) had a combined `wifiGlanceInfo` row, and that panel split
+  into today's separate main window and menu-bar dropdown well before
+  this branch. Not a regression, not a permission-only gate — the row
+  simply never existed on Home. Restored it: name from a new
+  `NetdiagCoordinator.wifiDisplayName` (the exact logic `DropdownView`'s
+  `cleanNetworkName` had, moved to the coordinator so both views share
+  one answer instead of two that could drift), signal from the same
+  word-plus-dBm treatment as the dropdown, with the identical CoreWLAN
+  fallback when the monitor's RSSI is null and Location Services is
+  authorized. When it isn't authorized, the existing restriction banner
+  is unchanged — no blank row underneath it.
+- **`--monitor` schema 2: samples describe their own changes.** When a
+  tracked field differs from the previous sample — public IP, country,
+  ISP, VPN state/name, Wi-Fi network or AP, interface, or a diagnosis
+  rule firing/clearing — the emitted line carries a `changes` array
+  (`{id, field, from, to, summary}`) with the phrasing authored by the
+  CLI, so every consumer tells the same story. Null means "not
+  measured" and never counts as a change; the key is absent when
+  nothing changed; rule summaries use the rules catalog's plain-English
+  titles ("Router dropping packets"), not bare IDs. Gate on
+  `--capabilities` `schemas.monitor >= 2`.
+- **The menu-bar dropdown was rebuilt around monitoring** (GUI): an
+  adaptive stage (healthy / alert / testing / paused / version-skew)
+  over a fixed 4×2 instrument grid, a labeled internet-ping heartbeat
+  strip with min/avg/max, and a change timeline fed by a new persistent
+  event log (monitor changes + fired alerts, coalescing repeats).
+  Location shows only the country flag — hover reveals the public IP,
+  click copies it. One primary action remains ("Check My Connection");
+  the dashboard's Activity section is now a real event list.
+
 - **`netdiag --version`** — prints `netdiag VERSION` and exits 0.
 - **`netdiag --capabilities`** — a JSON handshake describing this
   install: per-mode schema numbers, a `features` list, and which
@@ -75,6 +141,10 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Changed
 
+- **The dropdown's link-path bar, glance panel, quick-action grid, and
+  contextual remedy row were retired**; their facts moved into the
+  instrument grid and the alert stage. The footer regained Open
+  Dashboard and Pause/Resume Monitoring after user testing.
 - **jq is no longer required for the speed test.** The ~10 `jq -r` calls
   that parsed Ookla's and `speedtest-cli`'s final result JSON are now one
   call to `helpers/speedtest_result.py`, a stdlib-only parser that reads

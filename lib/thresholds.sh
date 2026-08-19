@@ -75,6 +75,13 @@ LOSS_PROBE_INTERVAL=0.2
 MONITOR_PING_COUNT=10
 MONITOR_PING_INTERVAL=0.2
 
+# A single cycle's loss is a blip, not a condition: at MONITOR_PING_COUNT=10
+# one dropped packet reads as 10%, exactly LOSS_WARN_PCT. Requiring the same
+# band on consecutive cycles turns a lost packet into a fact about the link
+# rather than an alarm. Applies to the monitor only — a full scan's
+# 20-packet probe already averages over more.
+THRESH_MON_LOSS_CONFIRM_CYCLES=2
+
 # TCP-1 — TCP connections succeed while ping reports heavy loss, i.e. the
 # path filters ICMP. Set well above LOSS_CRIT_PCT: below this a real lossy
 # link and a filtered one look the same, and calling a degraded network
@@ -87,6 +94,12 @@ THRESH_ICMP_FILTERED_LOSS_PCT=50
 THRESH_ICMP_TOTAL_LOSS_PCT=100
 
 # ── WiFi ─────────────────────────────────────────────────────────────────
+# Read by helpers/signal_scale.py (netdiag --signal-scale) as the top edge
+# of its four-band "Excellent/Good/Fair/Weak" scale — the word a GUI shows
+# instead of a bare dBm number nobody without a radio background can read
+# at a glance. -55 dBm is one bar short of a link to the router itself:
+# strong enough that nothing on the wireless leg is ever the bottleneck.
+THRESH_WIFI_RSSI_EXCELLENT_DBM=-55
 # W1 — "your signal is weak" on its own.
 THRESH_WIFI_RSSI_WEAK_DBM=-75
 # G1 — the stricter cutoff used only to attribute *gateway loss* to the
@@ -160,6 +173,22 @@ THRESH_COMPARE_MIN_SAMPLES=10
 # eventually be applied the wrong way round. Direction is applied once,
 # when a tail is turned into a verdict.
 THRESH_COMPARE_TAIL_PCTL=10
+
+# ── Speed regression confirmation (BL-1) ──────────────────────────────────
+# Read by helpers/baseline.py, the fourth thing in the project that judges
+# whether a number is normal, and plumbed through the environment exactly
+# like THRESH_COMPARE_* above: lib/output.sh exports both before calling the
+# helper, which refuses to run without them rather than carrying a default.
+#
+# A speed test result depends on who else is using the link at that exact
+# moment, not just on the network's own health, so one slow run is
+# ordinary noise — someone else streaming, a busy time of day — not a
+# regression. THRESH_SPEED_CONFIRM_RUNS measured runs in a row, all below
+# factor × median, turn that noise into a fact about the network. 2 is the
+# smallest number that is actually a confirmation rather than a single
+# reading counted twice.
+THRESH_SPEED_DROP_FACTOR=0.5
+THRESH_SPEED_CONFIRM_RUNS=2
 
 # ── Bufferbloat grading ──────────────────────────────────────────────────
 # Waveform/DSLReports cutoffs for added latency under load, in ms:

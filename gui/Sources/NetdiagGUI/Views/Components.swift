@@ -101,3 +101,44 @@ private struct RuleChipPopover: View {
         return URL(string: "https://github.com/godigi/netdiag/blob/main/docs/\(doc)")
     }
 }
+
+/// A small "what does this mean?" affordance next to a jargon term —
+/// `RunReportView`'s answer to "When I see 'packets', 'size', and 'MTU', I
+/// have no idea what they mean." Looks `key` up in
+/// `RulesCatalogStore`'s `metrics` glossary (schema `2`,
+/// `helpers/rules_catalog.py`) and shows the CLI's own `help` sentence —
+/// never a Swift-authored explanation, the same discipline `RuleChip`
+/// applies to a rule's blurb.
+///
+/// Renders nothing when the glossary hasn't loaded yet or doesn't
+/// recognise `key` (an old CLI, or a term this build asks about that a
+/// future catalog renamed) — an absent hint is a smaller gap than a
+/// button that opens on an empty popover.
+struct HelpHint: View {
+    let key: String
+    @Environment(NetdiagCoordinator.self) private var coordinator
+    @State private var showPopover = false
+
+    var body: some View {
+        if let metric = coordinator.rulesCatalog.catalog?.metric(key), let help = metric.help, !help.isEmpty {
+            Button { showPopover = true } label: {
+                Image(systemName: "questionmark.circle")
+                    .foregroundStyle(.secondary)
+                    .imageScale(.small)
+            }
+            .buttonStyle(.plain)
+            .help(help)
+            .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(metric.label ?? key).font(.headline)
+                    Text(help)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(12)
+                .frame(width: 260, alignment: .leading)
+            }
+        }
+    }
+}

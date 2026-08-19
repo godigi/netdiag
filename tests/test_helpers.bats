@@ -9,6 +9,16 @@ setup() {
   REPO="${BATS_TEST_DIRNAME}/.."
   HELPERS="$REPO/helpers"
   TMP="$BATS_TEST_TMPDIR"
+  # helpers/baseline.py refuses to run without THRESH_SPEED_DROP_FACTOR /
+  # THRESH_SPEED_CONFIRM_RUNS (lib/thresholds.sh), the same way
+  # helpers/history.py refuses without THRESH_COMPARE_*. Exported once here
+  # so every existing `run python3 .../baseline.py` call below keeps
+  # working without having to know about a feature it isn't testing; the
+  # dedicated speed-confirmation tests further down override
+  # THRESH_SPEED_CONFIRM_RUNS explicitly where the value under test matters.
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  export THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS
 }
 
 # Run emit_json.py with only the NETDIAG_* vars given as KEY=VALUE args,
@@ -242,6 +252,69 @@ _write_history() {
   printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":40.0}}' > "$cur"
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
   [ "$(printf '%s' "$output" | jq_get compared_runs)" = "0" ]
+  [ "$(printf '%s' "$output" | jq_get regressions)" = "[]" ]
+}
+
+# ── baseline.py: a speed drop needs two measured runs to confirm ─────────
+# A speedtest result depends on who else is using the link at that exact
+# moment, so ONE slow run — someone else streaming, a busy time of day —
+# must not raise BL-1 on its own (item 3, the GUI's "slower than usual"
+# alert). Confirmation requires THRESH_SPEED_CONFIRM_RUNS consecutive
+# *measured* runs, current included, all below THRESH_SPEED_DROP_FACTOR ×
+# median. Non-speed "drop"-kind behavior is untouched by any of this.
+
+_write_speed_history() {
+  # $1 = file, $2 = network id, $3 = count, $4 = down_mbps
+  local f="$1" nid="$2" n="$3" down="$4" i
+  for i in $(seq 1 "$n"); do
+    printf '{"network":{"id":"%s"},"speedtest":{"down_mbps":%s}}\n' "$nid" "$down" >> "$f"
+  done
+}
+
+@test "baseline.py refuses to run without THRESH_SPEED_DROP_FACTOR / THRESH_SPEED_CONFIRM_RUNS" {
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":3.0}}' > "$cur"
+  run env -u THRESH_SPEED_DROP_FACTOR -u THRESH_SPEED_CONFIRM_RUNS \
+    python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"THRESH_SPEED_DROP_FACTOR"* ]]
+  [[ "$output" == *"lib/thresholds.sh"* ]]
+}
+
+@test "baseline: a single slow speedtest run is not reported" {
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  # 4 runs at 100 Mbps establish the median; the most recent of them (the
+  # "previous measured run" confirmation needs) is also 100 Mbps, not slow.
+  _write_speed_history "$hist" "wifi:ssid=Home" 4 100
+  printf '{"network":{"id":"wifi:ssid=Home"},"speedtest":{"down_mbps":30}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
+  # 30 Mbps is well under 0.5 * 100 — this would have fired before item 3.
+  [ "$(printf '%s' "$output" | jq_get regressions)" = "[]" ]
+}
+
+@test "baseline: two consecutive slow speedtest runs are reported as a drop" {
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  # 3 runs at 100 Mbps establish the median, then one more recent slow run
+  # — the "previous measured run" — confirms alongside the current one.
+  _write_speed_history "$hist" "wifi:ssid=Home" 3 100
+  printf '{"network":{"id":"wifi:ssid=Home"},"speedtest":{"down_mbps":40}}\n' >> "$hist"
+  printf '{"network":{"id":"wifi:ssid=Home"},"speedtest":{"down_mbps":35}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"speedtest down"* ]]
+}
+
+@test "baseline: a slow run following a normal one is not reported" {
+  # The confirmation is specifically about the run immediately before the
+  # current one, not "any slow run somewhere in history" — a single
+  # historical blip must not retroactively confirm a fresh one.
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  printf '{"network":{"id":"wifi:ssid=Home"},"speedtest":{"down_mbps":40}}\n' >> "$hist"
+  _write_speed_history "$hist" "wifi:ssid=Home" 3 100
+  printf '{"network":{"id":"wifi:ssid=Home"},"speedtest":{"down_mbps":35}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq_get regressions)" = "[]" ]
 }
 

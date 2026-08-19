@@ -28,10 +28,30 @@ import json
 import os
 import sys
 
+# A broken sibling must not take the whole stream down: without the
+# catalog we fall back to "Issue <id>" phrasing, which is worse prose
+# but a live monitor.
+try:
+    from rules_catalog import RULES
+except Exception:
+    RULES = []
+
+# Rule ID -> catalog title ("G2" -> "Router dropping packets"), so a
+# rule-fired/rule-cleared summary speaks the same plain-English name the
+# GUI's report card and `--rules-catalog` already use, rather than the bare
+# rule ID a user has never seen. Built once at import time — RULES is a
+# module-level constant, so this never changes within a process lifetime.
+_RULE_TITLES: dict[str, str] = {r["id"]: r["title"] for r in RULES}
+
 
 def _env(name: str) -> str | None:
     v = os.environ.get(f"NETDIAG_MON_{name}")
-    return v if v else None
+    if not v:
+        return None
+    # Foundation's JSONDecoder drops the whole line on a surrogate escape
+    # (e.g. from a non-UTF-8 SSID) — a mojibake character beats a dropped
+    # sample.
+    return v.encode("utf-8", "replace").decode("utf-8")
 
 
 def _f(name: str) -> float | None:
@@ -72,7 +92,7 @@ def _tri(name: str) -> bool | None:
 
 def build_tcp() -> list[dict]:
     """NETDIAG_MON_TCP_LINES is one 'host|port|ok|elapsed_ms' per line."""
-    raw = os.environ.get("NETDIAG_MON_TCP_LINES", "")
+    raw = _env("TCP_LINES") or ""
     out: list[dict] = []
     for line in raw.splitlines():
         if not line.strip():
@@ -96,20 +116,109 @@ def build_tcp() -> list[dict]:
     return out
 
 
+def _changes() -> list[dict]:
+    """Field-level diff against the previous sample (NETDIAG_MON_PREV_*).
+
+    None on either side means "not measured" on that side, and an
+    unmeasured→measured transition is not a change — same convention as
+    the rest of the stream, where null is absence of measurement.
+    Rules are the exception: they are always evaluated, so set
+    difference is safe. Summaries are user-facing prose; the GUI
+    renders them verbatim (CLAUDE.md: no verdict strings in Swift).
+
+    Invariant this relies on: a field whose null suppresses the diff
+    must keep its last known value in the previous-sample snapshot
+    (bash side) — otherwise a single link-down sample with empty
+    values erases the comparison baseline and interface/SSID changes
+    are never reported.
+    """
+    if _env("HAVE_PREV") != "1":
+        return []
+    out: list[dict] = []
+
+    def diff(now_key, prev_key, cid, field, phrase):
+        now, prev = _env(now_key), _env(prev_key)
+        if now is None or prev is None or now == prev:
+            return
+        out.append({"id": cid, "field": field, "from": prev, "to": now,
+                    "summary": phrase(prev, now)})
+
+    vpn_now = _env("VPN_ACTIVE") == "1"
+    vpn_prev_raw = _env("PREV_VPN_ACTIVE")
+    vpn_prev = vpn_prev_raw == "1"
+    if vpn_prev_raw is not None and vpn_now != vpn_prev:
+        name = _env("VPN_NAME") or _env("PREV_VPN_NAME")
+        suffix = f" ({name})" if name else ""
+        out.append({
+            "id": "vpn-connected" if vpn_now else "vpn-disconnected",
+            "field": "vpn.active",
+            "from": "1" if vpn_prev else "0",
+            "to": "1" if vpn_now else "0",
+            "summary": (f"VPN connected{suffix}" if vpn_now
+                        else f"VPN disconnected{suffix}"),
+        })
+    elif vpn_now and _env("VPN_TYPE") != "utun-route":
+        # lib/monitor.sh sets MON_VPN_NAME to the tunnel interface
+        # (utun4, utun6, ...) for utun-route VPNs — that's not a name,
+        # and it duplicates interface-changed below.
+        diff("VPN_NAME", "PREV_VPN_NAME", "vpn-name-changed", "vpn.name",
+             lambda a, b: f"VPN changed: {a} → {b}")
+
+    def exit_phrase(a, b):
+        if vpn_now and vpn_prev:
+            return f"VPN exit moved: {a} → {b}"
+        if vpn_now and not vpn_prev:
+            # Just connected: "a" was the user's real location, not a
+            # prior VPN exit, so don't imply the exit itself moved.
+            return f"VPN exit is in {b}"
+        return f"Location changed: {a} → {b}"
+
+    diff("PUB_CC", "PREV_PUB_CC", "country-changed", "public.country",
+         exit_phrase)
+    diff("PUB_IP", "PREV_PUB_IP", "public-ip-changed", "public.ip",
+         lambda a, b: "Public IP changed")
+    diff("PUB_ISP", "PREV_PUB_ISP", "isp-changed", "public.isp",
+         lambda a, b: f"Internet provider changed: {a} → {b}")
+    diff("SSID", "PREV_SSID", "wifi-network-changed", "link.ssid",
+         lambda a, b: f"Wi-Fi network changed: {a} → {b}")
+    if _env("SSID") is not None and _env("SSID") == _env("PREV_SSID"):
+        diff("BSSID", "PREV_BSSID", "wifi-roamed", "link.bssid",
+             lambda a, b: "Roamed to a different Wi-Fi access point")
+    diff("INTERFACE", "PREV_INTERFACE", "interface-changed",
+         "link.interface",
+         lambda a, b: f"Network interface changed: {a} → {b}")
+
+    rules_now = set((_env("RULES") or "").split())
+    rules_prev = set((_env("PREV_RULES") or "").split())
+    for rid in sorted(rules_now - rules_prev):
+        out.append({"id": "rule-fired", "field": "status.rules",
+                    "from": None, "to": rid,
+                    "summary": _RULE_TITLES.get(rid, f"Issue {rid} detected")})
+    for rid in sorted(rules_prev - rules_now):
+        title = _RULE_TITLES.get(rid)
+        out.append({"id": "rule-cleared", "field": "status.rules",
+                    "from": rid, "to": None,
+                    "summary": (f"Resolved: {title}" if title
+                                else f"Issue {rid} cleared")})
+    return out
+
+
 def main() -> None:
     is_wifi = _env("IFACE_TYPE") == "wifi"
     link_up = os.environ.get("NETDIAG_MON_LINK_UP") == "1"
-    rules = (os.environ.get("NETDIAG_MON_RULES", "") or "").split()
+    rules = (_env("RULES") or "").split()
 
     sample = {
-        "schema": _i("SCHEMA") or 1,
+        # Fallback exists only for standalone/test invocation; it must
+        # track NETDIAG_MON_SCHEMA in lib/monitor.sh.
+        "schema": _i("SCHEMA") or 2,
         "version": _env("VERSION"),
         "ts": _env("TS"),
         "seq": _i("SEQ") or 0,
         # Which tiers actually refreshed this cycle. Everything outside
         # this list is carried over from an earlier sample, which a
         # consumer plotting a series needs to know before it draws a point.
-        "refreshed": (os.environ.get("NETDIAG_MON_REFRESHED", "") or "").split(),
+        "refreshed": (_env("REFRESHED") or "").split(),
         "link": {
             "up": link_up,
             "interface": _env("INTERFACE"),
@@ -180,6 +289,10 @@ def main() -> None:
             "cadence_s": _i("CADENCE_S"),
         },
     }
+
+    changes = _changes()
+    if changes:
+        sample["changes"] = changes
 
     json.dump(sample, sys.stdout, separators=(",", ":"), default=str)
     sys.stdout.write("\n")

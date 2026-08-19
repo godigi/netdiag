@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -47,7 +48,8 @@ from typing import Any
 
 # (path, human label, kind, factor)
 #   spike: flag when current > median * factor
-#   drop:  flag when current < median * factor
+#   drop:  flag when current < median * factor, and — for speed only, see
+#          evaluate() — when the confirmation requirement also holds
 #   change: flag when value != prior majority
 #
 # (The "drift" kind, which fired on |current - median|/|median| > 0.5, was
@@ -60,16 +62,44 @@ from typing import Any
 # 37ms to 60ms" regression isn't actionable — it's just two samples of the
 # same noise floor. The ntp module surfaces drift directly when it crosses
 # the 1s/30s thresholds where it actually affects apps.
+#
+# Speed's factor is None here on purpose, unlike every other row: it comes
+# from THRESH_SPEED_DROP_FACTOR in lib/thresholds.sh, read once in main()
+# and passed into evaluate(), not from this table — the same "exactly one
+# home for a cutoff" rule every other threshold in this project follows.
 METRICS: list[tuple[str, str, str, float | None]] = [
     ("gateway.rtt_avg_ms",        "gateway RTT",         "spike", 3.0),
     ("gateway.loss_pct",          "gateway loss%",       "spike", 2.0),
     ("bufferbloat.gw_delta_ms",   "bufferbloat gw Δ",    "spike", 3.0),
     ("bufferbloat.inet_delta_ms", "bufferbloat inet Δ",  "spike", 3.0),
     ("mtu.effective",             "path MTU",            "change", None),
-    ("speedtest.down_mbps",       "speedtest down",      "drop", 0.5),
-    ("speedtest.up_mbps",         "speedtest up",        "drop", 0.5),
+    ("speedtest.down_mbps",       "speedtest down",      "drop", None),
+    ("speedtest.up_mbps",         "speedtest up",        "drop", None),
     ("public.isp",                "ISP",                 "change", None),
 ]
+
+
+def env_threshold(name: str, cast: type):
+    """One cutoff from lib/thresholds.sh, or a loud failure.
+
+    Same discipline as helpers/history.py's env_threshold: no default. A
+    default here would be a second home for a number CLAUDE.md says lives
+    in exactly one place, and lib/thresholds.sh could then be tuned without
+    this file ever finding out — a stale value that still produces a
+    plausible-looking verdict, which is the failure nobody notices.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        print(f"baseline.py: {name} is not set. It is defined in "
+              f"lib/thresholds.sh and exported by lib/output.sh before "
+              f"this helper runs.", file=sys.stderr)
+        sys.exit(3)
+    try:
+        return cast(raw)
+    except ValueError:
+        print(f"baseline.py: {name}={raw!r} is not a valid {cast.__name__}. "
+              f"It is defined in lib/thresholds.sh.", file=sys.stderr)
+        sys.exit(3)
 
 
 def get_nested(d: dict | None, path: str) -> Any:
@@ -97,7 +127,8 @@ def load_jsonl(p: Path) -> list[dict]:
     return out
 
 
-def evaluate(current: dict, history: list[dict]) -> list[dict]:
+def evaluate(current: dict, history: list[dict],
+            speed_drop_factor: float, speed_confirm_runs: int) -> list[dict]:
     regressions: list[dict] = []
     for path, label, kind, factor in METRICS:
         cur = get_nested(current, path)
@@ -135,19 +166,33 @@ def evaluate(current: dict, history: list[dict]) -> list[dict]:
                 "label": label, "kind": "spike",
                 "factor": round(cur_f / med, 1) if med else None,
             })
-        elif kind == "drop" and factor is not None and med != 0:
-            # For RSSI (negative dBm), more-negative is worse; flip the inequality.
-            if path == "wifi.rssi":
-                if cur_f < med * factor:
-                    regressions.append({
-                        "metric": path, "current": cur_f, "median": med,
-                        "label": label, "kind": "drop",
-                    })
-            elif cur_f < med * factor:
-                regressions.append({
-                    "metric": path, "current": cur_f, "median": med,
-                    "label": label, "kind": "drop",
-                })
+        elif kind == "drop" and med != 0:
+            # Speed is the only "drop" metric today. Its factor comes from
+            # the environment (THRESH_SPEED_DROP_FACTOR), not the table
+            # above — every other "drop" row keeps whatever factor the
+            # table gives it, unaffected by any of this.
+            is_speed = path.startswith("speedtest.")
+            eff_factor = speed_drop_factor if is_speed else factor
+            if eff_factor is None or cur_f >= med * eff_factor:
+                continue
+            if is_speed:
+                # A speed test result depends on who else is using the
+                # link at that exact moment, so one slow run is ordinary
+                # noise, not a regression. Confirmed only when the
+                # THRESH_SPEED_CONFIRM_RUNS-1 measured runs immediately
+                # before this one were *also* below factor * median —
+                # nums is exactly those prior measured values, oldest
+                # first, since hist_clean preserves history's chronological
+                # order and nums is hist_clean's numeric subset.
+                prior_needed = speed_confirm_runs - 1
+                prior_measured = nums[-prior_needed:] if prior_needed > 0 else []
+                if len(prior_measured) < prior_needed or \
+                   not all(v < med * eff_factor for v in prior_measured):
+                    continue
+            regressions.append({
+                "metric": path, "current": cur_f, "median": med,
+                "label": label, "kind": "drop",
+            })
     return regressions
 
 
@@ -157,6 +202,12 @@ def main() -> None:
     ap.add_argument("--current", required=True, type=Path)
     ap.add_argument("--n", type=int, default=10)
     args = ap.parse_args()
+
+    # Read once, here, before any parsing of a (possibly large) history
+    # file — same discipline helpers/history.py uses for THRESH_COMPARE_*:
+    # a broken install says so immediately rather than after the work.
+    speed_drop_factor = env_threshold("THRESH_SPEED_DROP_FACTOR", float)
+    speed_confirm_runs = env_threshold("THRESH_SPEED_CONFIRM_RUNS", int)
 
     try:
         current = json.loads(args.current.read_text())
@@ -182,7 +233,8 @@ def main() -> None:
 
     history = same_network[-args.n:] if same_network else []
 
-    regressions = evaluate(current, history) if len(history) >= 3 else []
+    regressions = (evaluate(current, history, speed_drop_factor, speed_confirm_runs)
+                  if len(history) >= 3 else [])
     out = {
         "compared_runs": len(history),
         "network_id": network_id,

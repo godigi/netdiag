@@ -16,24 +16,44 @@ not footer trivia. Design stance, from the approved mockup: **one swappable
 
 ## Layout (top to bottom)
 
+Revised after a user-testing round on the first build (see
+`docs/superpowers/plans/2026-08-17-dropdown-redesign.md`'s follow-up items):
+the CTA moved up under the stage, the timeline band was cut in favor of plain
+event rows, the instrument grid's first row now reads the internet-side probe
+instead of duplicating the router cell, and the footer regained the two
+actions the quick-action grid used to carry.
+
 1. **Stage** — one card whose content is a function of app state (see States).
-2. **Instrument grid** — fixed 4×2:
-   - Row 1 (performance): ping, loss, download, upload (Mbps units shown).
+2. **Primary CTA** — the single global "Check My Connection" button, directly
+   under the stage rather than at the bottom of the card. Present and
+   identically positioned in every state; no second prominent button.
+3. **Instrument grid** — fixed 4×2:
+   - Row 1 (performance): internet ping, internet loss, download, upload
+     (Mbps units shown). Ping and loss read `internet.*`, not `gateway.*` —
+     the router already has its own cell in row 2, and showing the same hop
+     twice was the first thing user testing flagged. A tiny right-aligned
+     caption directly under this row reads `speeds from test <age>` when a
+     speed test has ever run, and is absent otherwise.
    - Row 2 (link + identity): router RTT, Wi-Fi signal, VPN, location.
    - Location shows **only the country flag**. Hovering reveals a tooltip with
      the full public IP ("203.0.113.42 · click to copy"); clicking copies it.
    - Cells never disappear; an unmeasured value renders as `—`.
-3. **Heartbeat strip** — a thin live sparkline of fast-tier gateway RTT with
-   caption `monitoring · live` / `speeds from test <age>`. It exists to prove
+4. **Heartbeat strip** — a thin live sparkline of internet-side ping (the same
+   series row 1's ping cell reads), captioned `internet ping · live` /
+   `monitoring off` on the left and `min <n> · avg <n> · max <n> ms` (over the
+   plotted window, hidden below two points) on the right. It exists to prove
    monitoring is alive without dedicating prime space to a chart.
-4. **Change timeline** — "LAST 24 HOURS": a colored band with event ticks, a
-   time axis, the 2–3 most recent events as rows (icon, phrase, time), and an
-   "Open full history →" link into the dashboard's Activity view.
-5. **Primary CTA** — a single global "Check My Connection" button, present and
-   identically positioned in every state. No second prominent button; speed
-   test and dashboard remain reachable via the timeline link, stage links, and
-   the dashboard itself.
-6. **Footer** — Settings · Quit · version (unchanged).
+5. **Change timeline** — "LAST 24 HOURS" header row with a trailing "History"
+   button into the dashboard's Activity view, followed directly by the 2–3
+   most recent events as rows (icon, phrase, time) or an empty state. The
+   colored band with event ticks and a time axis from the original design is
+   gone: user testing found it added a second, harder-to-read encoding of
+   the same three rows underneath it without answering a question the rows
+   didn't already answer.
+6. **Footer** — Open Dashboard, Pause/Resume Monitoring, Settings, Quit,
+   version. The first two return actions the pre-redesign quick-action grid
+   carried that the first cut of this design dropped; both were among the
+   first things user testing asked for back.
 
 ## Stage states
 
@@ -52,10 +72,11 @@ severity the CLI reports) change between states.
 
 | UI element | Source |
 |---|---|
-| Instruments row 1 | monitor `gateway.rtt_avg_ms`, `gateway.loss_pct`; speeds from the most recent stored run via history (age shown in heartbeat caption) |
-| Instruments row 2 | monitor `link.*` (interface, SSID), `vpn.*`, `wifi.rssi`; slow tier `public.ip`, `public.country_iso` → flag |
+| Instruments row 1 | monitor `internet.rtt_avg_ms`, `internet.loss_pct`; speeds from the most recent stored run via history (age shown as a caption under the row, not in the heartbeat) |
+| Instruments row 2 | monitor `gateway.rtt_avg_ms`/`gateway.loss_pct` (router cell), `link.*` (interface, SSID), `vpn.*`, `wifi.rssi` (falling back to a live CoreWLAN read when Location Services is authorized and the slow tier hasn't measured yet); slow tier `public.ip`, `public.country_iso` → flag |
+| Heartbeat strip + caption | monitor `internet.rtt_avg_ms` (same field row 1's ping cell reads); min/avg/max computed client-side over the plotted window — arithmetic, not a threshold |
 | Alert title/prose | `status.rules` + `diagnosis[].summary` verbatim; plain-language layer via `--rules-catalog` |
-| Timeline events | **new:** `changes` array on monitor samples (below) plus scan-produced alerts |
+| Timeline events | `changes` array on monitor samples (below) plus scan-produced alerts; `rule-fired`/`rule-cleared` summaries are the catalog's rule title, not the bare rule ID |
 | Severity colors | `status.severity` / `status.rules`, thresholds already applied by `lib/monitor.sh` / `lib/diagnosis.sh`; the GUI maps severity → color only |
 | Paused state | `status.paused` (SIGUSR1/SIGUSR2 contract unchanged) |
 
@@ -69,10 +90,13 @@ public IP, country, ISP/ASN, VPN state and name, SSID/BSSID, interface, and
 rule-set transitions (a rule newly firing or clearing). Comparing *this sample
 to the last* is state the monitor already holds; phrasing the change in bash
 keeps the "no user-facing verdict strings in Swift" rule intact. Schema:
-`monitor` bumps 1 → 2; a `monitor_changes` entry joins `--capabilities`
-features so an older CLI degrades the GUI to a tickless timeline rather than
-breaking it. Change **detection** is field inequality, not thresholds — no new
-numeric cutoffs, so `lib/thresholds.sh` is untouched.
+`monitor` bumps 1 → 2; the GUI gates the event feed on `--capabilities`
+`schemas.monitor >= 2`, so an older CLI degrades the GUI to a tickless
+timeline rather than breaking it. (Not a `features` entry: that list is
+CI-checked against literal `--help` flags, and this is a schema property,
+which `schemas` already expresses.) Change **detection** is field
+inequality, not thresholds — no new numeric cutoffs, so `lib/thresholds.sh`
+is untouched.
 
 ## Event persistence
 
@@ -101,7 +125,9 @@ always-on heartbeat strip.
 - **Cold launch:** hydrate instruments and timeline from history + alert store
   (existing hydration path); stage shows healthy/alert per last verdict with
   its age.
-- **No speed test ever run:** speed cells show `—`, caption "no speed test yet".
+- **No speed test ever run:** speed cells show `—`; the "speeds from test …"
+  caption is simply absent rather than replaced with placeholder text —
+  shown only once `speedValues.age` resolves to a real value.
 - **Flag rendering:** `country_iso` → regional-indicator scalars; unknown or
   redacted → 🌐 placeholder, tooltip "location unknown".
 - **Malformed monitor lines:** skipped, as consumers already must.

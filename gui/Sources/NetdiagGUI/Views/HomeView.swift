@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreWLAN
 
 /// Home: "is my internet OK, and why?" — the question the sidebar's first
 /// row answers. Hydrated from stored history on cold launch so this is
@@ -17,6 +18,12 @@ import SwiftUI
 struct HomeView: View {
     @Environment(NetdiagCoordinator.self) private var coordinator
     @Environment(AppSettings.self) private var appSettings
+    /// The Wi-Fi row's CoreWLAN fallback — same cache-and-throttle shape
+    /// as `DropdownView.coreWLANRSSI`, kept as its own `@State` because
+    /// SwiftUI state belongs to the view that owns it, not to a store both
+    /// views could share. See that property's header for why a live read
+    /// on every render would be wrong.
+    @State private var coreWLANRSSI: Int?
 
     var body: some View {
         ScrollView {
@@ -24,6 +31,7 @@ struct HomeView: View {
                 header
 
                 locationWarningBanner
+                wifiRow
 
                 if coordinator.isScanning {
                     ScanProgressView(progress: coordinator.progress)
@@ -65,6 +73,72 @@ struct HomeView: View {
         .task {
             coordinator.locationPermissions.refresh()
         }
+        // Throttled the same way DropdownView.coreWLANRSSI is: a live
+        // CoreWLAN read on every render would cost a syscall per redraw of
+        // an always-visible screen, so this keys off the incoming sample
+        // sequence number instead — at most once per monitor tick.
+        .task(id: coordinator.monitor.latest?.seq) {
+            refreshCoreWLANRSSIIfNeeded()
+        }
+    }
+
+    // MARK: - Wi-Fi row
+    //
+    // Restores what the pre-redesign single-panel dropdown's
+    // `wifiGlanceInfo` used to show (network name + signal) on Home, where
+    // it never actually lived before this task — see this task's report
+    // for the full investigation. Reuses Item 1's exact word-plus-dBm
+    // treatment (`SignalScale.cellContent`) and `NetdiagCoordinator
+    // .wifiDisplayName`, the same two things `DropdownView`'s Wi-Fi
+    // instrument and quiet-line caption read, so Home and the dropdown can
+    // never describe the same network two different ways.
+
+    @ViewBuilder
+    private var wifiRow: some View {
+        if isConnectedToWiFi && coordinator.locationPermissions.isAuthorized {
+            let cell = SignalScale.cellContent(rssi: resolvedRSSI, scale: coordinator.signalScale.scale)
+            HStack(spacing: 10) {
+                Image(systemName: "wifi")
+                    .foregroundStyle(cell.tint)
+                    .frame(width: 18)
+                if let name = coordinator.wifiDisplayName {
+                    Text(name).fontWeight(.medium)
+                } else {
+                    Text("Wi-Fi").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(cell.value)
+                    .fontWeight(.medium)
+                    .foregroundStyle(cell.tint)
+                if let unit = cell.unit {
+                    Text(unit)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .cardStyle()
+        }
+    }
+
+    /// Same precedence as `DropdownView.resolvedRSSI`: the monitor's own
+    /// reading (present under `sudo netdiag`, or a future privileged
+    /// helper) first, the CoreWLAN fallback second.
+    private var resolvedRSSI: Int? {
+        coordinator.monitor.latest?.wifi?.rssi ?? coreWLANRSSI
+    }
+
+    private func refreshCoreWLANRSSIIfNeeded() {
+        guard isConnectedToWiFi,
+              coordinator.monitor.latest?.wifi?.rssi == nil,
+              coordinator.locationPermissions.isAuthorized,
+              let live = CWWiFiClient.shared().interface()?.rssiValue(),
+              live != 0 else {
+            coreWLANRSSI = nil
+            return
+        }
+        coreWLANRSSI = live
     }
 
     // MARK: - Location Banner
@@ -92,7 +166,7 @@ struct HomeView: View {
                     if coordinator.locationPermissions.isDeniedOrRestricted {
                         coordinator.locationPermissions.openSystemSettings()
                     } else {
-                        coordinator.locationPermissions.requestAuthorization()
+                        coordinator.locationPermissions.requestOrOpenSettings()
                     }
                 }
                 .controlSize(.small)
