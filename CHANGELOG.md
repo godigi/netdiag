@@ -21,14 +21,40 @@ All notable changes to `netdiag` are recorded here. Format follows
   `helpers/history.py`'s `--show` reads `THRESH_COMPARE_*`. New
   `helpers/signal_scale.py`; `tests/test_signal_scale.bats` covers shape,
   band ordering, boundaries moving with the thresholds, and refusal to
-  run without them.
+  run without them. (GUI) A new `SignalScaleStore` fetches and caches it
+  exactly the way `RulesCatalogStore` does; `DropdownView`'s Wi-Fi
+  instrument cell and a Wi-Fi row restored to `HomeView` (see below) both
+  render the CLI's label as the value and the dBm as the unit, tinted by
+  the band's tone — never a Swift-authored word or a dBm comparison in
+  Swift.
 - **`--rules-catalog` gains a `metrics` glossary (schema 1 → 2).** A
   sibling array to `rules`: one entry per jargon term the report card
   shows (`router`, `internet`, `dns`, `wifi_signal`, `bufferbloat`,
   `mtu`, `speed`, `clock`, `packet_loss`, `latency`, `jitter`), each a
   `key`/`label`/1–2 sentence `help` explaining the term to someone who's
   never heard it — same qualitative-only discipline as `blurb`, no
-  embedded numeric threshold.
+  embedded numeric threshold. (GUI) `RunReportView`'s report card is
+  restructured into columns — label (with a `questionmark.circle`
+  `HelpHint` fed by this glossary), this run's value, the network's
+  median, and a short verdict chip (`Typical`/`Better`/`Worse`/`Best`/
+  `Worst`, straight from the comparison's own `verdict` token, full CLI
+  sentence on hover) — instead of one long CLI sentence sitting inline on
+  every row.
+- **`HomeView` regains a Wi-Fi row (network name + signal).** Investigated
+  where "the dashboard used to have the Wi-Fi name and signal" actually
+  lived: never on `HomeView`/its tabbed-window predecessor at any commit
+  — only the pre-redesign single-panel `DropdownView` (commit `9aebf71`
+  and earlier) had a combined `wifiGlanceInfo` row, and that panel split
+  into today's separate main window and menu-bar dropdown well before
+  this branch. Not a regression, not a permission-only gate — the row
+  simply never existed on Home. Restored it: name from a new
+  `NetdiagCoordinator.wifiDisplayName` (the exact logic `DropdownView`'s
+  `cleanNetworkName` had, moved to the coordinator so both views share
+  one answer instead of two that could drift), signal from the same
+  word-plus-dBm treatment as the dropdown, with the identical CoreWLAN
+  fallback when the monitor's RSSI is null and Location Services is
+  authorized. When it isn't authorized, the existing restriction banner
+  is unchanged — no blank row underneath it.
 - **`--monitor` schema 2: samples describe their own changes.** When a
   tracked field differs from the previous sample — public IP, country,
   ISP, VPN state/name, Wi-Fi network or AP, interface, or a diagnosis

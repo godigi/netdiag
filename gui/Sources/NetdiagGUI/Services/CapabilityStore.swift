@@ -42,6 +42,7 @@ actor CapabilityStore {
         case history
         case show
         case rulesCatalog = "rules-catalog"
+        case signalScale = "signal-scale"
     }
 
     private var resolvedPath: String?

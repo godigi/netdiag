@@ -22,6 +22,10 @@ final class NetdiagCoordinator {
     /// `RuleChip` and every category-driven report row reads
     /// `rulesCatalog.catalog` directly rather than awaiting anything.
     let rulesCatalog = RulesCatalogStore()
+    /// The CLI's Wi-Fi signal scale — see that store's header. Same
+    /// synchronous-read shape as `rulesCatalog`: the Wi-Fi cell on Home and
+    /// in the dropdown reads `signalScale.scale` directly from a view body.
+    let signalScale = SignalScaleStore()
     /// The observable face of `Defaults` — see `AppSettings`'s header.
     /// Owned here so one instance is shared by every view via the
     /// environment, instead of each view reading `Defaults` for itself.
@@ -111,6 +115,9 @@ final class NetdiagCoordinator {
         // fine before it resolves, they just show the inert fallback until
         // it does.
         rulesCatalog.ensureLoaded()
+        // Same shape, same reasoning as rulesCatalog.ensureLoaded() above:
+        // its own capability gate, nothing to sequence after.
+        signalScale.ensureLoaded()
         // Events stored before the CLI phrased rule changes from the
         // catalog read "Issue G2 cleared". Rewrite them once the catalog
         // is in hand so an upgrade doesn't leave rule IDs in a timeline
@@ -521,5 +528,41 @@ final class NetdiagCoordinator {
         }
         if monitor.latest == nil && latestRun == nil { return "Starting up…" }
         return "Nothing obviously wrong — your network looks healthy."
+    }
+
+    /// A displayable network name, or `nil` when there isn't a clean one —
+    /// never the raw `network.id`/`network.label` a redacted or
+    /// not-yet-permitted record can carry (`"wifi:mac=…"`,
+    /// `"<redacted>"`, `"hidden by macOS"`). Shared by `DropdownView`'s
+    /// quiet-line caption and `HomeView`'s Wi-Fi row — one place, so the
+    /// two can't describe the same network two different ways.
+    ///
+    /// Without Location Services, macOS never hands this app a real SSID,
+    /// so the only name worth showing is one the user typed themselves in
+    /// `HistoryStore.displayName` — a raw `network.id` in that state is a
+    /// MAC-keyed string nobody recognizes, not a name.
+    var wifiDisplayName: String? {
+        if !locationPermissions.isAuthorized {
+            guard let id = monitor.latest?.network.id, !id.isEmpty else { return nil }
+            let custom = history.displayName(for: id)
+            guard !custom.isEmpty, custom != id, !custom.contains("<redacted>"),
+                  !custom.contains("hidden by macOS"), !custom.starts(with: "wifi:mac=") else {
+                return nil
+            }
+            return custom
+        }
+        if let id = monitor.latest?.network.id, !id.isEmpty {
+            let custom = history.displayName(for: id)
+            if !custom.isEmpty, custom != id, !custom.contains("<redacted>"),
+               !custom.contains("hidden by macOS") {
+                return custom
+            }
+        }
+        let raw = monitor.latest?.network.label ?? latestRun?.snapshot.network.label
+        guard let raw, !raw.isEmpty else { return nil }
+        if raw.contains("<redacted>") || raw.contains("hidden by macOS") || raw.starts(with: "wifi:mac=") {
+            return nil // Hide ugly redacted wifi label
+        }
+        return raw
     }
 }

@@ -24,7 +24,7 @@ struct DropdownView: View {
     @Environment(AppSettings.self) private var appSettings
     @Environment(\.openWindow) private var openWindow
     /// The Wi-Fi cell's CoreWLAN fallback, cached rather than read inside
-    /// `wifiValue` — see that property's header. Refreshed by the `.task`
+    /// `wifiCell` — see `resolvedRSSI`'s header. Refreshed by the `.task`
     /// below, at most once per incoming monitor sample.
     @State private var coreWLANRSSI: Int?
 
@@ -156,7 +156,7 @@ struct DropdownView: View {
         } else {
             parts.append("Watching for changes")
         }
-        if let name = cleanNetworkName { parts.append("on \(name)") }
+        if let name = coordinator.wifiDisplayName { parts.append("on \(name)") }
         return parts.joined(separator: " · ")
     }
 
@@ -287,7 +287,8 @@ struct DropdownView: View {
                 InstrumentCell(label: "Router",
                                value: routerInfo?.ping ?? "—",
                                tint: routerTint)
-                InstrumentCell(label: "Wi-Fi", value: wifiValue, tint: wifiTint)
+                InstrumentCell(label: "Wi-Fi", value: wifiCell.value,
+                               unit: wifiCell.unit, tint: wifiCell.tint)
                 InstrumentCell(label: "VPN",
                                value: vpnActive ? (vpnName ?? "on") : "off",
                                tint: vpnActive ? .primary : .secondary)
@@ -338,10 +339,6 @@ struct DropdownView: View {
         firedCategories.contains("router") ? .red : .primary
     }
 
-    private var wifiTint: Color {
-        firedCategories.contains("wifi") ? .red : .primary
-    }
-
     /// RSSI arrives from the monitor's medium tier (`_mon_probe_wifi_signal`,
     /// 60 s cadence) — but that probe needs `sudo -n`, which the ordinary
     /// unprivileged GUI does not have, so `wifi.rssi` stays null for the
@@ -353,17 +350,26 @@ struct DropdownView: View {
     /// "unavailable", not a real reading. The read itself is cached in
     /// `coreWLANRSSI` rather than taken here — see that property and the
     /// view's `.task(id:)` for why a per-render syscall would be wrong.
-    private var wifiValue: String {
+    private var resolvedRSSI: Int? {
+        coordinator.monitor.latest?.wifi?.rssi ?? coreWLANRSSI
+    }
+
+    /// The Wi-Fi cell's (value, unit, tint) — the CLI's own word as the
+    /// value and the raw dBm underneath (`SignalScale.cellContent`,
+    /// shared with `HomeView`'s Wi-Fi row), with one override on top: a
+    /// fired `wifi`-category rule always wins the tint, the same red every
+    /// other cell in this grid uses for "the CLI found a problem here" —
+    /// a band's own tone answers "how strong is this reading", not "did
+    /// the CLI diagnose something", and the two can disagree (VPN-masked
+    /// WiFi rules, a flapping link the diagnosis names but a strong
+    /// instantaneous RSSI reading wouldn't).
+    private var wifiCell: (value: String, unit: String?, tint: Color) {
         guard coordinator.monitor.latest?.link.isWiFi == true else {
-            return "wired"
+            return ("wired", nil, .secondary)
         }
-        if let rssi = coordinator.monitor.latest?.wifi?.rssi {
-            return "\(rssi) dBm"
-        }
-        if let live = coreWLANRSSI {
-            return "\(live) dBm"
-        }
-        return "—"
+        let content = SignalScale.cellContent(rssi: resolvedRSSI, scale: coordinator.signalScale.scale)
+        guard firedCategories.contains("wifi") else { return content }
+        return (content.value, content.unit, .red)
     }
 
     private func refreshCoreWLANRSSIIfNeeded() {
@@ -594,34 +600,6 @@ struct DropdownView: View {
         coordinator.requestedDestination = .activity
         openWindow(id: WindowID.dashboard)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private var cleanNetworkName: String? {
-        // If location permissions not authorized, only show custom user-assigned name
-        if !coordinator.locationPermissions.isAuthorized {
-            if let id = coordinator.monitor.latest?.network.id, !id.isEmpty {
-                let custom = coordinator.history.displayName(for: id)
-                if !custom.isEmpty && custom != id && !custom.contains("<redacted>") && !custom.contains("hidden by macOS") && !custom.starts(with: "wifi:mac=") {
-                    return custom
-                }
-            }
-            return nil
-        }
-        if let id = coordinator.monitor.latest?.network.id, !id.isEmpty {
-            let custom = coordinator.history.displayName(for: id)
-            if !custom.isEmpty && custom != id && !custom.contains("<redacted>") && !custom.contains("hidden by macOS") {
-                return custom
-            }
-        }
-        let raw = coordinator.monitor.latest?.network.label
-            ?? coordinator.latestRun?.snapshot.network.label
-        if let raw, !raw.isEmpty {
-            if raw.contains("<redacted>") || raw.contains("hidden by macOS") || raw.starts(with: "wifi:mac=") {
-                return nil // Hide ugly redacted wifi label
-            }
-            return raw
-        }
-        return nil
     }
 
     private var publicIP: String? {

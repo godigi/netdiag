@@ -34,18 +34,31 @@ struct RunReportView: View {
 
     // MARK: - Report card
 
+    /// Columns: symbol · label (+ help hint) · this run's value · the
+    /// network's median · a short verdict chip. The full CLI sentence that
+    /// used to sit in the last column moved to that chip's `.help(...)` —
+    /// see `verdictColumn` — so the numbers a user actually asked to see
+    /// (the median) are always visible and the prose is on demand.
     private var card: some View {
         VStack(spacing: 0) {
             ForEach(rows) { row in
-                HStack {
+                HStack(alignment: .center, spacing: 10) {
                     Image(systemName: row.health.symbol)
                         .foregroundStyle(row.health.tint)
                         .frame(width: 18)
-                    Text(row.label).frame(width: 140, alignment: .leading)
+                    HStack(spacing: 4) {
+                        Text(row.label)
+                        if let key = row.glossaryKey { HelpHint(key: key) }
+                    }
+                    .frame(width: 156, alignment: .leading)
                     Text(row.value)
                         .foregroundStyle(row.value == "not measured" ? .secondary : .primary)
-                    Spacer()
-                    comparisonChip(row)
+                        .lineLimit(1)
+                        .frame(width: 128, alignment: .leading)
+                    medianColumn(row)
+                        .frame(width: 96, alignment: .leading)
+                    Spacer(minLength: 4)
+                    verdictColumn(row)
                 }
                 .padding(.vertical, 6)
                 .padding(.horizontal, 10)
@@ -63,8 +76,19 @@ struct RunReportView: View {
         /// Which entry of the comparison to hang off this row, using
         /// helpers/history.py's own metric keys. A row summarising several
         /// numbers at once — the DNS row counts resolvers — has none, and
-        /// gets no chip rather than a chip about one of them.
+        /// gets no median or chip rather than either about one of them.
         let metricKey: String?
+        /// `helpers/rules_catalog.py`'s `metrics[].key` for this row's
+        /// `HelpHint` — a different key space from `metricKey` (that one
+        /// names a history.py comparison metric; this one names a
+        /// glossary term) even though most rows below happen to share the
+        /// same word for both.
+        let glossaryKey: String?
+        /// Renders `comparison.metrics[metricKey].median` the same way
+        /// this row already renders its own `value` — reused rather than
+        /// re-derived so the two columns can never disagree about units.
+        /// `nil` alongside a `nil` `metricKey`.
+        let medianFormatter: ((Double) -> String)?
     }
 
     /// Row → category mapping, derived mechanically from what the legacy
@@ -132,45 +156,61 @@ struct RunReportView: View {
         out.append(Row(label: "Router",
                        value: format(s.gateway.rttAvgMs, "%.1f ms", loss: s.gateway.lossPct),
                        health: health(["G1", "G2", "G3", "DI-1"], ["router", "lan"]),
-                       metricKey: "gateway_rtt_ms"))
+                       metricKey: "gateway_rtt_ms",
+                       glossaryKey: "router",
+                       medianFormatter: { String(format: "%.1f ms", $0) }))
         out.append(Row(label: "Internet",
                        value: format(s.internetLatency.rttAvgMs, "%.0f ms",
                                      loss: s.internetLatency.lossPct),
                        health: health(["L1", "L2", "P1", "P2", "N1", "N1b"], ["internet", "router"]),
-                       metricKey: "inet_rtt_ms"))
+                       metricKey: "inet_rtt_ms",
+                       glossaryKey: "internet",
+                       medianFormatter: { String(format: "%.0f ms", $0) }))
         out.append(Row(label: "Name lookups (DNS)",
                        value: s.dns.isEmpty ? "not measured"
                             : "\(s.dns.filter(\.ok).count) of \(s.dns.count) resolvers OK",
                        health: health(["D1", "D3", "D4", "DH-2"], ["dns", "dhcp"]),
-                       metricKey: nil))
+                       metricKey: nil,
+                       glossaryKey: "dns",
+                       medianFormatter: nil))
         if let wifi = s.wifi, let rssi = wifi.rssi {
             out.append(Row(label: "Wi-Fi signal",
                            value: "\(rssi) dBm",
                            health: health(["WD-1"], ["wifi"]),
-                           metricKey: "wifi_rssi_dbm"))
+                           metricKey: "wifi_rssi_dbm",
+                           glossaryKey: "wifi_signal",
+                           medianFormatter: { "\(Int($0.rounded())) dBm" }))
         }
         out.append(Row(label: "Under load",
                        value: s.bufferbloat.gwGrade.map { grade in
                             s.bufferbloat.gwDeltaMs.map { String(format: "grade %@ (+%.0f ms)", grade, $0) } ?? "grade \(grade)"
                        } ?? "not measured",
                        health: health(["B1", "B2"], ["load"]),
-                       metricKey: "bufferbloat_gw_ms"))
+                       metricKey: "bufferbloat_gw_ms",
+                       glossaryKey: "bufferbloat",
+                       medianFormatter: { String(format: "+%.0f ms", $0) }))
         out.append(Row(label: "Packet size (MTU)",
                        value: s.mtu.effective.map { "\($0) bytes" } ?? "not measured",
                        health: health(["M1"], ["mtu"]),
-                       metricKey: "mtu_effective"))
+                       metricKey: "mtu_effective",
+                       glossaryKey: "mtu",
+                       medianFormatter: { "\(Int($0.rounded())) bytes" }))
         if let speed = s.speedtest {
             out.append(Row(label: "Speed",
                            value: [speed.downMbps.map { String(format: "%.0f Mbps down", $0) },
                                    speed.upMbps.map { String(format: "%.0f up", $0) }]
                                 .compactMap { $0 }.joined(separator: " · "),
                            health: health(["BL-1"], ["baseline"]),
-                           metricKey: "speed_down_mbps"))
+                           metricKey: "speed_down_mbps",
+                           glossaryKey: "speed",
+                           medianFormatter: { String(format: "%.0f Mbps down", $0) }))
         }
         out.append(Row(label: "Clock",
                        value: s.ntp.driftSeconds.map { String(format: "%+.2f s off", $0) } ?? "not measured",
                        health: health(["NT-1"], ["clock"]),
-                       metricKey: "ntp_drift_s"))
+                       metricKey: "ntp_drift_s",
+                       glossaryKey: "clock",
+                       medianFormatter: { String(format: "%+.2f s", $0) }))
         return out
     }
 
@@ -185,27 +225,59 @@ struct RunReportView: View {
     }
 
     // MARK: - Comparison
+    //
+    // Two columns instead of one long sentence: the network's median is
+    // always visible (the number the user asked to see), and the verdict
+    // is a short chip carrying the CLI's own `verdict` token — never a
+    // Swift-authored word — with the full CLI sentence a `.help(...)`
+    // hover away. Both degrade to "—" rather than an empty gap: no
+    // comparison yet (a live run), a row with no `metricKey` (DNS), or a
+    // verdict this build treats as "nothing to show" all render the same
+    // placeholder, so the column never looks broken.
 
-    /// How this run's number sits against the rest of this network's
-    /// history, in the CLI's words.
-    ///
-    /// `summary` is printed exactly as it arrived. `verdict` picks a
-    /// colour and does nothing else — the moment this view starts deciding
-    /// which side of a percentile a value falls on, the cutoff has left
-    /// lib/thresholds.sh.
+    private static let noValuePlaceholder = "—"
+
     @ViewBuilder
-    private func comparisonChip(_ row: Row) -> some View {
-        if let key = row.metricKey,
-           let metric = comparison?.metrics[key],
-           !metric.summary.isEmpty {
-            Text(metric.summary)
+    private func medianColumn(_ row: Row) -> some View {
+        if let key = row.metricKey, let median = comparison?.metrics[key]?.median,
+           let format = row.medianFormatter {
+            Text("median \(format(median))")
                 .font(.caption)
-                .foregroundStyle(metric.verdict.tint)
-                .multilineTextAlignment(.trailing)
-                .frame(maxWidth: 320, alignment: .trailing)
-                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(.secondary)
+        } else {
+            Text(Self.noValuePlaceholder)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
     }
+
+    /// The chip words: "Typical" / "Better" / "Worse" / "Best" / "Worst",
+    /// straight from `comparison.metrics[key].verdict` — the machine token
+    /// docs/JSON-SCHEMA.md documents, capitalised and nothing else. A
+    /// verdict of `insufficientData` / `notMeasured` / `unknown`, or no
+    /// comparison at all, shows the same "—" placeholder `medianColumn`
+    /// does rather than a chip with nothing useful in it.
+    @ViewBuilder
+    private func verdictColumn(_ row: Row) -> some View {
+        if let key = row.metricKey, let metric = comparison?.metrics[key],
+           Self.chipVerdicts.contains(metric.verdict) {
+            Text(metric.verdict.displayWord)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(metric.verdict.tint)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(metric.verdict.tint.opacity(0.15), in: Capsule())
+                // The full CLI sentence, on demand — exactly what this
+                // column showed inline before this task.
+                .help(metric.summary)
+        } else {
+            Text(Self.noValuePlaceholder)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private static let chipVerdicts: Set<RunDetail.Verdict> = [.typical, .better, .worse, .best, .worst]
 
     // MARK: - Diagnoses
 
@@ -264,5 +336,16 @@ extension RunDetail.Verdict {
         case .typical:         return .secondary
         case .insufficientData, .notMeasured, .unknown: return .secondary
         }
+    }
+
+    /// The verdict chip's word: this case's own raw token, title-cased —
+    /// never a synonym invented in Swift. Every case currently shown in a
+    /// chip (`typical`/`better`/`worse`/`best`/`worst`) has no underscore
+    /// to begin with; the replace is here so a future verdict this app
+    /// doesn't special-case yet (see `RunReportView.chipVerdicts`) still
+    /// reads as words instead of `snake_case` the day it's added to that
+    /// set.
+    var displayWord: String {
+        rawValue.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }
