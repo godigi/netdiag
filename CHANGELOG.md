@@ -8,6 +8,27 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **`netdiag --signal-scale`** — one JSON object with the four Wi-Fi
+  signal bands this install's thresholds define: Excellent / Good / Fair
+  / Weak, each a dBm floor, a tone, and a one-sentence explanation. Exists
+  because a raw RSSI number ("-62 dBm") means nothing to almost anyone —
+  a consumer now has the CLI's own word to show instead, with the dBm
+  kept as a secondary detail rather than dropped. Boundaries are
+  `lib/thresholds.sh`'s `THRESH_WIFI_RSSI_EXCELLENT_DBM` (new, -55),
+  `THRESH_WIFI_RSSI_G1_DBM` (-70, already backing rule G1) and
+  `THRESH_WIFI_RSSI_WEAK_DBM` (-75, already backing rule W1) — reused
+  rather than duplicated, and read through the environment the way
+  `helpers/history.py`'s `--show` reads `THRESH_COMPARE_*`. New
+  `helpers/signal_scale.py`; `tests/test_signal_scale.bats` covers shape,
+  band ordering, boundaries moving with the thresholds, and refusal to
+  run without them.
+- **`--rules-catalog` gains a `metrics` glossary (schema 1 → 2).** A
+  sibling array to `rules`: one entry per jargon term the report card
+  shows (`router`, `internet`, `dns`, `wifi_signal`, `bufferbloat`,
+  `mtu`, `speed`, `clock`, `packet_loss`, `latency`, `jitter`), each a
+  `key`/`label`/1–2 sentence `help` explaining the term to someone who's
+  never heard it — same qualitative-only discipline as `blurb`, no
+  embedded numeric threshold.
 - **`--monitor` schema 2: samples describe their own changes.** When a
   tracked field differs from the previous sample — public IP, country,
   ISP, VPN state/name, Wi-Fi network or AP, interface, or a diagnosis

@@ -61,12 +61,65 @@ assert d['version'] == sys.argv[1], d['version']
 " "$VERSION"
 }
 
-@test "schema is 1" {
+@test "schema is 2" {
   run "$NETDIAG" --rules-catalog
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, sys
-assert json.load(sys.stdin)['schema'] == 1
+assert json.load(sys.stdin)['schema'] == 2
+"
+}
+
+# ── metrics glossary ──────────────────────────────────────────────────
+
+@test "metrics glossary covers at least the terms the report card shows" {
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+keys = {m['key'] for m in d['metrics']}
+required = {'router', 'internet', 'dns', 'wifi_signal', 'bufferbloat',
+            'mtu', 'speed', 'clock', 'packet_loss', 'latency', 'jitter'}
+missing = required - keys
+assert not missing, missing
+"
+}
+
+@test "every metrics entry has exactly key/label/help, all non-empty" {
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+fields = {'key', 'label', 'help'}
+for m in d['metrics']:
+    assert set(m.keys()) == fields, (m.get('key'), sorted(m.keys()))
+    for k, v in m.items():
+        assert isinstance(v, str) and v.strip(), (m.get('key'), k, v)
+"
+}
+
+@test "metrics keys are unique" {
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+keys = [m['key'] for m in d['metrics']]
+assert len(keys) == len(set(keys)), sorted(set(k for k in keys if keys.count(k) > 1))
+"
+}
+
+@test "glossary help text embeds no numeric threshold — dBm, %, ms, or bare digits" {
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, re, sys
+d = json.load(sys.stdin)
+pattern = re.compile(r'[0-9](?:\s?(?:dbm|db|ms|%|seconds?|bytes?))', re.IGNORECASE)
+bad = [(m['key'], pattern.findall(m['help'])) for m in d['metrics'] if pattern.search(m['help'])]
+assert not bad, bad
 "
 }
 

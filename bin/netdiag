@@ -301,6 +301,19 @@ while [ "$#" -gt 0 ]; do
       export NETDIAG_RULES_VERSION
       python3 "$HELPERS_DIR/rules_catalog.py" || exit 3
       exit 0 ;;
+    --signal-scale)
+      # Same shape as --rules-catalog: a static handshake, not a run. The
+      # three RSSI cutoffs that define the Excellent/Good/Fair/Weak bands
+      # already live in lib/thresholds.sh; they reach the helper through
+      # the environment, the same handshake helpers/history.py's --show
+      # uses for THRESH_COMPARE_* — a boundary that turns a dBm number
+      # into a word belongs in exactly one place too.
+      # shellcheck source=lib/thresholds.sh
+      . "$LIB_DIR/thresholds.sh"
+      export THRESH_WIFI_RSSI_EXCELLENT_DBM THRESH_WIFI_RSSI_G1_DBM \
+             THRESH_WIFI_RSSI_WEAK_DBM
+      python3 "$HELPERS_DIR/signal_scale.py" || exit 3
+      exit 0 ;;
     -h|--help)
       cat <<'HELP'
 netdiag — full network investigation for macOS.
@@ -406,7 +419,14 @@ Modes (exit after running, don't run the normal check battery):
                            category, descriptive severity, scope (scan /
                            monitor / both) and a plain-English blurb per
                            rule ID — the prose a GUI shows next to a rule
-                           chip instead of reimplementing it in Swift.
+                           chip instead of reimplementing it in Swift. Also
+                           carries a metrics glossary — see docs/JSON-SCHEMA.md.
+  --signal-scale           print one JSON object with the four Wi-Fi signal
+                           bands (Excellent/Good/Fair/Weak) this install's
+                           thresholds define: a dBm boundary, a label, a
+                           tone, and a plain sentence per band — the word a
+                           GUI shows next to a raw RSSI reading instead of
+                           inventing its own scale.
 HELP
       exit 0 ;;
     -*)

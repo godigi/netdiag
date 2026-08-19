@@ -776,9 +776,10 @@ every optional dependency below is missing.
   "schema": 1,
   "version": "0.9.0",
   "schemas": {"run": 1, "monitor": 2, "history": 1, "show": 1,
-              "rules_catalog": 1, "progress": 1},
+              "rules_catalog": 1, "signal_scale": 1, "progress": 1},
   "features": ["capabilities", "version", "progress", "monitor", "history",
-               "show", "redact", "speed-only", "watcher"],
+               "show", "redact", "speed-only", "watcher", "rules-catalog",
+               "signal-scale"],
   "deps": {
     "bash": "5.2.37",
     "python3": "3.9.6",
@@ -792,14 +793,15 @@ every optional dependency below is missing.
 
 - **`schema`** versions this document's own shape, separately from
   every entry inside `schemas`.
-- **`schemas`** carries the schema number of six other outputs.
-  `monitor`, `history`, `show` and `rules_catalog` mirror a `"schema"`
-  field each of those already emits (`lib/monitor.sh`,
-  `helpers/history.py`, `helpers/rules_catalog.py`) — see their sections
-  above and below. `run` (the `--json` output) and `progress` (the
-  `--progress` event stream) do not embed a schema field as of v0.9.0;
-  both report `1` here as the number a future field would start at, and
-  this note is that field's documentation until one exists.
+- **`schemas`** carries the schema number of seven other outputs.
+  `monitor`, `history`, `show`, `rules_catalog` and `signal_scale` mirror
+  a `"schema"` field each of those already emits (`lib/monitor.sh`,
+  `helpers/history.py`, `helpers/rules_catalog.py`,
+  `helpers/signal_scale.py`) — see their sections above and below. `run`
+  (the `--json` output) and `progress` (the `--progress` event stream) do
+  not embed a schema field as of v0.9.0; both report `1` here as the
+  number a future field would start at, and this note is that field's
+  documentation until one exists.
 - **`features`** is an open set, not a closed enum — expect it to grow
   as new CLI surface ships. A GUI checks membership (`"redact" in
   features`), not the array's length or order.
@@ -825,15 +827,16 @@ every optional dependency below is missing.
 `netdiag --rules-catalog` writes one JSON object to stdout and exits 0:
 every rule the diagnosis engine (`lib/diagnosis.sh`, `lib/wan.sh`,
 `lib/output.sh`) and the live monitor (`lib/monitor.sh`) can emit,
-described once. Same family as `--capabilities` — early exit, no probing,
-no log file, no `~/net-diag` writes, sudo-free — and this schema is
-additive: a future release only ever adds fields to a rule entry or new
-entries to `rules`, never removes or repurposes one, so a consumer that
-reads today's fields keeps working against tomorrow's catalog.
+described once, plus a glossary of the jargon terms the report card shows.
+Same family as `--capabilities` — early exit, no probing, no log file, no
+`~/net-diag` writes, sudo-free — and this schema is additive: a future
+release only ever adds fields to an entry or new entries to `rules` /
+`metrics`, never removes or repurposes one, so a consumer that reads
+today's fields keeps working against tomorrow's catalog.
 
 ```jsonc
 {
-  "schema": 1,
+  "schema": 2,
   "version": "0.9.0",
   "rules": [
     {
@@ -844,6 +847,13 @@ reads today's fields keeps working against tomorrow's catalog.
       "scope": "both",
       "blurb": "Packets are being dropped between your Mac and your router even though the WiFi signal is strong, which points at the router itself rather than the wireless link. A reboot (power off, wait, then power back on) clears this in most cases.",
       "doc": "DIAGNOSIS-RULES.md#g2--gateway-loss-with-healthy-wifi"
+    }
+  ],
+  "metrics": [
+    {
+      "key": "mtu",
+      "label": "Packet size (MTU)",
+      "help": "The biggest chunk of data your connection can send in one piece. If it's smaller than usual, some websites and video calls can stall or fail to load."
     }
   ]
 }
@@ -886,3 +896,61 @@ reads today's fields keeps working against tomorrow's catalog.
   `doc` is where the actual number lives.
 - **`doc`** is a GitHub-style anchor into `docs/DIAGNOSIS-RULES.md` for
   the full trigger condition, evidence, and rationale.
+- **`metrics`** is a glossary, not a rule list: one entry per jargon term
+  the report card shows (`router`, `internet`, `dns`, `wifi_signal`,
+  `bufferbloat`, `mtu`, `speed`, `clock`, `packet_loss`, `latency`,
+  `jitter`), for a `questionmark.circle` hint next to a row label. Added
+  in schema `2`; `rules` is unchanged from schema `1`.
+  - **`key`** is what a GUI looks the entry up by — stable, never
+    re-used for a different meaning.
+  - **`label`** is the short user-facing name for the term (matches the
+    report card's own row label where one exists).
+  - **`help`** is 1–2 plain sentences explaining the term to someone who
+    has never heard it, with no jargon and no embedded numeric
+    threshold — same discipline as `blurb`, for the same reason.
+
+---
+
+# `netdiag --signal-scale` schema
+
+`netdiag --signal-scale` writes one JSON object to stdout and exits 0:
+the four bands this install's Wi-Fi RSSI thresholds define — Excellent,
+Good, Fair, Weak — so a GUI can turn a raw dBm reading into the word a
+person actually reads, without deriving a boundary of its own. Same
+family as `--rules-catalog` and `--capabilities` — early exit, no
+probing, no log file, no `~/net-diag` writes, sudo-free.
+
+```jsonc
+{
+  "schema": 1,
+  "bands": [
+    {"min_dbm": -55, "label": "Excellent", "tone": "good",
+     "blurb": "Your Wi-Fi signal is as strong as it gets — you're right next to the router or access point, and the wireless link is never going to be the bottleneck."},
+    {"min_dbm": -70, "label": "Good", "tone": "ok",
+     "blurb": "Your Wi-Fi signal is solid. Streaming, video calls, and downloads should all work smoothly from here."},
+    {"min_dbm": -75, "label": "Fair", "tone": "warn",
+     "blurb": "Your Wi-Fi signal is on the weaker side. You might notice occasional slowdowns or a video call stutter, especially the further you get from the router."},
+    {"min_dbm": null, "label": "Weak", "tone": "bad",
+     "blurb": "Your Mac is far from the router or something is blocking the signal — expect stalls and dropped calls."}
+  ]
+}
+```
+
+- **`schema`** versions this document's own shape.
+- **`bands`** is always exactly 4 entries, strongest signal first. A
+  consumer picks a reading's band by walking the array in order and
+  taking the first one whose `min_dbm` the reading is `>=` — never by
+  re-deriving a boundary of its own, which is the whole reason this mode
+  exists instead of a GUI-side lookup table.
+  - **`min_dbm`** is the band's lower bound in dBm (RSSI values are
+    negative; closer to zero is stronger), taken directly from
+    `lib/thresholds.sh` — `THRESH_WIFI_RSSI_EXCELLENT_DBM`,
+    `THRESH_WIFI_RSSI_G1_DBM`, and `THRESH_WIFI_RSSI_WEAK_DBM`
+    respectively. `null` on the last band: "Weak" has no floor.
+  - **`label`** is the exact user-facing word: `"Excellent"`, `"Good"`,
+    `"Fair"`, or `"Weak"`.
+  - **`tone`** is `good` / `ok` / `warn` / `bad` — a closed set for
+    tinting, never a color or a hex code.
+  - **`blurb`** is one plain sentence a tooltip can show, with no
+    embedded numeric threshold — same discipline as `--rules-catalog`'s
+    `blurb` / `metrics[].help`.

@@ -35,6 +35,24 @@ NETDIAG_RULES_VERSION — the same handshake shape capabilities.py uses for
 NETDIAG_CAP_VERSION, kept as its own variable because this helper answers
 a narrower question (what does each rule mean) than --capabilities does
 (what can this install do).
+
+── The metrics glossary ──────────────────────────────────────────────────
+`metrics` is a second, sibling array on the same document: not one entry
+per diagnosis rule but one entry per *jargon term* the report card shows —
+"router", "MTU", "jitter" — explaining what the word means in plain
+English, for the reader who has never heard it before. It lives here
+rather than in a standalone `helpers/glossary.py` because it answers the
+same question `rules` does ("what does this word on screen mean?") for the
+same consumer (a `questionmark.circle` hint in `RunReportView`), and a
+second CLI mode would just be a second round trip and a second cache file
+for something this small. `SCHEMA_RULES_CATALOG` bumped 1 → 2 for the
+addition — additive only, per this schema's own promise in
+docs/JSON-SCHEMA.md, so a build that only reads `rules` keeps working
+unchanged.
+
+Like `blurb`, `help` stays qualitative: no dBm, no ms, no percent. A
+number belongs in lib/thresholds.sh and nowhere else, and a glossary entry
+answers "what is this thing" rather than "is this reading good".
 """
 
 from __future__ import annotations
@@ -44,7 +62,8 @@ import os
 import sys
 
 # This file's own schema: the shape of the --rules-catalog document.
-SCHEMA_RULES_CATALOG = 1
+# v1 → v2: added the sibling `metrics` glossary array.
+SCHEMA_RULES_CATALOG = 2
 
 # The measurement family each rule judges — the GUI tints a report-card
 # row by this, not by severity, so a "varies"-severity rule like B1 still
@@ -590,7 +609,124 @@ RULES: list[dict[str, str]] = [
 ]
 
 
+# One entry per jargon term the report card shows. `key` is what a GUI
+# looks the entry up by — chosen to match `RunReportView`'s own row
+# concepts (`router`, `internet`, `dns`, `wifi_signal`, `bufferbloat`,
+# `mtu`, `speed`, `clock`) plus three terms that show up *inside* a row's
+# value text rather than as a row of their own (`packet_loss`, `latency`,
+# `jitter`) — "3.4 ms · 2% loss" reads as two unexplained numbers without
+# them. Order is reading order for a plain listing, not meaningful to a
+# lookup.
+METRICS: list[dict[str, str]] = [
+    {
+        "key": "router",
+        "label": "Router",
+        "help": (
+            "The box in your home that gets your other devices onto the "
+            "internet — sometimes combined with your modem into one unit. "
+            "A problem here means the fault is close to home, not out on "
+            "the wider internet."
+        ),
+    },
+    {
+        "key": "internet",
+        "label": "Internet",
+        "help": (
+            "The wider internet beyond your own router — your provider's "
+            "network and everything past it. A problem measured here "
+            "usually sits outside your home, even though your Mac is the "
+            "one doing the measuring."
+        ),
+    },
+    {
+        "key": "dns",
+        "label": "Name lookups (DNS)",
+        "help": (
+            "Every website name, like example.com, has to be translated "
+            "into a numeric address before your Mac can reach it. That "
+            "translation is called DNS — when it's slow or failing, sites "
+            "feel like they won't even start loading."
+        ),
+    },
+    {
+        "key": "wifi_signal",
+        "label": "Wi-Fi signal",
+        "help": (
+            "How strong the wireless connection is between your Mac and "
+            "the router. A weak signal causes stalls and dropped "
+            "connections even when the rest of your network is healthy."
+        ),
+    },
+    {
+        "key": "bufferbloat",
+        "label": "Under load",
+        "help": (
+            "What happens to your connection's responsiveness while it's "
+            "busy — for example, while something is uploading or "
+            "downloading heavily. A router that gets sluggish under load "
+            "can make a video call choppy even though your everyday speed "
+            "looks fine."
+        ),
+    },
+    {
+        "key": "mtu",
+        "label": "Packet size (MTU)",
+        "help": (
+            "The biggest chunk of data your connection can send in one "
+            "piece. If it's smaller than usual, some websites and video "
+            "calls can stall or fail to load."
+        ),
+    },
+    {
+        "key": "speed",
+        "label": "Speed",
+        "help": (
+            "How fast data actually moves over your connection right now "
+            "— download is data coming to you, upload is data you send "
+            "out. Neither one measures your everyday latency."
+        ),
+    },
+    {
+        "key": "clock",
+        "label": "Clock",
+        "help": (
+            "Your Mac's own sense of the current time. Secure websites "
+            "check this against their own certificates, so a clock "
+            "that's drifted can make secure connections fail outright."
+        ),
+    },
+    {
+        "key": "packet_loss",
+        "label": "Packet loss",
+        "help": (
+            "Small pieces of data, called packets, that were sent but "
+            "never arrived. Even a little loss causes stutters in calls "
+            "and games; a lot of it makes a connection feel broken."
+        ),
+    },
+    {
+        "key": "latency",
+        "label": "Latency / ping",
+        "help": (
+            "How long it takes a single message to make a round trip to "
+            "something and back. Lower feels snappier; high latency is "
+            "what makes a call feel like it's lagging behind."
+        ),
+    },
+    {
+        "key": "jitter",
+        "label": "Jitter",
+        "help": (
+            "How much latency varies from one moment to the next. Even "
+            "when the average is fine, big swings in jitter are what "
+            "make a call or a game feel unpredictable and stuttery."
+        ),
+    },
+]
+
+
 _FIELDS = frozenset({"id", "title", "category", "severity", "scope", "blurb", "doc"})
+_METRIC_FIELDS = frozenset({"key", "label", "help"})
 
 
 def _validate(rules: list[dict[str, str]]) -> None:
@@ -613,12 +749,25 @@ def _validate(rules: list[dict[str, str]]) -> None:
         seen_ids.add(r["id"])
 
 
+def _validate_metrics(metrics: list[dict[str, str]]) -> None:
+    """Same discipline as `_validate`, for the glossary array."""
+    seen_keys: set[str] = set()
+    for m in metrics:
+        assert set(m) == _METRIC_FIELDS, f"entry has the wrong field set: {m}"
+        for k, v in m.items():
+            assert isinstance(v, str) and v.strip(), f"{m.get('key')}.{k} is empty"
+        assert m["key"] not in seen_keys, f"duplicate metric key: {m['key']}"
+        seen_keys.add(m["key"])
+
+
 def main() -> None:
     _validate(RULES)
+    _validate_metrics(METRICS)
     doc = {
         "schema": SCHEMA_RULES_CATALOG,
         "version": os.environ.get("NETDIAG_RULES_VERSION") or None,
         "rules": RULES,
+        "metrics": METRICS,
     }
     json.dump(doc, sys.stdout, separators=(",", ":"))
     sys.stdout.write("\n")

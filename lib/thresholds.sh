@@ -94,6 +94,12 @@ THRESH_ICMP_FILTERED_LOSS_PCT=50
 THRESH_ICMP_TOTAL_LOSS_PCT=100
 
 # ── WiFi ─────────────────────────────────────────────────────────────────
+# Read by helpers/signal_scale.py (netdiag --signal-scale) as the top edge
+# of its four-band "Excellent/Good/Fair/Weak" scale — the word a GUI shows
+# instead of a bare dBm number nobody without a radio background can read
+# at a glance. -55 dBm is one bar short of a link to the router itself:
+# strong enough that nothing on the wireless leg is ever the bottleneck.
+THRESH_WIFI_RSSI_EXCELLENT_DBM=-55
 # W1 — "your signal is weak" on its own.
 THRESH_WIFI_RSSI_WEAK_DBM=-75
 # G1 — the stricter cutoff used only to attribute *gateway loss* to the
