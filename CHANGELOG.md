@@ -73,6 +73,92 @@ All notable changes to `netdiag` are recorded here. Format follows
   Location shows only the country flag — hover reveals the public IP,
   click copies it. One primary action remains ("Check My Connection");
   the dashboard's Activity section is now a real event list.
+- **Releases are published from this file.** New
+  `.github/workflows/release.yml` turns a pushed `v*` tag into a GitHub
+  Release whose notes are the matching section below, extracted by a new
+  `helpers/changelog_section.py`. Before it, publishing a Release was a
+  step a human had to remember, and the memory failed for three months:
+  eleven tags were pushed and two became Releases, so the repo's front
+  page advertised v0.2.1 from May as "Latest" while `install.sh` was
+  fetching v0.9.1. The workflow refuses a tag whose version disagrees with
+  `bin/netdiag`'s `NETDIAG_VERSION`, or that has no section here — the two
+  drifts this repo has actually suffered — and can be re-run by hand
+  against an existing tag to repair its notes. `CONTRIBUTING.md` gains the
+  eight-step release checklist it enforces.
+- **`tests/test_changelog.bats`** — 11 structural guards on this file,
+  because every defect below was invisible until someone went looking and
+  none of them broke a build: a duplicate heading, a version documented
+  with no tag, a heading with no link reference, a section truncated
+  mid-sentence, and a version string in `bin/netdiag` with nothing here
+  describing it.
+
+### Changed
+
+- **The dropdown's link-path bar, glance panel, quick-action grid, and
+  contextual remedy row were retired**; their facts moved into the
+  instrument grid and the alert stage. The footer regained Open
+  Dashboard and Pause/Resume Monitoring after user testing.
+
+### Fixed
+
+- **The paused-monitor test no longer fails in CI on a slow runner.** It
+  slept a fixed 4 s, sent `SIGUSR1`, slept 3 s more and read the stream's
+  last line — so on a loaded runner it read an empty file and died with a
+  JSON decode error, leaving a red `bats` badge on a public README for
+  three days. It now polls for the pause marker with the same `wait_until`
+  helper the three tests directly above it already use, and whose comment
+  documents this exact failure. The neighbouring SIGHUP test got the same
+  treatment for its pre-pause wait: pausing a monitor that had not probed
+  yet would have passed while asserting nothing.
+- **This file had a second `## [Unreleased]` heading**, buried between
+  `[0.5.2]` and `[0.5.1]`, holding notes — the one-line installer,
+  `docs/JSON-SCHEMA.md`, `CONTRIBUTING.md`, CI smoke tests, the removal of
+  `netdiag-prompt.md` — that had actually shipped in 0.6.0. They have been
+  merged into `[0.6.0]`, where the commits that made them live. Its
+  trailing "Known" note about `VPN-1` never firing went with them: 0.6.0
+  is the release that fixed it.
+- **`[0.9.1]`'s heading was written over the last line of the entry above
+  it**, which ended mid-sentence at "and a real `--json --quick` run is".
+  Restored from `3458283~1`.
+- **`[0.9.1]` was missing half of what it shipped.** `--version`,
+  `--capabilities`, `--rules-catalog`, `run_id` and `metric_stats` were
+  all committed before `3458283` and are therefore inside the `v0.9.1`
+  tag, but sat under `[Unreleased]` because that release was tagged
+  without rolling the section over. Moved into `[0.9.1]`, verified by
+  `git merge-base --is-ancestor` against every entry rather than by
+  reading dates. Left where they were, the next release would have
+  claimed them as its own.
+- **Four documented versions had no tag at all** — 0.1.0, 0.4.1, 0.5.0
+  and 0.9.1 — so their entries described something a reader could not
+  check out, and `install.sh` fetched a v0.9.1 that `git` had never heard
+  of. All four are now annotated tags on their release commits, dated to
+  match. Every heading also gained the Keep a Changelog link reference it
+  was missing, so each version links to its own diff.
+
+## [0.9.1] - 2026-08-15
+
+Adds GitHub auto-update checks to the GUI, new layperson-tailored
+diagnostics for DNS and IPv6, router gateway admin quick access, and speed
+test retention — plus the four CLI surfaces a GUI needs before it can
+trust the binary it is talking to: `--version`, `--capabilities`,
+`--rules-catalog`, and `run_id`/`metric_stats` in the JSON.
+
+Those CLI entries were documented under `[Unreleased]` until well after
+this release shipped, because 0.9.1 was tagged without rolling the section
+over. They are recorded here, where the commits actually are: every one of
+them is contained in `v0.9.1`. `.github/workflows/release.yml` now refuses
+a tag whose notes are still sitting under `[Unreleased]`, so the same
+omission fails the build rather than surviving into the docs.
+
+### Added
+
+- **GitHub Auto-Update Capability**: Daily automated background update checks against `godigi/netdiag` releases and in-app updating/relaunching from Settings.
+- **`D3` Diagnostic**: Slow DNS resolver latency warning with actionable recommendation for Cloudflare (1.1.1.1) / Google (8.8.8.8).
+- **`D4` Diagnostic**: DNS NXDOMAIN hijacking and ISP search redirection detection.
+- **`V6-2` Diagnostic**: Dead IPv6 DNS resolver fallback delay warning.
+- **`double-nat` Alert**: Plain-English alert and recommendation for chained home routers (Double NAT).
+- **Router Gateway Admin Access**: Clickable router gateway IP in dropdown to instantly open the router admin page.
+- **Speed Test Retention**: Retains speed test metrics permanently in memory and dropdown view across scans.
 
 - **`netdiag --version`** — prints `netdiag VERSION` and exits 0.
 - **`netdiag --capabilities`** — a JSON handshake describing this
@@ -120,31 +206,9 @@ All notable changes to `netdiag` are recorded here. Format follows
   `netdiag --history` now needs `THRESH_COMPARE_MIN_SAMPLES`/
   `THRESH_COMPARE_TAIL_PCTL` in the environment for this reason, the same
   way `--show` always has.
-- **Releases are published from this file.** New
-  `.github/workflows/release.yml` turns a pushed `v*` tag into a GitHub
-  Release whose notes are the matching section below, extracted by a new
-  `helpers/changelog_section.py`. Before it, publishing a Release was a
-  step a human had to remember, and the memory failed for three months:
-  eleven tags were pushed and two became Releases, so the repo's front
-  page advertised v0.2.1 from May as "Latest" while `install.sh` was
-  fetching v0.9.1. The workflow refuses a tag whose version disagrees with
-  `bin/netdiag`'s `NETDIAG_VERSION`, or that has no section here — the two
-  drifts this repo has actually suffered — and can be re-run by hand
-  against an existing tag to repair its notes. `CONTRIBUTING.md` gains the
-  eight-step release checklist it enforces.
-- **`tests/test_changelog.bats`** — 11 structural guards on this file,
-  because every defect below was invisible until someone went looking and
-  none of them broke a build: a duplicate heading, a version documented
-  with no tag, a heading with no link reference, a section truncated
-  mid-sentence, and a version string in `bin/netdiag` with nothing here
-  describing it.
 
 ### Changed
 
-- **The dropdown's link-path bar, glance panel, quick-action grid, and
-  contextual remedy row were retired**; their facts moved into the
-  instrument grid and the alert stage. The footer regained Open
-  Dashboard and Pause/Resume Monitoring after user testing.
 - **jq is no longer required for the speed test.** The ~10 `jq -r` calls
   that parsed Ookla's and `speedtest-cli`'s final result JSON are now one
   call to `helpers/speedtest_result.py`, a stdlib-only parser that reads
@@ -170,48 +234,6 @@ All notable changes to `netdiag` are recorded here. Format follows
     earlier in `PATH` than either Homebrew prefix — jq is present and
     resolves, it just fails — and a real `--json --quick` run is
     asserted to exit anything but 3 and to parse with `python3`.
-
-### Fixed
-
-- **The paused-monitor test no longer fails in CI on a slow runner.** It
-  slept a fixed 4 s, sent `SIGUSR1`, slept 3 s more and read the stream's
-  last line — so on a loaded runner it read an empty file and died with a
-  JSON decode error, leaving a red `bats` badge on a public README for
-  three days. It now polls for the pause marker with the same `wait_until`
-  helper the three tests directly above it already use, and whose comment
-  documents this exact failure. The neighbouring SIGHUP test got the same
-  treatment for its pre-pause wait: pausing a monitor that had not probed
-  yet would have passed while asserting nothing.
-- **This file had a second `## [Unreleased]` heading**, buried between
-  `[0.5.2]` and `[0.5.1]`, holding notes — the one-line installer,
-  `docs/JSON-SCHEMA.md`, `CONTRIBUTING.md`, CI smoke tests, the removal of
-  `netdiag-prompt.md` — that had actually shipped in 0.6.0. They have been
-  merged into `[0.6.0]`, where the commits that made them live. Its
-  trailing "Known" note about `VPN-1` never firing went with them: 0.6.0
-  is the release that fixed it.
-- **`[0.9.1]`'s heading was written over the last line of the entry above
-  it**, which ended mid-sentence at "and a real `--json --quick` run is".
-  Restored from `3458283~1`.
-- **Four documented versions had no tag at all** — 0.1.0, 0.4.1, 0.5.0
-  and 0.9.1 — so their entries described something a reader could not
-  check out, and `install.sh` fetched a v0.9.1 that `git` had never heard
-  of. All four are now annotated tags on their release commits, dated to
-  match. Every heading also gained the Keep a Changelog link reference it
-  was missing, so each version links to its own diff.
-
-## [0.9.1] - 2026-08-15
-
-Adds GitHub auto-update checks to the GUI, new layperson-tailored diagnostics for DNS and IPv6, router gateway admin quick access, and speed test retention.
-
-### Added
-
-- **GitHub Auto-Update Capability**: Daily automated background update checks against `godigi/netdiag` releases and in-app updating/relaunching from Settings.
-- **`D3` Diagnostic**: Slow DNS resolver latency warning with actionable recommendation for Cloudflare (1.1.1.1) / Google (8.8.8.8).
-- **`D4` Diagnostic**: DNS NXDOMAIN hijacking and ISP search redirection detection.
-- **`V6-2` Diagnostic**: Dead IPv6 DNS resolver fallback delay warning.
-- **`double-nat` Alert**: Plain-English alert and recommendation for chained home routers (Double NAT).
-- **Router Gateway Admin Access**: Clickable router gateway IP in dropdown to instantly open the router admin page.
-- **Speed Test Retention**: Retains speed test metrics permanently in memory and dropdown view across scans.
 
 ## [0.9.0] - 2026-08-12
 
