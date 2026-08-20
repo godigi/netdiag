@@ -72,40 +72,28 @@ struct DropdownView: View {
 
     // MARK: - Stage
 
-    private enum Stage {
-        case skewed(String)
-        case testing
-        case paused(String?)
-        case alerted(AlertEngine.ActiveAlert)
-        case healthy
-    }
-
-    // Paused checks sit above the skewed check on purpose: a user who just
-    // turned monitoring off, or whose display just slept, must see
-    // "Monitoring paused" — not a stale capabilities-handshake error left
-    // over from before the pause, which `lastError` can still be holding.
-    private var stage: Stage {
-        if coordinator.isScanning { return .testing }
-        if !appSettings.monitoringEnabled {
-            return .paused(nil)
-        }
-        if coordinator.monitor.isPausedForAnyReason {
-            return .paused(coordinator.monitor.pauseReason)
-        }
-        if let error = coordinator.monitor.lastError,
-           !coordinator.monitor.isRunning {
-            return .skewed(error)
-        }
-        if let alert = coordinator.alerts.activeSorted.first {
-            return .alerted(alert)
-        }
-        return .healthy
+    private var stage: StageResolver.Stage {
+        StageResolver.resolve(.init(
+            isScanning: coordinator.isScanning,
+            monitoringEnabled: appSettings.monitoringEnabled,
+            isPausedForAnyReason: coordinator.monitor.isPausedForAnyReason,
+            pauseReason: coordinator.monitor.pauseReason,
+            lastError: coordinator.monitor.lastError,
+            monitorRunning: coordinator.monitor.isRunning,
+            activeAlert: coordinator.alerts.activeSorted.first.map {
+                StageResolver.AlertSnapshot(title: $0.title, body: $0.body,
+                                            raisedAt: $0.raisedAt, rules: $0.rules)
+            },
+            severity: coordinator.monitor.latest?.status.severity ?? "ok",
+            linkUp: coordinator.monitor.latest?.link.up ?? true
+        ))
     }
 
     @ViewBuilder
     private var stageSection: some View {
         switch stage {
         case .healthy: healthyStage
+        case .watching(let sev): watchingStage(sev)
         case .alerted(let alert): alertStage(alert)
         case .testing: testingStage
         case .paused(let reason): pausedStage(reason)
@@ -140,6 +128,48 @@ struct DropdownView: View {
         .cardStyle()
     }
 
+    /// The card that shows the moment the CLI's verdict turns but before an
+    /// alert's dwell has elapsed — the state that used to be silently
+    /// `.healthy` for up to 15–25 s while the timeline below already showed
+    /// the drop. `critical` reads red, `warn` reads amber; the body is the
+    /// CLI's own blurb for the worst firing rule (sourced via
+    /// `coordinator.headline`, the same path the menu-bar headline already
+    /// uses), never a verdict authored in Swift. The tertiary line tells
+    /// the user why no alert has fired yet — "confirming before notifying
+    /// you" — so a red card with no banner notification is not read as a
+    /// bug.
+    private func watchingStage(_ sev: StageResolver.WatchingSeverity) -> some View {
+        let isCritical = sev == .critical
+        let tint: Color = isCritical ? .red : .orange
+        let title = isCritical ? "Detecting a network problem"
+                               : "Watching — something needs attention"
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: isCritical ? "exclamationmark.triangle.fill"
+                                             : "exclamationmark.triangle")
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.callout).fontWeight(.semibold)
+                    .lineLimit(2)
+            }
+            // `headline` already returns the worst firing rule's blurb for
+            // severity warn/critical, and the no-connection line when the
+            // link is down — both exactly the prose this card needs.
+            Text(coordinator.headline)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(isCritical ? "Confirming before notifying you…"
+                            : "Will alert if this keeps up.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(Theme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+    }
+
     /// "Nothing has changed in 3 h 12 m · on HomeNet 5G" — the headline
     /// reassurance metric. Time comes from the event store, name from
     /// the CLI-derived network identity.
@@ -160,7 +190,7 @@ struct DropdownView: View {
         return parts.joined(separator: " · ")
     }
 
-    private func alertStage(_ alert: AlertEngine.ActiveAlert) -> some View {
+    private func alertStage(_ alert: StageResolver.AlertSnapshot) -> some View {
         // Folded into the CTA's own label rather than a second caption
         // beside it — one more active alert is a fact about *this*
         // button's destination (the full report lists all of them), not a
@@ -203,7 +233,7 @@ struct DropdownView: View {
     /// the rule segment cleanly for the four event-driven alerts (VPN
     /// dropped, public IP changed, ...) that carry no rule at all, rather
     /// than printing "rule  · 3m ago".
-    private func attributionText(for alert: AlertEngine.ActiveAlert) -> String {
+    private func attributionText(for alert: StageResolver.AlertSnapshot) -> String {
         guard let rule = alert.rules.sorted().first else {
             return RelativeTime.string(from: alert.raisedAt)
         }
@@ -409,14 +439,24 @@ struct DropdownView: View {
                            flatlined: !coordinator.monitor.isRunning
                                       || coordinator.monitor.isPaused)
             HStack {
-                // The strip's shape is the headline; the numbers sit
-                // directly under its left edge rather than labelled
-                // "internet ping · live" on the opposite side — the label
-                // repeated what the strip already shows, and a min/avg/max
-                // pinned to the right read as a caption to nothing.
+                // The live probe interval, straight from the monitor's own
+                // emitted `cadence_s` — so it reads "every 5s" while
+                // healthy, "every 3s" once degraded engages, and "every 2s"
+                // during a latency-test burst, and changes the moment the
+                // monitor's cadence does rather than from a settings
+                // snapshot. A user watching the card turn red sees the
+                // probe rate ramp up at the same time, which is the
+                // evidence that the app is investigating rather than
+                // sitting on a stale green. Falls back to the configured
+                // fast interval before the first sample lands.
                 if coordinator.monitor.isRunning && !coordinator.monitor.isPaused {
+                    let cadence = coordinator.monitor.latest?.status.cadenceS
+                        ?? Defaults.fastInterval
+                    Text(coordinator.monitor.isBursting
+                         ? "every \(cadence)s · test"
+                         : "every \(cadence)s")
                     if let stats = heartbeatStats {
-                        Text("min \(stats.min) · avg \(stats.avg) · max \(stats.max) ms")
+                        Text("· min \(stats.min) · avg \(stats.avg) · max \(stats.max) ms")
                     }
                 } else {
                     Text("monitoring off")

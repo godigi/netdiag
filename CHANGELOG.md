@@ -8,6 +8,37 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **The monitor auto-starts a 2 s "investigation" burst the moment the
+  CLI's verdict turns from ok/info to warn/critical — before an alert's
+  dwell has elapsed and before any triggered scan lands.** The user's
+  mental model is that the app starts pinging constantly and fast the
+  instant something looks wrong, and this is what delivers it: the
+  monitor restarts at the 2 s latency-test floor for 60 s, so gateway
+  and internet ping arrive every 2 s rather than every 5 s while the
+  problem is being confirmed. After the burst, sustained degraded (3 s)
+  takes over for as long as severity stays warn/critical. Fires only on
+  the genuine ok/info → warn/critical edge, not on every warn/critical
+  sample, so a sustained outage gets one surge at onset and a steady 3 s
+  after, not a restart every minute. Suppressed while a scan is running
+  (a scan pauses the monitor and saturates the link; 2 s samples would
+  measure the scan's own traffic) and while paused or stopped.
+- **The app gained a `--verify` mode: a runnable test harness for the
+  GUI logic that `swift test` cannot provide on this toolchain.** The
+  Command Line Tools ship Swift Testing's `Testing.framework` but not
+  the `xctest` host, so a test target compiles here but `swift test`
+  exits 0 having run nothing — and a separate executable target cannot
+  import `NetdiagGUI` because SwiftPM does not export an executable's
+  symbols to importers. `--verify` runs inside the app process itself
+  (full internal access, no public-izing), reachable as `swift run
+  NetdiagGUI --verify` or via the bundled binary: it asserts every
+  `StageResolver` severity → stage mapping and every precedence guard,
+  offscreen-renders a stage-card stand-in per stage to PNG, prints
+  PASS/FAIL per check and exits non-zero on any failure. Wired into
+  `AppDelegate.applicationWillFinishLaunching` so it exits before the
+  monitor starts or any UI appears. The `Package.swift` test target also
+  gained the `-F` framework search path that lets `import Testing`
+  resolve at compile time on the CLT.
+
 - **The Networks tab is searchable, and ordered by recency.** A toolbar
   search field filters the list by the things a person actually
   recognises a network by — display name, raw label, SSID, gateway, ISP
@@ -150,6 +181,40 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Changed
 
+- **The dropdown's stage card now reflects the CLI's verdict the moment a
+  rule fires, not 15–25 s later when the alert's dwell elapses.** Until
+  now the card read "All good — watching" for the entire dwell window of
+  whichever alert would eventually fire, even though the menu-bar dot
+  had already turned amber/red and the change timeline below the card
+  already showed the drop — a green card over a red timeline that read
+  as a bug, and the opposite of "very reactive the moment it starts
+  detecting packet loss or bad Wi-Fi". The stage mapping was extracted
+  into a pure `StageResolver.resolve(_:)` and given a new `.watching`
+  state: `warn` severity turns the card amber with "Watching — something
+  needs attention", `critical` turns it red with "Detecting a network
+  problem", both carrying the CLI's own blurb for the worst firing rule
+  (the same source `headline` already uses) and a tertiary line
+  explaining why no alert has fired yet ("Confirming before notifying
+  you…"). An already-active alert still wins over `.watching`, so once
+  the dwell elapses the card carries the alert's prose as before. The
+  `info` severity (VPN on, ICMP filtered) still reads healthy — it is
+  not a fault. Precedence (scan > user-pause > skewed > alert > watching
+  > healthy) is preserved and now unit-checked.
+- **The live probe interval is shown in the heartbeat strip, and it
+  updates the moment the monitor's cadence does.** Reads the sample's
+  own `status.cadence_s`, so it reads "every 5s" while healthy, "every
+  3s" once degraded engages, and "every 2s · test" during a latency-test
+  burst — changing the instant the monitor's cadence changes rather than
+  from a settings snapshot. A user watching the card turn red now sees
+  the probe rate ramp up at the same time, the evidence that the app is
+  investigating.
+- **Default cadence lowered: fast 10 s → 5 s, degraded 5 s → 3 s.** An
+  always-on monitor's healthy probe was too slow to read as "watching",
+  and the degraded tier sat at the same 5 s the latency test uses —
+  leaving no ramp between healthy and a full burst. The fast tier now
+  probes every 5 s by default, degraded every 3 s, and the 2 s burst
+  (below) is the floor for active investigation. User-tunable still;
+  existing installs keep whatever they have saved.
 - **The heartbeat strip dropped its redundant "internet ping · live"
   label.** The strip's shape is the headline; the label repeated what
   the strip already shows, and a min/avg/max pinned to the right read

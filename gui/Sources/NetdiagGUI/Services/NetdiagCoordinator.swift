@@ -84,6 +84,12 @@ final class NetdiagCoordinator {
 
     private var scanTask: Task<Void, Never>?
     private var lastNetworkID: String?
+    /// The severity seen on the previous sample, used by `handleSample` to
+    /// detect the ok/info → warn/critical edge that auto-starts an
+    /// investigation burst. Stored on the coordinator rather than read back
+    /// from the monitor so the transition is exact even when a burst
+    /// restart resets the monitor's own sample window.
+    private var lastSeverity: String = "ok"
     private let log = Logger(subsystem: "me.brianfreeman.netdiag", category: "coordinator")
 
     // MARK: - Lifecycle
@@ -269,6 +275,7 @@ final class NetdiagCoordinator {
         refreshLiveWiFi()
         adoptLiveSSIDAsNameIfNeeded()
         alerts.evaluate(sample: sample)
+        considerInvestigationBurst(sample)
 
         for change in sample.changes {
             eventLog.record(
@@ -297,6 +304,39 @@ final class NetdiagCoordinator {
         Defaults.seenNetworks = seen
         log.info("first sighting of \(id, privacy: .public) — scanning")
         runScan(depth: .quick, reason: "new network")
+    }
+
+    /// Auto-start a short, fast-cadence "investigation" burst the moment
+    /// the CLI's verdict turns from ok/info to warn/critical — before an
+    /// alert's dwell has elapsed and before any triggered scan lands. The
+    /// user's mental model is that the app starts pinging constantly and
+    /// fast the instant something looks wrong, and this is what delivers
+    /// it: the monitor restarts at the 2 s latency-test floor for 60 s, so
+    /// gateway and internet ping arrive every 2 s rather than every 5 s
+    /// while the problem is being confirmed. After the burst, sustained
+    /// degraded (3 s) takes over for as long as severity stays warn/
+    /// critical — `MON_DEGRADED` follows severity in `lib/monitor.sh`'s
+    /// `_mon_rules`. Fires only on the genuine ok/info → warn/critical
+    /// edge, not on every warn/critical sample, so a sustained outage
+    /// gets one surge at onset and a steady 3 s after, not a restart
+    /// every minute. A burst already running is not re-triggered; a scan
+    /// in progress blocks it (a scan pauses the monitor and saturates the
+    /// link, and a burst's 2 s samples would be measuring the scan's own
+    /// traffic); a paused or stopped monitor has nothing to burst.
+    private func considerInvestigationBurst(_ sample: MonitorSample) {
+        let sev = sample.status.severity
+        defer { lastSeverity = sev }
+        let turnedBad = (sev == "warn" || sev == "critical")
+            && lastSeverity != "warn" && lastSeverity != "critical"
+        guard turnedBad,
+              !sample.status.paused,
+              monitor.isRunning, !monitor.isPaused,
+              !isScanning,
+              !monitor.isBursting,
+              Defaults.monitoringEnabled else { return }
+        monitor.beginBurst(interval: Defaults.latencyTestInterval,
+                           duration: Defaults.latencyTestDuration)
+        log.info("severity turned \(sev, privacy: .public) — started 2s investigation burst")
     }
 
     private func handleNetworkEvent(_ event: NetworkEventWatcher.Event) {

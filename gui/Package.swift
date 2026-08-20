@@ -28,7 +28,23 @@ let package = Package(
         .testTarget(
             name: "NetdiagGUITests",
             dependencies: ["NetdiagGUI"],
-            path: "Tests/NetdiagGUITests"
+            path: "Tests/NetdiagGUITests",
+            // The CLT-only toolchain (no Xcode.app — see this file's
+            // header) ships Swift Testing's Testing.framework under
+            // Library/Developer/Frameworks, a path SwiftPM does not search
+            // by default. Without this flag `import Testing` fails with
+            // "no such module 'Testing'" and `swift test` cannot run at all
+            // — which would leave the GUI's only repeatable verification
+            // path (the one this target exists to provide) unrunnable on
+            // the very machine it was created on. XCTest is not an
+            // alternative here: the CLT does not ship it for macOS, so Swift
+            // Testing is the only framework available here. The path is
+            // harmless on an Xcode machine: a `-F` to a directory that does
+            // not exist is ignored, and one that does exist (CLT installed
+            // alongside Xcode is common) just adds a valid search location
+            // without displacing the default Xcode discovery.
+            swiftSettings: [.unsafeFlags(["-F", "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"])],
+            linkerSettings: [.unsafeFlags(["-F", "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"])]
         )
     ]
 )

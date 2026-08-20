@@ -74,6 +74,11 @@ extension NetdiagApp {
     private func bootstrap() async {
         guard !delegate.didBootstrap else { return }
         delegate.didBootstrap = true
+        // `--verify` runs the harness and exits from
+        // AppDelegate.applicationWillFinishLaunching before this `.task`
+        // could fire; this guard is belt-and-suspenders so a verify launch
+        // can never start the monitor child.
+        if CommandLine.arguments.contains("--verify") { return }
         coordinator.start()
 
         if Defaults.hasOnboarded {
@@ -96,6 +101,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// changes. Bootstrapping twice would spawn a second monitor process
     /// and leave the first orphaned.
     @MainActor var didBootstrap = false
+
+    /// Earliest launch hook. `--verify` turns the app into a one-shot test
+    /// harness (see `VerifyMode.swift`): run the StageResolver logic asserts
+    /// and the stage-card snapshot render, then exit before the monitor
+    /// starts or any UI appears. Wired here rather than in `bootstrap()`
+    /// because that runs from a SwiftUI `.task` which can race this hook;
+    /// `applicationWillFinishLaunching` precedes scene setup entirely.
+    @MainActor
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if runVerifyIfNeeded() {
+            // `runVerifyIfNeeded`'s harness exits the process itself; this
+            // is reached only if it somehow returned, in which case stop
+            // the app the conventional way rather than continue launching.
+            NSApp.terminate(nil)
+        }
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         // The monitor is a child process, and a child of a process that

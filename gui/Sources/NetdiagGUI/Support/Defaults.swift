@@ -29,8 +29,8 @@ enum Defaults {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [
             Key.monitoringEnabled: true,
-            Key.fastInterval: 10,
-            Key.degradedInterval: 5,
+            Key.fastInterval: 5,
+            Key.degradedInterval: 3,
             Key.mediumInterval: 60,
             Key.slowInterval: 300,
             Key.menuBarStyle: MenuBarStyle.dotAndFlag.rawValue,
@@ -94,11 +94,11 @@ enum Defaults {
     /// CLI's own validation and abort the monitor at startup, which the
     /// user sees as "monitoring just stops working".
     static var fastInterval: Int {
-        get { clamp(d.integer(forKey: Key.fastInterval), 2, 300, fallback: 10) }
+        get { clamp(d.integer(forKey: Key.fastInterval), 2, 300, fallback: 5) }
         set { d.set(newValue, forKey: Key.fastInterval) }
     }
     static var degradedInterval: Int {
-        get { clamp(d.integer(forKey: Key.degradedInterval), 2, 300, fallback: 5) }
+        get { clamp(d.integer(forKey: Key.degradedInterval), 2, 300, fallback: 3) }
         set { d.set(newValue, forKey: Key.degradedInterval) }
     }
     static var mediumInterval: Int {
