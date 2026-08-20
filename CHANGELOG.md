@@ -181,6 +181,30 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Changed
 
+- **The Networks tab was redesigned into a two-column master-detail
+  layout.** The previous design was a `NavigationStack` of network cards
+  — each card carried its stats inline and a "Browse Checks" link that
+  pushed a second screen for the run list, which pushed a third for a
+  single run. Three screens deep to read one check. The tab is now a
+  list of network names on the left (clickable, searchable, arrow-key
+  cycleable — just the name and a green dot for the connected one, no
+  stats on the row) and everything about the selected network on the
+  right: the name with rename/merge/unmerge controls, the stats row
+  (checks, problems, median RTT, date range), and the checks list
+  itself — inline, no navigation push. Clicking a check swaps the right
+  pane to its detail with a back button; still one screen, the list
+  column never moves. Opens with the current network selected by
+  default. A "Problems only" checkbox replaces the segmented picker that
+  lived on the pushed screen.
+- **Network names now prefer the SSID and strip the ISP "via" suffix.**
+  `HistoryStore.displayName` was returning the CLI's raw label, which is
+  the ISP name + " via " + gateway when no SSID was captured — so the
+  Networks tab titled every network "SPACEX-STARLINK via 192.168.50.1"
+  rather than anything a person recognises. It now prefers a recorded
+  SSID (available when Location was granted at scan time), then a
+  cleaned label with the " via <gateway>" suffix stripped, so
+  "SPACEX-STARLINK via 192.168.50.1" reads "SPACEX-STARLINK". The full
+  label stays in the document and is still searched by.
 - **The dropdown's stage card now reflects the CLI's verdict the moment a
   rule fires, not 15–25 s later when the alert's dwell elapses.** Until
   now the card read "All good — watching" for the entire dwell window of

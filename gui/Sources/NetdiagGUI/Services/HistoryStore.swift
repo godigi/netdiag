@@ -48,11 +48,28 @@ final class HistoryStore {
     // MARK: - Naming
 
     func displayName(for networkID: String) -> String {
-        if let custom = customNames[canonicalID(networkID)], !custom.isEmpty { return custom }
-        if let net = document.networks.first(where: { $0.id == canonicalID(networkID) }) {
-            return net.label
+        let key = canonicalID(networkID)
+        if let custom = customNames[key], !custom.isEmpty { return custom }
+        if let net = document.networks.first(where: { $0.id == key }) {
+            // Prefer a recorded SSID (available only when Location was
+            // granted at scan time) over the CLI's label, which is the
+            // ISP name + " via " + gateway when no SSID was captured.
+            if let ssid = net.ssids.first, !ssid.isEmpty { return ssid }
+            return Self.cleanLabel(net.label)
         }
-        return networkID
+        return Self.cleanLabel(networkID)
+    }
+
+    /// Strips the " via <gateway>" suffix the CLI appends to a network
+    /// label when it has no SSID to show — "SPACEX-STARLINK via
+    /// 192.168.50.1" becomes "SPACEX-STARLINK". A presentation cleanup,
+    /// not a diagnostic judgment: the full label stays in the document,
+    /// and `haystack(for:)` in NetworksView still searches the raw value.
+    static func cleanLabel(_ label: String) -> String {
+        if let range = label.range(of: " via ") {
+            return String(label[..<range.lowerBound])
+        }
+        return label
     }
 
     func rename(_ networkID: String, to name: String) {
