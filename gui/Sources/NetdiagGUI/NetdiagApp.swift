@@ -90,6 +90,7 @@ extension NetdiagApp {
 /// Exists for two things SwiftUI's App protocol cannot express on its own:
 /// a launch hook that fires without a window on screen, and a termination
 /// hook that reaps the monitor child.
+///
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `.task` on a menu-bar label can re-run when the label's identity
     /// changes. Bootstrapping twice would spawn a second monitor process

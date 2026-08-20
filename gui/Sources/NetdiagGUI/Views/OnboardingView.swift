@@ -82,6 +82,8 @@ struct OnboardingView: View {
             await coordinator.watcher.refresh()
             coordinator.locationPermissions.refresh()
         }
+        .onAppear { coordinator.windowAppeared() }
+        .onDisappear { coordinator.windowDisappeared() }
     }
 
     private func step(number: Int, title: String, detail: String,

@@ -168,6 +168,41 @@ final class NetdiagCoordinator {
         events.stop()
     }
 
+    // MARK: - Window activation policy
+
+    /// How many of the app's real `Window` scenes (dashboard, settings,
+    /// onboarding) are currently on screen. The app ships as `LSUIElement`
+    /// — no Dock icon, no app-switcher slot, which is right for an always-on
+    /// menu-bar monitor. But a window the user opened on purpose should
+    /// behave like a normal window while it is on screen: the policy flips
+    /// to `.regular` the moment the first one appears (Dock icon + Cmd-Tab
+    /// slot) and back to `.accessory` the instant the last one closes (Dock
+    /// icon vanishes, menu-bar dot stays). Driven by `onAppear`/`onDisappear`
+    /// on each window's root view rather than by `NSWindow` notifications,
+    /// which fire unreliably for SwiftUI `Window` scenes and left the Dock
+    /// icon stuck or the switcher slot missing.
+    private var openWindowCount = 0
+
+    func windowAppeared() {
+        openWindowCount += 1
+        applyActivationPolicy()
+    }
+
+    func windowDisappeared() {
+        if openWindowCount > 0 { openWindowCount -= 1 }
+        applyActivationPolicy()
+    }
+
+    private func applyActivationPolicy() {
+        let regular = openWindowCount > 0
+        NSApp?.setActivationPolicy(regular ? .regular : .accessory)
+        // Activating on open is what makes the window arrive in front
+        // rather than behind whatever was frontmost, and is also the nudge
+        // the app switcher needs to pick up a policy that just changed to
+        // `.regular` at runtime.
+        if regular { NSApp?.activate(ignoringOtherApps: true) }
+    }
+
     // MARK: - Cold-launch hydration
     //
     // Home used to render nothing until the first scan of the session

@@ -25,6 +25,20 @@ All notable changes to `netdiag` are recorded here. Format follows
   user has granted Location for no longer sits in the Networks tab
   labelled `wifi:mac=…` forever — its real SSID is recorded as its
   custom name the first sample it is seen.
+- **The Dock icon and Cmd-Tab slot appear only while a window is open.**
+  The app ships as `LSUIElement` — no Dock icon, no switcher slot, which
+  is right for an always-on menu-bar monitor. But a window opened on
+  purpose should behave like a normal window while it is on screen: the
+  activation policy flips to `.regular` the moment the first real
+  `Window` scene (dashboard, settings, onboarding) appears and back to
+  `.accessory` the instant the last one closes, so the Dock icon
+  vanishes again when you are done but the menu-bar dot stays. Driven by
+  `onAppear`/`onDisappear` on each window's root view rather than
+  `NSWindow` notifications, which fire unreliably for SwiftUI `Window`
+  scenes and left the Dock icon stuck or the switcher slot missing.
+  Opening a window also activates the app so it arrives in front rather
+  than behind whatever was frontmost, and so the switcher picks up a
+  policy that just changed to `.regular` at runtime.
 
 - **`netdiag --signal-scale`** — one JSON object with the four Wi-Fi
   signal bands this install's thresholds define: Excellent / Good / Fair

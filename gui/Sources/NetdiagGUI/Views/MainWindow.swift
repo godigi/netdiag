@@ -78,6 +78,8 @@ struct MainWindow: View {
             guard new != nil, let requested = coordinator.consumeRequestedDestination() else { return }
             handle(requested)
         }
+        .onAppear { coordinator.windowAppeared() }
+        .onDisappear { coordinator.windowDisappeared() }
     }
 
     // MARK: - Sidebar

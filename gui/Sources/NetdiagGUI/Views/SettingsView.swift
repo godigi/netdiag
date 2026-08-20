@@ -19,6 +19,8 @@ struct SettingsView: View {
             advanced.tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
         }
         .frame(width: 520, height: 560)
+        .onAppear { coordinator.windowAppeared() }
+        .onDisappear { coordinator.windowDisappeared() }
     }
 
     // MARK: - General
