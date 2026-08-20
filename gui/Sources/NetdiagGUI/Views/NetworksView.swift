@@ -59,12 +59,19 @@ struct NetworksView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if store.mergedNetworks.isEmpty {
+                    if store.isLoading && store.document.networks.isEmpty {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Loading networks…")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 20)
+                    } else if store.document.networks.isEmpty {
                         Text("No networks recorded yet. Run a check to start building history.")
                             .foregroundStyle(.secondary)
                             .padding(.top, 20)
                     } else if visibleNetworks.isEmpty {
-                        Text("No networks match \(searchQuery)")
+                        Text("No networks match \"\(searchQuery.trimmingCharacters(in: .whitespacesAndNewlines))\"")
                             .foregroundStyle(.secondary)
                             .padding(.top, 20)
                     }
@@ -237,7 +244,7 @@ struct MergeSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             List(selection: $destination) {
-                ForEach(coordinator.history.mergedNetworks.filter { $0.id != source.id }) { net in
+                ForEach(coordinator.history.mergedNetworksByRecency.filter { $0.id != source.id }) { net in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(coordinator.history.displayName(for: net.id))
                         Text("\(net.runCount) checks · \(net.gateways.joined(separator: ", "))")

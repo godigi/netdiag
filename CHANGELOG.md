@@ -228,7 +228,33 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Fixed
 
-- **A real internet outage read as a green dot for up to a minute.** The
+- **The Networks tab did 3 full merge+sort passes on every redraw.** The
+  body evaluated `mergedNetworks` (merge + sort by run-count) for the
+  emptiness check, then `visibleNetworks` → `mergedNetworksByRecency`,
+  which called `mergedNetworks` (merge + sort by run-count *again*) and
+  re-sorted by recency — three O(networks) merge passes and two redundant
+  sorts per render, over ~2,000 runs on a real store. The merge is now
+  factored into `mergedNetworksUnsorted` (O(networks), no sort); both
+  `mergedNetworks` and `mergedNetworksByRecency` sort from that shared
+  base. The emptiness check now reads `document.networks.isEmpty` (no
+  merge at all) instead of `mergedNetworks.isEmpty`, so a render with no
+  search pays one merge + one sort, not three.
+- **The Networks tab flashed "No networks recorded yet" during the
+  initial load.** The `.task` that calls `store.load()` ran after the
+  first body, so the view rendered the empty-state before the history
+  arrived. `store.isLoading` existed but was never read. The tab now
+  shows a spinner and "Loading networks…" while `isLoading` is true and
+  the document is still empty, falling through to the real empty-state
+  only once the load finishes.
+- **The merge sheet listed networks in a different order than the tab.**
+  The sheet used `mergedNetworks` (run-count order) while the tab used
+  `mergedNetworksByRecency` (recency order), so a network near the top
+  of the tab was in a different position in the sheet. Both now use
+  recency order.
+- **The search "no match" message showed the raw untrimmed query.**
+  Typing "  comcast  " printed `No networks match   comcast  ` with the
+  whitespace intact. The query is now trimmed and quoted.
+- **A real internet outage read as a green dot for up to a minute.**
   fast tier pings the internet every cycle, but the TCP and public probes
   that distinguish a real outage (L1, critical) from an ICMP-filtering
   hotel network (ICMP-1, info) run on the 60 s medium and 300 s slow tiers

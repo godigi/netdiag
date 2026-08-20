@@ -98,8 +98,11 @@ final class HistoryStore {
 
     // MARK: - Derived views
 
-    /// Networks after manual merges are applied, largest first.
-    var mergedNetworks: [HistoryDocument.Network] {
+    /// The merge pass with no sort — the shared work both `mergedNetworks`
+    /// and `mergedNetworksByRecency` need, factored out so neither pays for
+    /// a sort the other wanted. O(networks) per call, not O(runs): the
+    /// merge walks the document's network groups, not its runs.
+    private var mergedNetworksUnsorted: [HistoryDocument.Network] {
         var byID: [String: HistoryDocument.Network] = [:]
         for net in document.networks {
             let key = canonicalID(net.id)
@@ -124,7 +127,12 @@ final class HistoryStore {
                 byID[key] = copy
             }
         }
-        return byID.values.sorted { $0.runCount > $1.runCount }
+        return Array(byID.values)
+    }
+
+    /// Networks after manual merges are applied, largest first.
+    var mergedNetworks: [HistoryDocument.Network] {
+        mergedNetworksUnsorted.sorted { $0.runCount > $1.runCount }
     }
 
     /// Networks after manual merges, most-recently-seen first — the order
@@ -133,9 +141,12 @@ final class HistoryStore {
     /// all time. Falls back to run-count when two networks share a
     /// `lastSeen` (e.g. runs recorded in the same second), and to name when
     /// even that ties, so the order is stable across renders rather than
-    /// shuffling ties by dictionary iteration order.
+    /// shuffling ties by dictionary iteration order. Sorts from
+    /// `mergedNetworksUnsorted` rather than re-sorting `mergedNetworks`, so
+    /// the recency path does not pay for the run-count sort it would throw
+    /// away.
     var mergedNetworksByRecency: [HistoryDocument.Network] {
-        mergedNetworks.sorted { a, b in
+        mergedNetworksUnsorted.sorted { a, b in
             let la = a.lastSeenDate ?? .distantPast
             let lb = b.lastSeenDate ?? .distantPast
             if la != lb { return la > lb }
