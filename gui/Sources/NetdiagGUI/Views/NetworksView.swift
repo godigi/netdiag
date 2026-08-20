@@ -14,8 +14,42 @@ struct NetworksView: View {
     @State private var editingID: String?
     @State private var draftName = ""
     @State private var mergeSource: HistoryDocument.Network?
+    /// Filters the list by the network's display name, raw label, SSID,
+    /// gateway or ISP — the things a person actually recognises a network
+    /// by. macOS hides the SSID without Location Services, so the SSID is
+    /// only present when permission was granted at scan time; searching by
+    /// the user-assigned rename still works without it.
+    @State private var searchQuery = ""
 
     private var store: HistoryStore { coordinator.history }
+
+    /// The recency-ordered list, narrowed to the search query. Empty-query
+    /// returns the full list unchanged; matching is case- and
+    /// diacritic-insensitive so "comcast" finds "Comcast" and "café" finds
+    /// "Cafe" without the user having to type either precisely.
+    private var visibleNetworks: [HistoryDocument.Network] {
+        let all = store.mergedNetworksByRecency
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return all }
+        let needle = trimmed.folding(options: [.caseInsensitive, .diacriticInsensitive],
+                                     locale: .current)
+        return all.filter { net in
+            let hay = haystack(for: net)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            return hay.contains(needle)
+        }
+    }
+
+    /// Every string a user might search for this network by, joined so one
+    /// `contains` covers them all. The display name leads, because a
+    /// user-assigned rename is the thing the user themselves will type.
+    private func haystack(for net: HistoryDocument.Network) -> String {
+        var parts: [String] = [store.displayName(for: net.id), net.label]
+        parts += net.ssids
+        parts += net.gateways
+        parts += net.isps
+        return parts.filter { !$0.isEmpty }.joined(separator: " ")
+    }
 
     var body: some View {
         // The stack lives inside this section rather than around it, so
@@ -29,13 +63,19 @@ struct NetworksView: View {
                         Text("No networks recorded yet. Run a check to start building history.")
                             .foregroundStyle(.secondary)
                             .padding(.top, 20)
+                    } else if visibleNetworks.isEmpty {
+                        Text("No networks match \(searchQuery)")
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 20)
                     }
-                    ForEach(store.mergedNetworks) { net in
+                    ForEach(visibleNetworks) { net in
                         row(net)
                     }
                 }
                 .padding(16)
             }
+            .searchable(text: $searchQuery, placement: .toolbar,
+                        prompt: "Search by name, SSID, gateway or ISP")
             .navigationDestination(for: NetworkRoute.self) { route in
                 RunListView(networkID: route.networkID)
             }

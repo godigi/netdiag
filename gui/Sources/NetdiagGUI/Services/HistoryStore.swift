@@ -127,6 +127,23 @@ final class HistoryStore {
         return byID.values.sorted { $0.runCount > $1.runCount }
     }
 
+    /// Networks after manual merges, most-recently-seen first — the order
+    /// the Networks tab wants: you go to that tab to find the network you
+    /// just left or the one you're on, not the one you've used the most over
+    /// all time. Falls back to run-count when two networks share a
+    /// `lastSeen` (e.g. runs recorded in the same second), and to name when
+    /// even that ties, so the order is stable across renders rather than
+    /// shuffling ties by dictionary iteration order.
+    var mergedNetworksByRecency: [HistoryDocument.Network] {
+        mergedNetworks.sorted { a, b in
+            let la = a.lastSeenDate ?? .distantPast
+            let lb = b.lastSeenDate ?? .distantPast
+            if la != lb { return la > lb }
+            if a.runCount != b.runCount { return a.runCount > b.runCount }
+            return displayName(for: a.id) < displayName(for: b.id)
+        }
+    }
+
     func runs(networkID: String?, window: HistoryWindow) -> [HistoryDocument.Run] {
         let cutoff = window.cutoff
         let wanted = networkID.map { canonicalID($0) }

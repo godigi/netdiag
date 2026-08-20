@@ -8,6 +8,19 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **The Networks tab is searchable, and ordered by recency.** A toolbar
+  search field filters the list by the things a person actually
+  recognises a network by — display name, raw label, SSID, gateway, ISP
+  — with case- and diacritic-insensitive matching so "comcast" finds
+  "Comcast" and "café" finds "Cafe" without typing either precisely.
+  macOS hides the SSID without Location Services, so the SSID is only
+  present when permission was granted at scan time; searching by the
+  user-assigned rename still works without it. The list is also
+  recency-ordered now (most-recently-seen first, falling back to
+  run-count and then name for stable ties): you go to that tab to find
+  the network you just left or the one you are on, not the one you have
+  used the most over all time.
+
 - **The Live charts snap a highlight to the point under the cursor.**
   Hovering (or dragging) anywhere along a panel's x-axis in the Live tab
   snaps a white highlight to the nearest measured point and floats its
