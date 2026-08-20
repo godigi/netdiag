@@ -37,18 +37,21 @@ struct LiveView: View {
                       series: MonitorSeries.build(samples, tier: "fast") {
                           $0.gateway.rttAvgMs
                       },
-                      absent: "No router round-trip has been measured in the last hour.")
+                      absent: "No router round-trip has been measured in the last hour.",
+                      unit: "ms")
                 chart(title: "Internet round-trip",
                       subtitle: internetSubtitle,
                       series: MonitorSeries.build(samples, tier: "medium",
                                                   value: Self.internetMs),
-                      absent: "No internet round-trip has been measured in the last hour.")
+                      absent: "No internet round-trip has been measured in the last hour.",
+                      unit: "ms")
                 chart(title: "Router packet loss",
                       subtitle: "Share of the gateway ping's packets that got no reply.",
                       series: MonitorSeries.build(samples, tier: "fast") {
                           $0.gateway.lossPct
                       },
-                      absent: "No packet-loss measurement in the last hour.")
+                      absent: "No packet-loss measurement in the last hour.",
+                      unit: "%")
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -168,7 +171,8 @@ struct LiveView: View {
 
     @ViewBuilder
     private func chart(title: String, subtitle: String,
-                       series: MonitorSeries.Result, absent: String) -> some View {
+                       series: MonitorSeries.Result, absent: String,
+                       unit: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.headline)
@@ -182,32 +186,7 @@ struct LiveView: View {
             if series.isEmpty {
                 empty(absent)
             } else {
-                Chart {
-                    // Shaded rather than merely blank, because "the line
-                    // stops here" and "the value went off the top" look
-                    // alike at a glance.
-                    ForEach(series.gaps) { gap in
-                        RectangleMark(xStart: .value("From", gap.start),
-                                      xEnd: .value("To", gap.end))
-                            .foregroundStyle(.quaternary.opacity(0.5))
-                    }
-                    // One series per segment, so no line is drawn across a
-                    // stretch where nothing was measured.
-                    ForEach(Array(series.segments.enumerated()), id: \.offset) { index, segment in
-                        ForEach(segment) { point in
-                            LineMark(x: .value("Time", point.date),
-                                     y: .value(title, point.value),
-                                     series: .value("segment", index))
-                                .foregroundStyle(Color.accentColor)
-                            PointMark(x: .value("Time", point.date),
-                                      y: .value(title, point.value))
-                                .foregroundStyle(Color.accentColor)
-                                .symbolSize(segment.count > 120 ? 4 : 14)
-                        }
-                    }
-                }
-                .chartYAxis { AxisMarks(position: .leading) }
-                .frame(height: 180)
+                LiveChart(series: series, unit: unit)
 
                 if !series.gaps.isEmpty {
                     Text(gapNote(series.gaps.count))
@@ -244,5 +223,93 @@ struct LiveView: View {
         case 1:  return "1 sample"
         default: return "\(count) samples"
         }
+    }
+}
+
+/// The chart body of `LiveView`'s panels, with a hover readout.
+///
+/// Extracted from `LiveView.chart(...)` so it can own its own selection
+/// state — one `@State` per panel, rather than one shared across three
+/// charts that would cross-talk. Hovering (or dragging) anywhere along the
+/// x-axis snaps a highlight to the nearest measured point and shows its
+/// value and timestamp; moving off the chart clears it. The highlight is a
+/// larger white point mark drawn over the accent one, so it reads against
+/// any chart background.
+struct LiveChart: View {
+    let series: MonitorSeries.Result
+    let unit: String
+    @State private var selectedDate: Date?
+
+    /// Nearest measured point to the cursor's x, or nil when the cursor is
+    /// off the chart. O(points) on each move — the window is bounded to one
+    /// hour, which is at most a few hundred samples, so the linear scan is
+    /// cheaper than maintaining an index would be.
+    private var hovered: MonitorSeries.Point? {
+        guard let selectedDate else { return nil }
+        return series.points.min(by: {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        })
+    }
+
+    var body: some View {
+        Chart {
+            // Shaded rather than merely blank, because "the line stops
+            // here" and "the value went off the top" look alike at a glance.
+            ForEach(series.gaps) { gap in
+                RectangleMark(xStart: .value("From", gap.start),
+                              xEnd: .value("To", gap.end))
+                    .foregroundStyle(.quaternary.opacity(0.5))
+            }
+            // One series per segment, so no line is drawn across a stretch
+            // where nothing was measured.
+            ForEach(Array(series.segments.enumerated()), id: \.offset) { index, segment in
+                ForEach(segment) { point in
+                    LineMark(x: .value("Time", point.date),
+                             y: .value("Value", point.value),
+                             series: .value("segment", index))
+                        .foregroundStyle(Color.accentColor)
+                    PointMark(x: .value("Time", point.date),
+                              y: .value("Value", point.value))
+                        .foregroundStyle(Color.accentColor)
+                        .symbolSize(segment.count > 120 ? 4 : 14)
+                }
+            }
+            if let hovered {
+                PointMark(x: .value("Time", hovered.date),
+                          y: .value("Value", hovered.value))
+                    .foregroundStyle(.white)
+                    .symbolSize(40)
+                    .annotation(position: .top, spacing: 4) {
+                        HoverLabel(value: hovered.value, unit: unit, date: hovered.date)
+                    }
+            }
+        }
+        .chartYAxis { AxisMarks(position: .leading) }
+        .chartXSelection(value: $selectedDate)
+        .frame(height: 180)
+    }
+}
+
+/// The floating readout above the hovered point: value with unit, and the
+/// wall-clock time it was measured. Kept compact so it does not overrun the
+/// chart's top margin on the narrow panels.
+struct HoverLabel: View {
+    let value: Double
+    let unit: String
+    let date: Date
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Text(String(format: "%.0f %@", value, unit))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+            Text(date.formatted(date: .omitted, time: .standard))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
     }
 }

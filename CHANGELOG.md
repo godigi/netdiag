@@ -8,6 +8,17 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **The Live charts snap a highlight to the point under the cursor.**
+  Hovering (or dragging) anywhere along a panel's x-axis in the Live tab
+  snaps a white highlight to the nearest measured point and floats its
+  value and wall-clock time above it; moving off the chart clears it.
+  The chart body was extracted into its own `LiveChart` so each panel
+  owns its own selection state — one `@State` per panel rather than one
+  shared across three charts that would cross-talk. The nearest-point
+  scan is O(points) per move, which is fine because the window is
+  bounded to one hour (at most a few hundred samples), so the linear
+  scan is cheaper than maintaining an index would be.
+
 - **The GUI reads the Wi-Fi network name from CoreWLAN, not the CLI.**
   TCC attributes `ipconfig getsummary` — the bundled CLI's SSID source —
   to `/usr/sbin/ipconfig` rather than this `.app`, so a Location Services
