@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CoreWLAN
 import os
 
 /// The one object that owns the others and decides when they act.
@@ -51,6 +52,16 @@ final class NetdiagCoordinator {
     /// a second way to set `latestRun`, and `hydrateFromHistoryIfNeeded`
     /// for how it gets populated.
     private(set) var hydratedReport: RunDetail?
+    /// Live SSID read from CoreWLAN — the GUI's own source, not the CLI's.
+    /// The bundled CLI reads the SSID via `ipconfig getsummary`, but TCC
+    /// attributes that call to `/usr/sbin/ipconfig` rather than this .app,
+    /// so a Location Services grant to netdiag unredacts the GUI's own
+    /// CoreWLAN `ssid()` call but leaves the CLI's reading empty/redacted.
+    /// Without this, a user who has granted Location sees "WiFi (SSID
+    /// hidden by macOS)" in the dropdown even though the permission is
+    /// live. Refreshed once per monitor sample (see `handleSample`) so a
+    /// view body never pays for the CoreWLAN syscall.
+    private(set) var liveSSID: String?
     private(set) var isScanning = false
     private(set) var scanStartedAt: Date?
     private(set) var scanKind: String = ""
@@ -220,6 +231,8 @@ final class NetdiagCoordinator {
     // MARK: - Samples
 
     private func handleSample(_ sample: MonitorSample) {
+        refreshLiveWiFi()
+        adoptLiveSSIDAsNameIfNeeded()
         alerts.evaluate(sample: sample)
 
         for change in sample.changes {
@@ -465,6 +478,63 @@ final class NetdiagCoordinator {
 
     // MARK: - Presentation helpers
 
+    /// Refresh `liveSSID` from CoreWLAN. Called once per monitor sample
+    /// rather than from a view body: a `CWWiFiClient` read is a real
+    /// syscall, and `wifiDisplayName` is read on every redraw of an
+    /// always-visible menu. Returns nil when Location is not authorized —
+    /// CoreWLAN returns a redacted `<SSID>` / nil in that state, and
+    /// passing that through would surface a raw placeholder as a name.
+    private func refreshLiveWiFi() {
+        // CoreWLAN's `interface()` returns the current Wi-Fi interface, but
+        // has been observed returning nil on some builds even when
+        // associated; fall back to the first power-on interface from
+        // `interfaces()` before giving up.
+        guard locationPermissions.isAuthorized else {
+            if liveSSID != nil { log.debug("wifi: location not authorized — SSID unavailable") }
+            liveSSID = nil
+            return
+        }
+        let client = CWWiFiClient.shared()
+        let iface = client.interface() ?? client.interfaces()?.first { $0.powerOn() }
+        guard let iface else {
+            log.debug("wifi: no CoreWLAN interface (on ethernet, or WiFi off)")
+            liveSSID = nil
+            return
+        }
+        let name = iface.ssid()
+        if let name, !name.isEmpty {
+            log.debug("wifi: live SSID read OK")
+        } else {
+            log.debug("wifi: CoreWLAN interface present but ssid() returned nil — location grant may be provisional or revoked")
+        }
+        liveSSID = (name?.isEmpty ?? true) ? nil : name
+    }
+
+    /// Adopt the live SSID as the current network's display name when no
+    /// real name is recorded yet. The CLI records networks in
+    /// baseline.jsonl with a MAC-keyed id and a redacted label (TCC
+    /// attributes `ipconfig getsummary` to `/usr/sbin/ipconfig`, not this
+    /// .app), so without this a network the user has granted Location for
+    /// still shows up as "wifi:mac=…" in the Networks tab and in search
+    /// forever. The GUI's CoreWLAN `ssid()` *does* see the real name, so
+    /// the moment we have it we record it as the network's custom name —
+    /// the same store `displayName` and the Networks-tab search already
+    /// read. Never overwrites a name that is not ugly (a user rename, or a
+    /// real SSID the CLI captured under sudo), and writes at most once per
+    /// network per name change rather than every sample.
+    private func adoptLiveSSIDAsNameIfNeeded() {
+        guard let live = liveSSID, !live.isEmpty,
+              !live.contains("<redacted>"), !live.contains("hidden by macOS"),
+              let id = monitor.latest?.network.id, !id.isEmpty else { return }
+        let current = history.displayName(for: id)
+        let currentIsUgly = current.isEmpty || current == id
+            || current.contains("<redacted>") || current.contains("hidden by macOS")
+            || current.starts(with: "wifi:mac=")
+        guard currentIsUgly, current != live else { return }
+        history.rename(id, to: live)
+        log.info("adopted live SSID as name for \(id, privacy: .public)")
+    }
+
     /// What `HomeView` has to render: either the run that finished in
     /// this session, or a historical one fetched to fill the screen before
     /// any scan has run this launch. See `reportSource` for how the choice
@@ -542,26 +612,30 @@ final class NetdiagCoordinator {
     /// `HistoryStore.displayName` — a raw `network.id` in that state is a
     /// MAC-keyed string nobody recognizes, not a name.
     var wifiDisplayName: String? {
-        if !locationPermissions.isAuthorized {
-            guard let id = monitor.latest?.network.id, !id.isEmpty else { return nil }
-            let custom = history.displayName(for: id)
-            guard !custom.isEmpty, custom != id, !custom.contains("<redacted>"),
-                  !custom.contains("hidden by macOS"), !custom.starts(with: "wifi:mac=") else {
-                return nil
-            }
-            return custom
-        }
+        // A user-assigned rename wins over everything — it is the name the
+        // user themselves typed, so it is the name they expect to see.
         if let id = monitor.latest?.network.id, !id.isEmpty {
             let custom = history.displayName(for: id)
             if !custom.isEmpty, custom != id, !custom.contains("<redacted>"),
-               !custom.contains("hidden by macOS") {
+               !custom.contains("hidden by macOS"), !custom.starts(with: "wifi:mac=") {
                 return custom
             }
         }
+        // CoreWLAN's live SSID, available only with Location Services. The
+        // CLI's own SSID reading is redacted by TCC even when the app is
+        // granted (see `liveSSID`'s header), so this is the primary source
+        // for the current network's real name — not a fallback.
+        if let live = liveSSID, !live.isEmpty,
+           !live.contains("<redacted>"), !live.contains("hidden by macOS") {
+            return live
+        }
+        // Without Location and without a rename, the CLI's raw label is a
+        // MAC-keyed string nobody recognises; hide it rather than show
+        // furniture that reads as a bug.
         let raw = monitor.latest?.network.label ?? latestRun?.snapshot.network.label
         guard let raw, !raw.isEmpty else { return nil }
         if raw.contains("<redacted>") || raw.contains("hidden by macOS") || raw.starts(with: "wifi:mac=") {
-            return nil // Hide ugly redacted wifi label
+            return nil
         }
         return raw
     }

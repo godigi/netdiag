@@ -8,6 +8,24 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **The GUI reads the Wi-Fi network name from CoreWLAN, not the CLI.**
+  TCC attributes `ipconfig getsummary` — the bundled CLI's SSID source —
+  to `/usr/sbin/ipconfig` rather than this `.app`, so a Location Services
+  grant to netdiag unredacts the GUI's own CoreWLAN `ssid()` call but
+  leaves the CLI's reading empty or redacted. Without this, a user who
+  had granted Location saw "Wi-Fi (SSID hidden by macOS)" in the
+  dropdown even though the permission was live. The coordinator now
+  reads the SSID via CoreWLAN once per monitor sample (never in a view
+  body — it is a real syscall on an always-visible menu), adopts it as
+  the current network's display name the moment it is available
+  (overwriting only the ugly MAC-keyed `wifi:mac=…` placeholder, never a
+  user rename or a real sudo-captured SSID), and `wifiDisplayName`
+  prefers the live SSID over the CLI's redacted label. A user-assigned
+  rename still wins over everything. One consequence: a network the
+  user has granted Location for no longer sits in the Networks tab
+  labelled `wifi:mac=…` forever — its real SSID is recorded as its
+  custom name the first sample it is seen.
+
 - **`netdiag --signal-scale`** — one JSON object with the four Wi-Fi
   signal bands this install's thresholds define: Excellent / Good / Fair
   / Weak, each a dBm floor, a tone, and a one-sentence explanation. Exists
