@@ -210,6 +210,27 @@ scanner_rules() {
   [ "$status" -ne 0 ] || { echo "inline cutoff in monitor.sh:"; echo "$output"; return 1; }
 }
 
+# ── Freshness on internet-side loss ──────────────────────────────────────
+# The fast tier pings the internet every cycle; TCP and public probes run
+# on the slower tiers and are carried over stale. A real outage (gateway
+# quiet, internet ping at critical loss) used to read as ICMP-1 (info) for
+# up to a minute -- green dot, no alert -- until the medium/slow timers
+# refreshed. monitor_run now forces a fresh TCP + public probe the moment
+# that condition holds, so _mon_rules decides L1 vs ICMP-1 on fresh data.
+# This block guards the structural fix: the condition exists, it keys on
+# the shared threshold variables (not inline numbers), and it gates the
+# forced re-probe on the tier not having already run this cycle.
+@test "monitor_run forces a fresh TCP/public probe on internet-side critical loss" {
+  run grep -cE 'loss_at_least "\$MON_INET_LOSS" "\$LOSS_CRIT_PCT"' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 1 ]
+  run grep -cE 'loss_below "\$MON_GW_LOSS" "\$LOSS_WARN_PCT"' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 1 ]
+  run grep -cE 'grep -qw medium' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 1 ]
+  run grep -cE 'grep -qw slow' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 1 ]
+}
+
 # ── Severity and cadence ─────────────────────────────────────────────────
 
 @test "severity is the worst rule that fired" {

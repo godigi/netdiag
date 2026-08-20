@@ -693,6 +693,42 @@ monitor_run() {
       fi
     fi
 
+    # ── Freshness on internet-side loss ───────────────────────────────────
+    # The fast tier pings the internet every cycle; the TCP and public
+    # probes run on the medium (60 s) and slow (300 s) tiers and are
+    # carried over stale between refreshes. A real internet outage —
+    # gateway quiet, internet ping at critical loss — therefore reads, for
+    # up to a minute, exactly like an ICMP-filtering hotel network: TCP and
+    # public still "ok" from before the drop, so _mon_rules concludes
+    # ICMP-1 (info) instead of L1 (critical), severity stays info, the
+    # menu-bar dot stays green, and no connection-lost alert fires. A
+    # manual scan is the only thing that forces fresh probes — which is why
+    # alerts appeared only after the user pressed "Check My Connection".
+    #
+    # Forcing a fresh TCP probe the moment the fast tier sees the outage
+    # breaks that stale-data lock within one cycle. If TCP now fails too,
+    # _mon_rules names L1 (critical), degraded engages, and the fast tier
+    # drops to its 5 s cadence for the duration of the outage. Public is
+    # forced the same way so P1/P2 (which gate on MON_PUBLIC_OK) do not sit
+    # behind the 300 s slow timer either. Gated on the tier not having
+    # already run this cycle, so a cycle that hit the medium/slow timers on
+    # its own pays nothing extra, and during a sustained outage the forced
+    # path fires only on cycles the scheduled tiers skipped.
+    if [ "$MON_LINK_UP" -eq 1 ] \
+       && loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT" \
+       && loss_below "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
+      if ! printf '%s' "$MON_REFRESHED" | grep -qw medium; then
+        MON_REFRESHED+="medium "
+        _mon_probe_tcp
+        next_medium=$((now + MONITOR_MEDIUM_INTERVAL))
+      fi
+      if ! printf '%s' "$MON_REFRESHED" | grep -qw slow; then
+        MON_REFRESHED+="slow "
+        _mon_probe_public
+        next_slow=$((now + MONITOR_SLOW_INTERVAL))
+      fi
+    fi
+
     _mon_rules
 
     cadence="$MONITOR_FAST_INTERVAL"

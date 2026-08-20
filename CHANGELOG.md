@@ -101,6 +101,25 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Fixed
 
+- **A real internet outage read as a green dot for up to a minute.** The
+  fast tier pings the internet every cycle, but the TCP and public probes
+  that distinguish a real outage (L1, critical) from an ICMP-filtering
+  hotel network (ICMP-1, info) run on the 60 s medium and 300 s slow tiers
+  and are carried over stale between refreshes. So for up to a minute into
+  an outage TCP and public still read "ok" from before the drop,
+  `_mon_rules` concludes ICMP-1, severity stays info, the menu-bar dot
+  stays green, and no connection-lost alert fires — a manual scan was the
+  only thing that forced fresh probes, which is why alerts appeared only
+  after "Check My Connection" was pressed. `monitor_run` now forces a
+  fresh TCP and public probe the moment the fast tier sees critical
+  internet loss with a quiet gateway, so `_mon_rules` decides L1 vs
+  ICMP-1 on fresh data within one cycle and degraded engages immediately.
+  Gated on the tier not having already run that cycle, so a cycle that
+  hit its own timers pays nothing extra, and during a sustained outage
+  the forced path fires only on cycles the scheduled tiers skipped. A
+  `test_monitor.bats` case guards the structural fix: the condition
+  exists, keys on the shared threshold variables (not inline numbers),
+  and gates the forced re-probe on the tier not having already run.
 - **The paused-monitor test no longer fails in CI on a slow runner.** It
   slept a fixed 4 s, sent `SIGUSR1`, slept 3 s more and read the stream's
   last line — so on a loaded runner it read an empty file and died with a
