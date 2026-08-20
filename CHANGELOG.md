@@ -8,6 +8,12 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Added
 
+- **`--open=<tab>` launches the app with a dashboard tab already
+  showing** (`home`, `live`, `activity`, `trends` or `networks`). The
+  self-service verification hook: an automated check can screenshot any
+  view without a human clicking the menu bar first. Used by the
+  screenshot-based verification flow that validated the Networks tab
+  redesign.
 - **The monitor auto-starts a 2 s "investigation" burst the moment the
   CLI's verdict turns from ok/info to warn/critical — before an alert's
   dwell has elapsed and before any triggered scan lands.** The user's
@@ -181,6 +187,13 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Changed
 
+- **The Networks list shows each network's last-seen time instead of the
+  "inferred" badge.** "Inferred" says how the grouping was computed,
+  which a person scanning their networks has no use for; "3h ago" says
+  how stale the row is, which is the thing you actually scan the list
+  for. The full date is on hover. The detail pane keeps the badge, where
+  there is room for its tooltip to explain it.
+
 - **The Networks tab was redesigned into a two-column master-detail
   layout.** The previous design was a `NavigationStack` of network cards
   — each card carried its stats inline and a "Browse Checks" link that
@@ -252,6 +265,28 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Fixed
 
+- **A Wi-Fi name adopted from CoreWLAN showed on Home but not in the
+  Networks tab.** The app renames the current network under the id the
+  monitor reports, but the monitor's `network.id` is the *record* format
+  (`wifi:mac=AA:BB:…`) while `--history` groups networks under
+  canonicalized keys (`mac:aa:bb:…`) — so the rename landed on a key the
+  Networks tab never renders, and the tab kept titling the network with
+  the ISP name while Home showed the real SSID. The join is fixed at the
+  source: `lib/netid.sh`'s `netid_run` now derives `NETWORK_GROUP` — the
+  canonical group key, by the same MAC > gateway IP > SSID precedence
+  `helpers/history.py` groups records with — and the monitor emits it as
+  `network.group_id` on every sample (nullable; an older CLI omits it
+  and consumers fall back to `id`). The app joins history on
+  `historyJoinID` (`group_id`, falling back to `id`) everywhere a live
+  sample meets stored history: the SSID adoption, the rename lookup the
+  dropdown reads, the speed-test lookup, the current-network highlight
+  and default selection in the Networks tab, and the seen-networks
+  first-sighting trigger. A one-time migration rewrites renames and
+  seen-network keys recorded under the old `wifi:mac=` spelling to the
+  group key. A new bats invariant runs `netid_run` and `history.py` over
+  the same five id shapes and fails the build if the two derivations
+  ever drift apart — the copy in bash exists so the monitor does not
+  spawn python per sample, and this test is what keeps it a copy.
 - **The Networks tab did 3 full merge+sort passes on every redraw.** The
   body evaluated `mergedNetworks` (merge + sort by run-count) for the
   emptiness check, then `visibleNetworks` → `mergedNetworksByRecency`,

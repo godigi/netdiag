@@ -81,6 +81,28 @@ extension NetdiagApp {
         if CommandLine.arguments.contains("--verify") { return }
         coordinator.start()
 
+        // `--open=<tab>` — the self-service verification hook. Opens the
+        // dashboard on a named tab at launch, so an automated check (or a
+        // screenshot harness) can inspect any view without a human
+        // clicking the menu bar first. Valid tabs match MainDestination:
+        // home, live, activity, trends, networks.
+        if let value = CommandLine.arguments.first(where: { $0.hasPrefix("--open=") }) {
+            let tab = String(value.dropFirst("--open=".count))
+            let destination: MainDestination? = switch tab {
+            case "home": .home
+            case "live": .live
+            case "activity": .activity
+            case "trends": .trends
+            case "networks": .networks
+            default: nil
+            }
+            if let destination {
+                coordinator.requestedDestination = destination
+                openWindow(id: WindowID.dashboard)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+
         if Defaults.hasOnboarded {
             // Grants can be revoked in System Settings between launches, so
             // the stored answer is a fact about last time, not about now.

@@ -26,7 +26,7 @@
 #                      when neither of the above is available.
 #
 # Reads:  IS_WIFI, WIFI_SSID, GW_MAC, GATEWAY, INTERFACE
-# Writes: NETWORK_ID, NETWORK_LABEL
+# Writes: NETWORK_ID, NETWORK_LABEL, NETWORK_GROUP
 # Entry:  netid_run
 
 netid_run() {
@@ -48,6 +48,24 @@ netid_run() {
     parts="gw=$GATEWAY"
   fi
 
+  # The canonical history GROUP KEY for this network — the key
+  # helpers/history.py's group_key() derives from stored records, so a
+  # live consumer (the monitor, the GUI) can join straight onto
+  # --history's network groups without post-processing the raw id.
+  # Preference mirrors group_key exactly: MAC (lowercased) beats gateway
+  # IP beats SSID. netid_run and group_key are a pair — change one,
+  # change the other; tests/test_history.bats runs both over the same
+  # ids and fails the build if they drift apart.
+  if [ -n "$GW_MAC" ]; then
+    NETWORK_GROUP="mac:${GW_MAC,,}"
+  elif [ -n "$GATEWAY" ]; then
+    NETWORK_GROUP="gw:$GATEWAY"
+  elif [ -n "$ssid" ]; then
+    NETWORK_GROUP="ssid:$ssid"
+  else
+    NETWORK_GROUP=""
+  fi
+
   if [ -z "$parts" ]; then
     NETWORK_ID=""
     NETWORK_LABEL="unknown network"
@@ -65,5 +83,6 @@ netid_run() {
   if [ -n "${NETDIAG_PAR_VARS:-}" ]; then
     setvar NETWORK_ID "$NETWORK_ID"
     setvar NETWORK_LABEL "$NETWORK_LABEL"
+    setvar NETWORK_GROUP "$NETWORK_GROUP"
   fi
 }

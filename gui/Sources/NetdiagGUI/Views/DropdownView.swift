@@ -423,7 +423,7 @@ struct DropdownView: View {
                     age)
         }
         if let stored = coordinator.history.latestSpeedTest(
-            for: coordinator.monitor.latest?.network.id) {
+            for: coordinator.monitor.latest?.network.historyJoinID) {
             return (String(Int(stored.down.rounded())),
                     stored.up.map { String(Int($0.rounded())) } ?? "—",
                     RelativeTime.string(from: stored.date))

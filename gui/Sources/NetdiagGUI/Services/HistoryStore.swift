@@ -28,6 +28,39 @@ final class HistoryStore {
     /// one is visible and fixable.
     private(set) var manualMerges: [String: String] = Defaults.networkMerges
 
+    /// One-time rewrite of keys recorded before the group-id join landed.
+    /// Renames and seen-network entries were keyed by the raw sample id
+    /// (`wifi:mac=AA:BB:…`), which never matches a `--history` group —
+    /// the bug where an adopted Wi-Fi name showed on Home but not in the
+    /// Networks tab. Rewrites `wifi:mac=X` / `lan:mac=X` to the group key
+    /// (`mac:x`), lowercased, without clobbering a key that already
+    /// exists. Idempotent: a second run finds nothing left to move.
+    private static func migrateRawKeys(_ dict: [String: String]) -> [String: String] {
+        var out = dict
+        for (key, value) in dict {
+            let mac: String
+            if key.hasPrefix("wifi:mac=") { mac = String(key.dropFirst("wifi:mac=".count)) }
+            else if key.hasPrefix("lan:mac=") { mac = String(key.dropFirst("lan:mac=".count)) }
+            else { continue }
+            let groupKey = "mac:\(mac.lowercased())"
+            if out[groupKey] == nil { out[groupKey] = value }
+            if groupKey != key { out.removeValue(forKey: key) }
+        }
+        return out
+    }
+
+    init() {
+        // Reads first, migration second, so the migrated shape is what
+        // both the store and Defaults hold from here on.
+        let names = Self.migrateRawKeys(Defaults.networkNames)
+        if names != Defaults.networkNames { Defaults.networkNames = names }
+        customNames = names
+        let seen = Self.migrateRawKeys(
+            Dictionary(uniqueKeysWithValues: Defaults.seenNetworks.map { ($0, "1") }))
+        let seenKeys = Set(seen.keys)
+        if seenKeys != Defaults.seenNetworks { Defaults.seenNetworks = seenKeys }
+    }
+
     func load() async {
         isLoading = true
         defer { isLoading = false }

@@ -65,6 +65,60 @@ print(json.dumps(d, ensure_ascii=False, sort_keys=True))
 # "wifi:mac=X" becomes "wifi:ssid=Home,mac=X". Exact-string matching would
 # split a single network's history in half at that moment.
 
+# netid_run (lib/netid.sh) publishes NETWORK_GROUP — the group key a live
+# consumer joins this history with — as a sibling of the raw record id it
+# derives it from. That derivation is a *second copy* of this file's
+# group_key precedence, living in bash so the monitor does not spawn
+# python per sample, and copies drift. This test is the pin: for one
+# record of each id shape, netid_run's NETWORK_GROUP must equal the id
+# history.py actually grouped that record under. If someone changes
+# either side alone, this goes red.
+netid_group() {
+  local id="$1" kind="${2:-wifi}"
+  local IS_WIFI=0
+  [ "$kind" = "wifi" ] && IS_WIFI=1
+  local WIFI_SSID="" GW_MAC="" GATEWAY="" NETWORK_ID="" NETWORK_LABEL="" NETWORK_GROUP=""
+  local ssid=""
+  case "$id" in
+    *ssid=*|wifi:ssid=*) ssid="${id#*ssid=}"; ssid="${ssid%%,*}"; WIFI_SSID="$ssid" ;;
+  esac
+  case "$id" in
+    *mac=*) GW_MAC="${id#*mac=}" ;;
+  esac
+  case "$id" in
+    *gw=*) GATEWAY="${id#*gw=}" ;;
+  esac
+  netid_run >/dev/null 2>&1 || true
+  printf '%s' "$NETWORK_GROUP"
+}
+
+@test "netid_run's NETWORK_GROUP equals the group key history.py assigns" {
+  # shellcheck source=../lib/netid.sh
+  . "$REPO/lib/netid.sh"
+  # One record per id shape; the join must hold for every one of them.
+  local ids=(
+    'wifi:mac=aa:bb:cc:dd:ee:ff'
+    'wifi:ssid=Home,mac=aa:bb:cc:dd:ee:ff'
+    'lan:mac=aa:bb:cc:dd:ee:ff'
+    'lan:gw=192.168.1.1'
+    'wifi:ssid=Cafe'
+  )
+  local i=0
+  for id in "${ids[@]}"; do
+    rec "$LIVE" "2026-01-0$((++i))T00:00:00Z" "\"network\":{\"id\":\"$id\"}"
+  done
+  # For each id shape, netid_group must produce a key that IS one of
+  # history.py's group ids — not merely well-formed.
+  local groups_json
+  groups_json="$(hist | python3 -c 'import json,sys; print(" ".join(n["id"] for n in json.load(sys.stdin)["networks"]))')"
+  for id in "${ids[@]}"; do
+    local g
+    g="$(netid_group "$id")"
+    run bash -c "printf '%s' '$groups_json' | grep -qw '$g'"
+    [ "$status" -eq 0 ] || { echo "netid_group($id) = '$g' but history groups are: $groups_json"; return 1; }
+  done
+}
+
 @test "runs before and after an SSID becomes visible stay one network" {
   rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff","label":"WiFi (SSID hidden by macOS)"}'
   rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:ssid=Home,mac=aa:bb:cc:dd:ee:ff","label":"Home"}'

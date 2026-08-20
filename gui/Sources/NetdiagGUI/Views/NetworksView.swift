@@ -25,6 +25,11 @@ struct NetworksView: View {
     /// The network the right pane is about. Bound to the List's selection,
     /// so clicking a row or pressing arrow keys updates it immediately.
     @State private var selectedNetworkID: String?
+    /// Set when a selection existed and the user cleared it (cmd-click or
+    /// a click on empty list space). Stops `selectCurrentNetworkIfNeeded`
+    /// from re-selecting the current network on the next monitor sample —
+    /// a pane the user emptied on purpose must stay empty.
+    @State private var userDeselected = false
     /// When set, the right pane shows this check's detail instead of the
     /// network overview. Set by clicking a row in the checks list; cleared
     /// by the back button. A state change in the right pane, not a
@@ -76,12 +81,18 @@ struct NetworksView: View {
         }
         .task {
             if store.document.networks.isEmpty { await store.load() }
-            // Default to the current network so the right pane is
-            // immediately useful rather than showing "Select a network".
-            if selectedNetworkID == nil,
-               let currentID = coordinator.monitor.latest?.network.id {
-                selectedNetworkID = store.canonicalID(currentID)
-            }
+            selectCurrentNetworkIfNeeded()
+        }
+        // The `.task` above usually runs before the monitor's first
+        // sample arrives, so the default selection can't find the current
+        // network yet and the pane opens on "Select a network". Re-apply
+        // on every sample until a selection exists.
+        .onChange(of: coordinator.monitor.latest?.seq) { _, _ in
+            selectCurrentNetworkIfNeeded()
+        }
+        .onChange(of: selectedNetworkID) { old, new in
+            if old != nil && new == nil { userDeselected = true }
+            if new != nil { userDeselected = false }
         }
         .sheet(item: $mergeSource) { source in
             MergeSheet(source: source) { destination in
@@ -125,10 +136,16 @@ struct NetworksView: View {
                                 .foregroundStyle(.green)
                                 .font(.system(size: 8))
                         }
-                        if net.synthesized {
-                            Text("inferred")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
+                        Spacer(minLength: 4)
+                        // Last-seen rather than another badge: the row
+                        // already identifies, this tells you how stale that
+                        // identity is — "the café, 3 weeks ago" — which is
+                        // the thing you actually scan the list for.
+                        if let last = net.lastSeenDate {
+                            Text(RelativeTime.string(from: last))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .help("Last seen \(last.formatted(date: .abbreviated, time: .shortened))")
                         }
                     }
                     .tag(net.id)
@@ -351,6 +368,17 @@ struct NetworksView: View {
 
     // MARK: - Helpers
 
+    /// Default to the current network so the right pane is immediately
+    /// useful rather than showing "Select a network". Joined on the
+    /// history group key so this actually finds the row — the raw sample
+    /// id never matches a group. Never overrides a selection the user
+    /// made, and never re-selects after they deliberately deselect.
+    private func selectCurrentNetworkIfNeeded() {
+        guard selectedNetworkID == nil, !userDeselected,
+              let currentID = coordinator.monitor.latest?.network.historyJoinID else { return }
+        selectedNetworkID = store.canonicalID(currentID)
+    }
+
     private func stat(_ label: String, _ value: String, detail: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label).foregroundStyle(.secondary)
@@ -375,7 +403,7 @@ struct NetworksView: View {
     }
 
     private func isCurrent(_ net: HistoryDocument.Network) -> Bool {
-        guard let id = coordinator.monitor.latest?.network.id else { return false }
+        guard let id = coordinator.monitor.latest?.network.historyJoinID else { return false }
         return store.canonicalID(id) == net.id
     }
 

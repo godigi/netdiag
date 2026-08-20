@@ -94,6 +94,7 @@ MON_BSSID=""
 MON_LOCAL_IP=""
 MON_NETWORK_ID=""
 MON_NETWORK_LABEL=""
+MON_NETWORK_GROUP=""
 MON_VPN_ACTIVE=0
 MON_VPN_TYPE=""
 MON_VPN_NAME=""
@@ -205,18 +206,21 @@ _mon_probe_link() {
 # be byte-identical to what a scan records or the app cannot join a live
 # sample to the history it charts.
 _mon_identity() {
-  # netid_run reads these four by name and writes the two below. They look
+  # netid_run reads these four by name and writes the three below. They look
   # unused to shellcheck because the read happens in another file through
   # dynamic scope, which is exactly the point: the precedence logic stays
   # in one place.
   # shellcheck disable=SC2034
   local IS_WIFI=0 WIFI_SSID="$MON_SSID" GW_MAC="$MON_GW_MAC" GATEWAY="$MON_GATEWAY"
-  local NETWORK_ID="" NETWORK_LABEL=""
+  local NETWORK_ID="" NETWORK_LABEL="" NETWORK_GROUP=""
   # shellcheck disable=SC2034
   [ "$MON_IFACE_TYPE" = "wifi" ] && IS_WIFI=1
   netid_run
   MON_NETWORK_ID="$NETWORK_ID"
   MON_NETWORK_LABEL="$NETWORK_LABEL"
+  # The history group key, not the raw record id — this is the id the
+  # app joins against --history's networks with. See netid.sh.
+  MON_NETWORK_GROUP="$NETWORK_GROUP"
 }
 
 _mon_probe_vpn() {
@@ -547,6 +551,7 @@ _mon_emit() {
   NETDIAG_MON_BSSID="$MON_BSSID" \
   NETDIAG_MON_NETWORK_ID="$MON_NETWORK_ID" \
   NETDIAG_MON_NETWORK_LABEL="$MON_NETWORK_LABEL" \
+  NETDIAG_MON_NETWORK_GROUP="$MON_NETWORK_GROUP" \
   NETDIAG_MON_VPN_ACTIVE="$MON_VPN_ACTIVE" \
   NETDIAG_MON_VPN_TYPE="$MON_VPN_TYPE" \
   NETDIAG_MON_VPN_NAME="$MON_VPN_NAME" \

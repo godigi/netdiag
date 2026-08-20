@@ -356,6 +356,28 @@ for k in ('schema','version','ts','seq','refreshed','link','network','vpn',
 "
 }
 
+# network.group_id is the canonical --history group key — the id the app
+# joins its charts and renames against. A sample that carried only the raw
+# record-format id (wifi:mac=AA:BB) forced every consumer to re-derive
+# grouping rules it does not own; group_id arrives already derived by the
+# same netid_run precedence history.py uses. Null when the network has no
+# identity at all — same contract as network.id.
+@test "monitor_sample: network.group_id mirrors the history group key" {
+  run emit NETDIAG_MON_GW_MAC=AA:BB:CC:DD:EE:FF NETDIAG_MON_NETWORK_ID="wifi:mac=AA:BB:CC:DD:EE:FF" \
+           NETDIAG_MON_NETWORK_GROUP="mac:aa:bb:cc:dd:ee:ff"
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+assert d['network']['group_id'] == 'mac:aa:bb:cc:dd:ee:ff', d['network']
+"
+  run emit
+  printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+assert d['network']['group_id'] is None, d['network']
+"
+}
+
 @test "monitor_sample: an unmeasured probe is null, never false" {
   # dns.ok unset must be null. False would mean "we asked and it failed".
   run emit NETDIAG_MON_LINK_UP=1

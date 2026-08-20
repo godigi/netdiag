@@ -79,9 +79,27 @@ struct MonitorSample: Decodable, Sendable {
     struct NetworkIdentity: Decodable, Sendable, Equatable {
         var id: String?
         var label: String?
+        /// The canonical `--history` group key for this network
+        /// (`network.group_id`, schema 2): `mac:…`, `gw:…` or `ssid:…`,
+        /// derived by the same `netid_run` precedence `helpers/history.py`
+        /// groups by. `nil` from a CLI older than the field — join on
+        /// `historyJoinID`, which falls back to `id`, never on this raw.
+        var groupId: String?
+
+        /// The id to join against `--history`'s network groups with. The
+        /// raw `id` is the *record* format (`wifi:mac=AA:BB:…`), which
+        /// history.py canonicalizes before grouping — joining on it never
+        /// matches, which is exactly the bug where a Wi-Fi name adopted
+        /// from CoreWLAN showed on Home but not in the Networks tab.
+        var historyJoinID: String? {
+            let joined = groupId ?? id
+            guard let joined, !joined.isEmpty else { return nil }
+            return joined
+        }
 
         enum CodingKeys: String, CodingKey {
             case id, label
+            case groupId = "group_id"
         }
     }
 
@@ -278,6 +296,7 @@ extension MonitorSample.NetworkIdentity {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = c.lenient(.id)
         label = c.lenient(.label)
+        groupId = c.lenient(.groupId)
     }
 }
 

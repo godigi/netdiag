@@ -286,7 +286,11 @@ final class NetdiagCoordinator {
                 date: sample.timestamp)
         }
 
-        guard let id = sample.network.id, !id.isEmpty else { return }
+        // The history group key, so `seenNetworks`, the alert engine's
+        // per-network memory and the first-sighting scan all key on the
+        // same id the Networks tab renders by — the raw sample id is the
+        // record format, which never matches a history group.
+        guard let id = sample.network.historyJoinID else { return }
         guard id != lastNetworkID else { return }
         lastNetworkID = id
         alerts.networkChanged(to: id)
@@ -594,20 +598,37 @@ final class NetdiagCoordinator {
     /// forever. The GUI's CoreWLAN `ssid()` *does* see the real name, so
     /// the moment we have it we record it as the network's custom name —
     /// the same store `displayName` and the Networks-tab search already
-    /// read. Never overwrites a name that is not ugly (a user rename, or a
-    /// real SSID the CLI captured under sudo), and writes at most once per
-    /// network per name change rather than every sample.
+    /// read. Joins on `historyJoinID` (the `--history` group key), not the
+    /// raw sample id: the rename has to land on the same key the Networks
+    /// tab renders by, or the name shows on Home and not there — the exact
+    /// bug this replace fixed. Never overwrites a name that is not ugly
+    /// (a user rename, or a real SSID the CLI captured under sudo), and
+    /// writes at most once per network per name change rather than every
+    /// sample.
     private func adoptLiveSSIDAsNameIfNeeded() {
         guard let live = liveSSID, !live.isEmpty,
               !live.contains("<redacted>"), !live.contains("hidden by macOS"),
-              let id = monitor.latest?.network.id, !id.isEmpty else { return }
+              let id = monitor.latest?.network.historyJoinID else { return }
         let current = history.displayName(for: id)
         let currentIsUgly = current.isEmpty || current == id
             || current.contains("<redacted>") || current.contains("hidden by macOS")
-            || current.starts(with: "wifi:mac=")
+            || Self.isRawNetworkKey(current)
         guard currentIsUgly, current != live else { return }
         history.rename(id, to: live)
         log.info("adopted live SSID as name for \(id, privacy: .public)")
+    }
+
+    /// True when a "name" is actually a raw network key rather than
+    /// anything a person wrote or recognised — `wifi:mac=AA:BB:…` (the
+    /// record format), `mac:aa:bb:…` / `gw:…` / `ssid:…` (the history
+    /// group format). Both spellings must be caught here: renames can
+    /// predate the group-id join, and the group key is what a network with
+    /// no name at all falls back to in `displayName`.
+    static func isRawNetworkKey(_ s: String) -> Bool {
+        s.starts(with: "wifi:mac=") || s.starts(with: "lan:mac=")
+            || s.starts(with: "wifi:ssid=") || s.starts(with: "lan:gw=")
+            || s.starts(with: "mac:") || s.starts(with: "gw:")
+            || s.starts(with: "ssid:")
     }
 
     /// What `HomeView` has to render: either the run that finished in
@@ -689,10 +710,13 @@ final class NetdiagCoordinator {
     var wifiDisplayName: String? {
         // A user-assigned rename wins over everything — it is the name the
         // user themselves typed, so it is the name they expect to see.
-        if let id = monitor.latest?.network.id, !id.isEmpty {
+        // Looked up by the history group key so a rename made anywhere
+        // (the Networks tab, the adopt-as-name path) is found from here
+        // too.
+        if let id = monitor.latest?.network.historyJoinID {
             let custom = history.displayName(for: id)
             if !custom.isEmpty, custom != id, !custom.contains("<redacted>"),
-               !custom.contains("hidden by macOS"), !custom.starts(with: "wifi:mac=") {
+               !custom.contains("hidden by macOS"), !Self.isRawNetworkKey(custom) {
                 return custom
             }
         }
@@ -709,7 +733,8 @@ final class NetdiagCoordinator {
         // furniture that reads as a bug.
         let raw = monitor.latest?.network.label ?? latestRun?.snapshot.network.label
         guard let raw, !raw.isEmpty else { return nil }
-        if raw.contains("<redacted>") || raw.contains("hidden by macOS") || raw.starts(with: "wifi:mac=") {
+        if raw.contains("<redacted>") || raw.contains("hidden by macOS")
+            || Self.isRawNetworkKey(raw) {
             return nil
         }
         return raw

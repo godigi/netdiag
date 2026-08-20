@@ -235,6 +235,12 @@ def main() -> None:
         "network": {
             "id": _env("NETWORK_ID"),
             "label": _env("NETWORK_LABEL"),
+            # The canonical history group key for the same network
+            # (netid_run's NETWORK_GROUP — the key --history groups by),
+            # so a consumer joins onto history without re-deriving
+            # grouping rules. Nullable: an older CLI emits nothing here
+            # and the consumer falls back to `id`.
+            "group_id": _env("NETWORK_GROUP"),
         },
         "vpn": {
             "active": os.environ.get("NETDIAG_MON_VPN_ACTIVE") == "1",

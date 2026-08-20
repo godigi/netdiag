@@ -360,7 +360,8 @@ it would accumulate forever.
   "link":    {"up": true, "interface": "en0", "type": "wifi", "ip": "…",
               "gateway": "192.168.15.1", "gateway_mac": "10:98:5f:…",
               "ssid": null, "bssid": null},
-  "network": {"id": "wifi:mac=10:98:5f:…", "label": "…"},
+  "network": {"id": "wifi:mac=10:98:5f:…", "label": "…",
+              "group_id": "mac:10:98:5f:…"},
   "vpn":     {"active": false, "type": null, "name": null},
   "gateway": {"loss_pct": 0.0, "rtt_avg_ms": 4.1},
   "wifi":    {"rssi": null, "noise": null, "snr": null, "channel": null},
@@ -383,6 +384,15 @@ it would accumulate forever.
 
 ## Conventions specific to the stream
 
+- **`network.group_id` is the `--history` group key** (`mac:…`, `gw:…` or
+  `ssid:…` — the same string `--history` reports in `networks[].id`),
+  derived by `lib/netid.sh` from the same inputs as `network.id`, with
+  the same precedence `helpers/history.py` groups records by. This is the
+  id a consumer joins its stored history with; the raw `network.id` is
+  the *record* format (`wifi:mac=…`), which grouping canonicalizes, so
+  joining on it never matches. `null` when the network has no identity
+  at all, and absent from a CLI older than the field — consumers fall
+  back to `network.id` there and simply re-derive grouping themselves.
 - **`refreshed`** lists the tiers that actually ran this cycle. Everything
   outside it is carried over from an earlier sample. A consumer plotting a
   series needs this: `public.ip` is refreshed every 300 s, so nine out of
