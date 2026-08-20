@@ -137,6 +137,12 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Changed
 
+- **The heartbeat strip dropped its redundant "internet ping · live"
+  label.** The strip's shape is the headline; the label repeated what
+  the strip already shows, and a min/avg/max pinned to the right read
+  as a caption to nothing. The numbers now sit directly under the
+  strip's left edge; only "monitoring off" remains as a label, for when
+  there is no shape to read.
 - **The dropdown's link-path bar, glance panel, quick-action grid, and
   contextual remedy row were retired**; their facts moved into the
   instrument grid and the alert stage. The footer regained Open

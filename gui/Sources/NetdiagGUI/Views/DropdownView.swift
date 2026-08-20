@@ -409,12 +409,19 @@ struct DropdownView: View {
                            flatlined: !coordinator.monitor.isRunning
                                       || coordinator.monitor.isPaused)
             HStack {
-                Text(coordinator.monitor.isRunning && !coordinator.monitor.isPaused
-                     ? "internet ping · live" : "monitoring off")
-                Spacer()
-                if let stats = heartbeatStats {
-                    Text("min \(stats.min) · avg \(stats.avg) · max \(stats.max) ms")
+                // The strip's shape is the headline; the numbers sit
+                // directly under its left edge rather than labelled
+                // "internet ping · live" on the opposite side — the label
+                // repeated what the strip already shows, and a min/avg/max
+                // pinned to the right read as a caption to nothing.
+                if coordinator.monitor.isRunning && !coordinator.monitor.isPaused {
+                    if let stats = heartbeatStats {
+                        Text("min \(stats.min) · avg \(stats.avg) · max \(stats.max) ms")
+                    }
+                } else {
+                    Text("monitoring off")
                 }
+                Spacer(minLength: 0)
             }
             .font(.system(size: 9))
             .foregroundStyle(.tertiary)
