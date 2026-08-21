@@ -75,6 +75,19 @@ LOSS_PROBE_INTERVAL=0.2
 MONITOR_PING_COUNT=10
 MONITOR_PING_INTERVAL=0.2
 
+# The monitor's per-cycle internet-side probe (lib/monitor.sh's
+# _mon_probe_internet). Twenty packets, matching LOSS_PROBE_COUNT rather
+# than the gateway probe's ten, and the reason is the bug this replaces:
+# that probe sent five packets, where one dropped packet reads as exactly
+# LOSS_CRIT_PCT — so a single routine ICMP drop at a rate-limiting resolver
+# fired L1 as an immediate critical, flashed the app's red card for one
+# cycle, and cleared on the next. At twenty the quantum is 5%: warn is two
+# drops (confirmed across cycles like every other warn band) and critical
+# is four drops in one burst, which carrier-rate-limit noise does not
+# produce. Cost is ~4 s of a 10 s cycle; the gateway probe's 2 s runs
+# alongside it, and the loop sleeps only the remainder.
+MONITOR_INET_PING_COUNT=20
+
 # A single cycle's loss is a blip, not a condition: at MONITOR_PING_COUNT=10
 # one dropped packet reads as 10%, exactly LOSS_WARN_PCT. Requiring the same
 # band on consecutive cycles turns a lost packet into a fact about the link

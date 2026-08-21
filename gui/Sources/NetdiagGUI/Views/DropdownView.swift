@@ -177,11 +177,19 @@ struct DropdownView: View {
         var parts: [String] = []
         if let since = NetworkEvent.timeSinceLast(coordinator.eventLog.events,
                                                   now: .now) {
-            let f = DateComponentsFormatter()
-            f.allowedUnits = since >= 3600 ? [.hour, .minute] : [.minute]
-            f.unitsStyle = .abbreviated
-            if let s = f.string(from: since) {
-                parts.append("Nothing has changed in \(s)")
+            // DateComponentsFormatter with minute granularity renders any
+            // span under 60 s as "0m" — literally true, uselessly so seconds
+            // after an event lands. Below a minute the honest string is the
+            // bound, not the rounding.
+            if since < 60 {
+                parts.append("Nothing has changed in under a minute")
+            } else {
+                let f = DateComponentsFormatter()
+                f.allowedUnits = since >= 3600 ? [.hour, .minute] : [.minute]
+                f.unitsStyle = .abbreviated
+                if let s = f.string(from: since) {
+                    parts.append("Nothing has changed in \(s)")
+                }
             }
         } else {
             parts.append("Watching for changes")

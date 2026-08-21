@@ -304,7 +304,15 @@ _mon_probe_internet() {
   MON_INET_LOSS=""; MON_INET_RTT=""
   [ "$MON_LINK_UP" -eq 1 ] || return 0
   local out
-  out="$(with_timeout 3 ping -q -c 5 -i 0.2 1.1.1.1 2>/dev/null || true)"
+  # MONITOR_INET_PING_COUNT, not a token burst: at five packets one dropped
+  # packet reads as exactly LOSS_CRIT_PCT, so a single routine drop at a
+  # rate-limiting resolver fired L1 as an immediate critical — the red card
+  # flashed for one cycle and cleared on the next. Twenty packets puts the
+  # quantum at 5%, the same shape the scanner's probe produces; see
+  # lib/thresholds.sh. Interval shared with LOSS_PROBE_INTERVAL for the
+  # same reason. The outer bound scales with the longer run: ~4 s of
+  # probing under an 8 s deadline.
+  out="$(with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" 1.1.1.1 2>/dev/null || true)"
   MON_INET_LOSS="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
   MON_INET_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
   is_numeric "$MON_INET_LOSS" || MON_INET_LOSS=""

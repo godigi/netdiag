@@ -294,6 +294,37 @@ scanner_rules() {
   [[ "$MON_RULES" != *"G3"* ]]
 }
 
+# ── Internet-probe loss quantum ───────────────────────────────────────────
+# The regression behind the flashing red card: _mon_probe_internet sent
+# five packets, so one dropped packet read as exactly LOSS_CRIT_PCT and L1
+# — which never waits for confirmation — fired on routine resolver noise,
+# then cleared on the next cycle. The property to hold forever: a single
+# dropped packet must not be able to reach the critical floor of either
+# loss rule, and the warn band must stay reachable so its confirmation
+# window means something. Both follow from the probe's packet count, so
+# that count comes from thresholds.sh like every other number a rule
+# judges.
+@test "the internet probe's packet count comes from thresholds.sh" {
+  run grep -cE 'ping -q -c "\$MONITOR_INET_PING_COUNT"' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 1 ]
+  run grep -cE 'MONITOR_INET_PING_COUNT=' "$REPO/lib/thresholds.sh"
+  [ "$output" -eq 1 ]
+  # And no inline burst size snuck back in: the only -c on this probe is
+  # the variable.
+  run grep -cE 'ping .*-c [0-9]' "$REPO/lib/monitor.sh"
+  [ "$output" -eq 0 ]
+}
+
+@test "one dropped packet cannot reach critical loss on the monitor" {
+  local quantum=$((100 / MONITOR_INET_PING_COUNT))
+  [ "$quantum" -lt "$LOSS_CRIT_PCT" ]
+  [ "$quantum" -lt "$THRESH_GW_LOSS_CRIT_PCT" ]
+}
+
+@test "the warn band stays reachable at the monitor's quantum" {
+  [ $((2 * 100 / MONITOR_INET_PING_COUNT)) -ge "$LOSS_WARN_PCT" ]
+}
+
 @test "a dead link is degraded and reports nothing it did not measure" {
   reset_state; MON_LINK_UP=0
   _mon_rules
