@@ -107,6 +107,15 @@ MON_GW_RTT=""
 # `set -u` and the very first cycle reads them before ever writing them.
 MON_GW_LOSS_STREAK=0
 MON_INET_LOSS_STREAK=0
+# Rolling loss windows, one per leg: newest-last "sent:lost" pairs, one per
+# completed probe, trimmed to MONITOR_LOSS_WINDOW_PROBES entries. Plain
+# space-separated scalars rather than arrays — this file must run under
+# zsh AND bash, and array syntax (and even subscript origin) differs
+# between them. The reported MON_GW_LOSS / MON_INET_LOSS are computed over
+# the whole window, which is what makes the percentage a property of the
+# link rather than of one burst; see _mon_loss_summarize.
+MON_GW_HIST=""
+MON_INET_HIST=""
 MON_WIFI_RSSI=""
 MON_WIFI_NOISE=""
 MON_WIFI_SNR=""
@@ -240,10 +249,85 @@ _mon_probe_vpn() {
   fi
 }
 
+# ── Rolling loss window ──────────────────────────────────────────────────
+# A loss percentage is only as fine as its denominator: at 20 packets per
+# probe one dropped packet reads 5%, at 10 it reads 10%, and either way the
+# instrument swings on a single packet and back — movement of the probe,
+# not of the network. So the reported figure is accumulated across probes:
+# each leg keeps its last MONITOR_LOSS_WINDOW_PROBES results and reports
+# lost×100÷sent over the whole window. At the defaults that is five
+# 20-packet probes — a 100-packet denominator, 1% quantum — refreshed
+# every fast cycle, so real loss ramps smoothly toward the thresholds and
+# routine noise contributes a fraction of a percent that then decays out.
+#
+# Counts, not percentages, are what accumulate: averaging ratios weights a
+# short run equally with a long one. The probes send fixed counts today,
+# but the arithmetic stays honest if that ever changes.
+
+# Fold one probe's "sent:lost" into a history string and summarise it:
+# prints "<trimmed history>|<total sent>|<total lost>", keeping only the
+# newest MONITOR_LOSS_WINDOW_PROBES entries. Pure: no globals read or
+# written, so both legs share it and tests can drive it directly.
+_mon_loss_summarize() {
+  printf '%s' "$1" | awk -v k="$MONITOR_LOSS_WINDOW_PROBES" '
+    { n = split($0, f, / /); start = n - k + 1; if (start < 1) start = 1;
+      ts = ""; s = 0; l = 0;
+      for (i = start; i <= n; i++) {
+        split(f[i], p, /:/); s += p[1]; l += p[2];
+        ts = (ts == "" ? "" : ts " ") f[i]
+      }
+      print ts "|" s "|" l }'
+}
+
+# Report a leg's windowed loss percentage from its totals. Kept separate
+# so the rounding rule lives in exactly one place.
+_mon_loss_pct() {
+  awk -v s="$1" -v l="$2" 'BEGIN { if (s > 0) printf "%.0f", l * 100 / s }'
+}
+
+# Clear both windows: a dead link or a different network invalidates every
+# reading in them. Stale packets from before the change would dilute a
+# fresh problem; a window half full of the old network is measuring
+# neither network.
+_mon_loss_reset() {
+  MON_GW_HIST=""
+  MON_INET_HIST=""
+}
+
+# Parse ping's -q summary into raw counts, fold it into a leg's history,
+# and report the windowed percentage. Pure: takes the current history
+# string, prints "<new history>|<loss pct>", and prints "|"" on a probe
+# that produced no parseable summary — clearing the window rather than
+# leaving it frozen, because "could not measure" must not read as
+# "measured, clean", and a window reporting last cycle's answer forever is
+# the stale-data bug this file has already been burned by once.
+# Args: history string, ping output, expected sent count.
+_mon_loss_fold() {
+  local hist="$1" out="$2" expect="$3"
+  local sent recv summary totals sent_t lost_t
+  # Fields carry trailing commas ("20 packets transmitted, 20 packets
+  # received, …"), so the keyword is matched as a prefix, not exactly, and
+  # the count sits two fields before it ("20" "packets" "transmitted,").
+  sent="$(printf '%s\n' "$out" | awk '/packets transmitted/{for(i=1;i<=NF;i++)if($i ~ /^transmitted/){print $(i-2); exit}}')"
+  recv="$(printf '%s\n' "$out" | awk '/packets transmitted/{for(i=1;i<=NF;i++)if($i ~ /^received/){print $(i-2); exit}}')"
+  case "$sent" in ''|*[!0-9]*) sent="" ;; esac
+  case "$recv" in ''|*[!0-9]*) recv="" ;; esac
+  if [ -z "$sent" ] || [ -z "$recv" ] || [ "$recv" -gt "$sent" ] \
+     || [ "$sent" -ne "$expect" ]; then
+    printf '|'
+    return 0
+  fi
+  summary="$(_mon_loss_summarize "${hist:+$hist }${sent}:$((sent - recv))")"
+  totals="${summary#*|}"
+  sent_t="${totals%%|*}"
+  lost_t="${totals##*|}"
+  printf '%s|%s' "${summary%%|*}" "$(_mon_loss_pct "$sent_t" "$lost_t")"
+}
+
 _mon_probe_gateway() {
   MON_GW_LOSS=""; MON_GW_RTT=""
   [ -n "$MON_GATEWAY" ] || return 0
-  local out
+  local out summary
   # -q: summary only. The scanner keeps the per-packet lines because it
   # logs them; nothing here reads them.
   #
@@ -251,14 +335,16 @@ _mon_probe_gateway() {
   # suggests, and the reason is quantisation rather than accuracy. At 3
   # packets the only reportable losses are 0/33/67/100%, so one dropped
   # packet reads as 33% — comfortably past the 20% critical floor. At 5 it
-  # reads as exactly 20%, which still trips it. At 10 the quantum is 10%:
-  # one drop lands in G3's warn band and it takes two to reach critical,
-  # which is the same shape the scanner's 20-packet probe produces. Cost
-  # is 2 s of a 10 s cycle, at one packet per second average.
+  # reads as exactly 20%, which still trips it. Per-probe quantisation no
+  # longer decides anything by itself — the reported figure accumulates
+  # over the rolling window (_mon_loss_fold) — but a wider burst still
+  # fills the window faster and costs little at 0.2 s spacing. Cost is 2 s
+  # of a 10 s cycle, at one packet per second average.
   out="$(with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" "$MON_GATEWAY" 2>/dev/null || true)"
-  MON_GW_LOSS="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
+  summary="$(_mon_loss_fold "$MON_GW_HIST" "$out" "$MONITOR_PING_COUNT")"
+  MON_GW_HIST="${summary%%|*}"
+  MON_GW_LOSS="${summary#*|}"
   MON_GW_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
-  is_numeric "$MON_GW_LOSS" || MON_GW_LOSS=""
   is_numeric "$MON_GW_RTT"  || MON_GW_RTT=""
 }
 
@@ -303,19 +389,22 @@ _mon_probe_tcp() {
 _mon_probe_internet() {
   MON_INET_LOSS=""; MON_INET_RTT=""
   [ "$MON_LINK_UP" -eq 1 ] || return 0
-  local out
+  local out summary
   # MONITOR_INET_PING_COUNT, not a token burst: at five packets one dropped
   # packet reads as exactly LOSS_CRIT_PCT, so a single routine drop at a
   # rate-limiting resolver fired L1 as an immediate critical — the red card
-  # flashed for one cycle and cleared on the next. Twenty packets puts the
-  # quantum at 5%, the same shape the scanner's probe produces; see
-  # lib/thresholds.sh. Interval shared with LOSS_PROBE_INTERVAL for the
-  # same reason. The outer bound scales with the longer run: ~4 s of
-  # probing under an 8 s deadline.
+  # flashed for one cycle and cleared on the next. Twenty packets is the
+  # scanner's own count; see lib/thresholds.sh. The reported figure is the
+  # rolling window over the last MONITOR_LOSS_WINDOW_PROBES probes
+  # (_mon_loss_fold), so the percentage's denominator is ~100 packets and
+  # one drop moves it one point, not twenty. Interval shared with
+  # LOSS_PROBE_INTERVAL. The outer bound scales with the longer run: ~4 s
+  # of probing under an 8 s deadline.
   out="$(with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" 1.1.1.1 2>/dev/null || true)"
-  MON_INET_LOSS="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
+  summary="$(_mon_loss_fold "$MON_INET_HIST" "$out" "$MONITOR_INET_PING_COUNT")"
+  MON_INET_HIST="${summary%%|*}"
+  MON_INET_LOSS="${summary#*|}"
   MON_INET_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
-  is_numeric "$MON_INET_LOSS" || MON_INET_LOSS=""
   is_numeric "$MON_INET_RTT"  || MON_INET_RTT=""
 }
 
@@ -675,6 +764,9 @@ monitor_run() {
       if [ "$MON_LINK_UP" -eq 1 ]; then
         _mon_probe_gateway
         _mon_probe_internet
+      else
+        # No link, no valid window: every packet in it predates the drop.
+        _mon_loss_reset
       fi
     fi
 
@@ -682,6 +774,11 @@ monitor_run() {
     if [ "$MON_NETWORK_ID" != "$prev_network_id" ]; then
       network_changed=1
       prev_network_id="$MON_NETWORK_ID"
+      # A different network is a different path; loss measured on the old
+      # one says nothing about this one. Cleared here rather than keyed per
+      # network because the window's whole point is describing *this*
+      # link's recent past — there is no "come back to it later" case.
+      [ -n "$MON_NETWORK_ID" ] && _mon_loss_reset
     fi
 
     # A dead link means nothing to probe. Skipping the other tiers here is

@@ -384,6 +384,15 @@ it would accumulate forever.
 
 ## Conventions specific to the stream
 
+- **`gateway.loss_pct` is a rolling-window figure**, not one probe's
+  reading: lost×100÷sent accumulated over the last
+  `MONITOR_LOSS_WINDOW_PROBES` probes (~100 packets at the defaults,
+  refreshed every fast cycle). A percentage is only as fine as its
+  denominator; accumulating across probes makes one dropped packet move
+  the figure one point and lets routine noise decay out instead of
+  swinging the instrument. It resets to `null` on link-down, a network
+  change, or an unparseable probe — never silently carries readings
+  across a discontinuity.
 - **`network.group_id` is the `--history` group key** (`mac:…`, `gw:…` or
   `ssid:…` — the same string `--history` reports in `networks[].id`),
   derived by `lib/netid.sh` from the same inputs as `network.id`, with

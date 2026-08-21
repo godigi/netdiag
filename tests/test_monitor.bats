@@ -37,6 +37,7 @@ reset_state() {
   # monitor side
   MON_LINK_UP=1 MON_IFACE_TYPE=wifi MON_GATEWAY=192.168.1.1
   MON_GW_LOSS=0 MON_GW_RTT=3 MON_INET_LOSS="" MON_INET_RTT=""
+  MON_GW_HIST="" MON_INET_HIST=""
   MON_WIFI_RSSI="" MON_WIFI_SNR=""
   MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
   MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
@@ -298,12 +299,14 @@ scanner_rules() {
 # The regression behind the flashing red card: _mon_probe_internet sent
 # five packets, so one dropped packet read as exactly LOSS_CRIT_PCT and L1
 # — which never waits for confirmation — fired on routine resolver noise,
-# then cleared on the next cycle. The property to hold forever: a single
-# dropped packet must not be able to reach the critical floor of either
-# loss rule, and the warn band must stay reachable so its confirmation
-# window means something. Both follow from the probe's packet count, so
-# that count comes from thresholds.sh like every other number a rule
-# judges.
+# then cleared on the next cycle. Two fixes, both guarded here: the probe
+# sends MONITOR_INET_PING_COUNT packets from thresholds.sh, and the
+# reported figure accumulates over a rolling window of
+# MONITOR_LOSS_WINDOW_PROBES probes (_mon_loss_fold), so the percentage's
+# denominator is ~100 packets. The property to hold forever: one dropped
+# packet cannot reach any loss threshold, and the smallest nonzero reading
+# is a single point of the window.
+
 @test "the internet probe's packet count comes from thresholds.sh" {
   run grep -cE 'ping -q -c "\$MONITOR_INET_PING_COUNT"' "$REPO/lib/monitor.sh"
   [ "$output" -ge 1 ]
@@ -315,14 +318,63 @@ scanner_rules() {
   [ "$output" -eq 0 ]
 }
 
+@test "the loss window size comes from thresholds.sh" {
+  run grep -cE '_mon_loss_summarize|_mon_loss_fold' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 2 ]
+  run grep -cE 'MONITOR_LOSS_WINDOW_PROBES=' "$REPO/lib/thresholds.sh"
+  [ "$output" -eq 1 ]
+}
+
 @test "one dropped packet cannot reach critical loss on the monitor" {
-  local quantum=$((100 / MONITOR_INET_PING_COUNT))
+  local quantum=$((100 / (MONITOR_LOSS_WINDOW_PROBES * MONITOR_INET_PING_COUNT)))
+  [ "$quantum" -lt "$LOSS_WARN_PCT" ]
   [ "$quantum" -lt "$LOSS_CRIT_PCT" ]
   [ "$quantum" -lt "$THRESH_GW_LOSS_CRIT_PCT" ]
 }
 
-@test "the warn band stays reachable at the monitor's quantum" {
-  [ $((2 * 100 / MONITOR_INET_PING_COUNT)) -ge "$LOSS_WARN_PCT" ]
+@test "the window trims to its cap and sums counts, not ratios" {
+  local summary
+  # Seven probes' worth: only the newest five may survive. Deliberately
+  # unequal counts so a ratio-averaging implementation fails this while an
+  # integer accumulation passes.
+  summary="$(_mon_loss_summarize "10:10 20:0 20:0 20:0 20:5 20:0 20:1")"
+  [ "${summary%%|*}" = "20:0 20:0 20:5 20:0 20:1" ]
+  local totals="${summary#*|}"
+  [ "${totals%%|*}" = "100" ]
+  [ "${totals##*|}" = "6" ]
+}
+
+@test "a full clean window reads zero, one drop reads one point" {
+  local hist="" summary i
+  for i in 1 2 3 4; do
+    summary="$(_mon_loss_fold "$hist" "$(ping_summary 20 20)" "$MONITOR_INET_PING_COUNT")"
+    hist="${summary%%|*}"
+  done
+  summary="$(_mon_loss_fold "$hist" "$(ping_summary 20 20)" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary##*|}" = "0" ]
+  summary="$(_mon_loss_fold "${summary%%|*}" "$(ping_summary 20 19)" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary##*|}" = "1" ]
+}
+
+@test "an unparseable probe clears the window instead of freezing it" {
+  local summary
+  summary="$(_mon_loss_fold "20:0 20:0 20:1" "" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary%%|*}" = "" ]
+  [ "${summary#*|}" = "" ]
+}
+
+@test "a truncated probe (fewer packets than asked) clears the window" {
+  # ping killed mid-run by with_timeout reports what it managed; counting
+  # that as a normal sample would dilute real loss with missing packets.
+  local summary
+  summary="$(_mon_loss_fold "20:0 20:0" "$(ping_summary 7 7)" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary%%|*}" = "" ]
+}
+
+# A macOS `ping -q` summary with the given transmitted/received counts —
+# the only part of ping's output the fold reads.
+ping_summary() {
+  printf '%s packets transmitted, %s packets received, 0.0%% packet loss\n' "$1" "$2"
 }
 
 @test "a dead link is degraded and reports nothing it did not measure" {
