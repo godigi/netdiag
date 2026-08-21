@@ -109,7 +109,7 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 # itself. Unset it before anything downstream can read it.
 unset NETDIAG_RUN_ID
 
-NETDIAG_VERSION="0.9.1"
+NETDIAG_VERSION="0.10.0"
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping

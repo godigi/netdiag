@@ -6,6 +6,8 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-20
+
 ### Added
 
 - **`--open=<tab>` launches the app with a dashboard tab already
@@ -1400,6 +1402,7 @@ repo structure, MIT licence, and GitHub Actions CI for `shellcheck`
      0.1.0, 0.4.1, 0.5.0 and 0.9.1 ended up documented but unreachable. -->
 
 [Unreleased]: https://github.com/godigi/netdiag/compare/v0.9.1...HEAD
+[0.10.0]: https://github.com/godigi/netdiag/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/godigi/netdiag/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/godigi/netdiag/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/godigi/netdiag/compare/v0.7.0...v0.8.0
