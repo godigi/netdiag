@@ -43,9 +43,16 @@ struct HomeView: View {
                 // failed scan needs to surface whether or not the screen
                 // underneath it is empty.
                 if let error = coordinator.lastRunError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 8) {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button("Try Again") {
+                            coordinator.runScan(depth: .quick, reason: "retry after failure")
+                        }
+                        .controlSize(.small)
+                    }
                 }
 
                 switch coordinator.reportSource {
