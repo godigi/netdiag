@@ -213,6 +213,18 @@ _take_monitor=""
 # Same reasoning for `--show <id>`: its own state, so a dangling --log
 # never swallows the run id and vice versa.
 _take_show=0
+# Each --*-only flag below overwrites FOCUS with a bare assignment —
+# stacking two used to silently keep only the last one and run it with no
+# warning. This guard rejects the second one instead, matching the
+# --mtu-only/--quick and --speed-only/--no-speed conflicts already handled
+# further down in the flag-conflict validation block.
+_set_focus() {
+  if [ -n "$FOCUS" ]; then
+    printf 'netdiag: --%s-only and --%s-only are mutually exclusive (see --help)\n' "$FOCUS" "$1" >&2
+    exit 3
+  fi
+  FOCUS="$1"
+}
 while [ "$#" -gt 0 ]; do
   if [ "$_take_value" -eq 1 ]; then
     LOG_OVERRIDE="$1"; _take_value=0; shift; continue
@@ -241,15 +253,15 @@ while [ "$#" -gt 0 ]; do
     --quiet)          QUIET=1 ;;
     --expert)         EXPERT=1 ;;
     --redact)         REDACT=1 ;;
-    --mtu-only)       FOCUS="mtu" ;;
-    --wifi-only)      FOCUS="wifi" ;;
+    --mtu-only)       _set_focus mtu ;;
+    --wifi-only)      _set_focus wifi ;;
     # --speed-only implies an explicit --speed: the whole point is "answer
     # this one question now", and leaving SPEED_EXPLICIT unset would let a
     # stray --quick silently turn the run into a no-op that still exited 0.
-    --speed-only)     FOCUS="speed"; SPEED=1; SPEED_EXPLICIT=1 ;;
-    --dns-only)       FOCUS="dns" ;;
-    --bufferbloat-only) FOCUS="bufferbloat" ;;
-    --ping-only)      FOCUS="ping" ;;
+    --speed-only)     _set_focus speed; SPEED=1; SPEED_EXPLICIT=1 ;;
+    --dns-only)       _set_focus dns ;;
+    --bufferbloat-only) _set_focus bufferbloat ;;
+    --ping-only)      _set_focus ping ;;
     --progress)       PROGRESS=1 ;;
     --log)            _take_value=1 ;;
     --log=*)          LOG_OVERRIDE="${1#--log=}" ;;

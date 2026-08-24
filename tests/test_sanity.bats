@@ -63,6 +63,12 @@ setup() {
   [[ "$output" == *"conflict"* ]]
 }
 
+@test "stacking two --*-only flags is rejected as mutually exclusive" {
+  run "$NETDIAG" --wifi-only --dns-only
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"mutually exclusive"* ]]
+}
+
 # ── CLI surface matches the documented contract ──────────────────────────
 
 @test "--help documents every flag in the CLAUDE.md CLI surface" {
