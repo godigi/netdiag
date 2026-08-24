@@ -14,7 +14,7 @@ import CoreWLAN
 /// 4. Instrument grid — fixed 4x2: internet ping, internet loss, download,
 ///    upload / router, Wi-Fi, VPN, location. Cells never disappear; an
 ///    unmeasured value renders as "—".
-/// 5. Change timeline — "LAST 24 HOURS" header, a "History" button into
+/// 5. Change timeline — "LAST 24 HOURS" header, an "Activity" button into
 ///    the dashboard's Activity view, and the most recent events, sourced
 ///    from `coordinator.eventLog`.
 /// 6. Footer: Open Dashboard, Pause/Resume Monitoring, Settings, Quit,
