@@ -26,7 +26,12 @@ watch_run() {
     printf -- '----- iter %d  %s -----\n' "$WATCH_ITER" "$(date '+%Y-%m-%d %H:%M:%S')"
     # --watch-child suppresses the trailing "Report saved to" line so each
     # iteration is just header + Diagnosis.
-    "$SCRIPT_PATH" --quick --no-gping --no-bufferbloat --quiet --watch-child
+    if ! with_timeout 60 "$SCRIPT_PATH" --quick --no-gping --no-bufferbloat --quiet --watch-child; then
+      # A child can outlive a network command if a future module forgets its
+      # own bound. Keep --watch from hanging forever and make the skipped
+      # iteration visible before trying again.
+      printf 'netdiag --watch: iteration timed out or failed; retrying.\n'
+    fi
     sleep "$WATCH_INTERVAL_S"
   done
 }

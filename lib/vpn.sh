@@ -4,13 +4,15 @@
 #
 # Reads:  INTERFACE
 # Writes: VPN_ACTIVE, VPN_TYPE, VPN_NAME
-# Entry:  vpn_run
+# Entry:  vpn_detect, vpn_run
 
-vpn_run() {
-  hdr "VPN"
+vpn_detect() {
+  VPN_ACTIVE=0
+  VPN_TYPE=""
+  VPN_NAME=""
   # (a) Managed VPNs surface as Connected entries in scutil --nc list.
   local scutil_nc
-  scutil_nc="$(scutil --nc list 2>/dev/null || true)"
+  scutil_nc="$(with_timeout 5 scutil --nc list 2>/dev/null || true)"
   if printf '%s' "$scutil_nc" | grep -q '(Connected)'; then
     VPN_ACTIVE=1
     VPN_TYPE="managed"
@@ -20,7 +22,7 @@ vpn_run() {
   if [ "$VPN_ACTIVE" -eq 0 ] && command -v tailscale >/dev/null 2>&1 \
      && command -v jq >/dev/null 2>&1; then
     local ts_json
-    ts_json="$(tailscale status --json 2>/dev/null || true)"
+    ts_json="$(with_timeout 5 tailscale status --json 2>/dev/null || true)"
     if printf '%s' "$ts_json" | jq -e '.BackendState=="Running"' >/dev/null 2>&1; then
       VPN_ACTIVE=1
       VPN_TYPE="tailscale"
@@ -36,6 +38,11 @@ vpn_run() {
     VPN_NAME="$INTERFACE"
   fi
 
+}
+
+vpn_run() {
+  hdr "VPN"
+  vpn_detect
   if [ "$VPN_ACTIVE" -eq 1 ]; then
     bad "VPN active: $VPN_NAME ($VPN_TYPE)"
     info "Heads-up: the 'gateway' below is the VPN endpoint, not your LAN router."

@@ -222,11 +222,13 @@ private enum VerifyHarness {
     /// Render a SwiftUI view to an NSImage offscreen via NSHostingView +
     /// `cacheDisplay`. Captures the layer without a window for static
     /// content; called after launch so NSApplication is already up.
-    private static func renderImage(_ view: some View, size: NSSize) -> NSImage {
+    private static func renderImage(_ view: some View, size: NSSize) -> NSImage? {
         let hosting = NSHostingView(rootView: view)
         hosting.frame = NSRect(origin: .zero, size: size)
         hosting.layoutSubtreeIfNeeded()
-        let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)!
+        guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            return nil
+        }
         hosting.cacheDisplay(in: hosting.bounds, to: rep)
         let image = NSImage(size: size)
         image.addRepresentation(rep)
@@ -250,8 +252,12 @@ private enum VerifyHarness {
             ("testing",           .testing,                                  "Running a full check…"),
         ]
         for (name, stage, body) in cases {
-            let image = renderImage(StageCardSnapshot(stage: stage, bodyText: body),
-                                    size: NSSize(width: 340, height: 80))
+            guard let image = renderImage(StageCardSnapshot(stage: stage, bodyText: body),
+                                          size: NSSize(width: 340, height: 80)) else {
+                print("  \u{2718} \(name) — could not allocate bitmap representation")
+                failures.append("render-\(name)")
+                continue
+            }
             let url = URL(fileURLWithPath: "\(dir)/stage-\(name).png")
             do {
                 if let tiff = image.tiffRepresentation,

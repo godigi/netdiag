@@ -35,21 +35,27 @@ public_run() {
 
   # Captive portal sniff
   captive="$(curl -s -m 3 -o /dev/null -w '%{http_code} %{redirect_url}' http://captive.apple.com/hotspot-detect.html 2>/dev/null)"
-  if printf '%s' "$captive" | grep -q '^200'; then
-    ok "No captive portal."
-  elif printf '%s' "$captive" | grep -qE '^3[0-9][0-9]'; then
-    CAPTIVE_PORTAL=1
-    warn "Captive portal detected (HTTP $captive) — log in via browser."
-  fi
+  # One classifier shared with the live monitor — see lib/common.sh — so a
+  # scan and a between-scans sample cannot disagree about what the answer
+  # means. A probe that never answered classifies "unknown" and stays
+  # silent here: silence beats a guess.
+  case "$(captive_portal_classify "${captive%% *}")" in
+    ok)     ok "No captive portal." ;;
+    portal)
+      CAPTIVE_PORTAL=1
+      warn "Captive portal detected (HTTP $captive) — log in via browser."
+      ;;
+  esac
 
   # TARGET-specific ping for "this site is slow" investigations.
   if [ -n "$TARGET" ]; then
     local tp_out
-    tp_out="$(ping -c 5 -t 3 -i 0.2 "$TARGET" 2>/dev/null || true)"
-    TARGET_PING_LOSS="$(printf '%s\n' "$tp_out" \
-      | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
-    TARGET_PING_RTT="$(printf '%s\n' "$tp_out" \
-      | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+    # As elsewhere, macOS ping's -t is a deadline for the entire probe. Use
+    # the shared outer timeout so the target probe sends all five packets.
+    tp_out="$(with_timeout 8 ping -c 5 -i 0.2 "$TARGET" 2>/dev/null || true)"
+    local tp_parsed
+    tp_parsed="$(ping_parse_summary "$tp_out")"
+    IFS='|' read -r TARGET_PING_LOSS TARGET_PING_RTT _ <<<"$tp_parsed"
     if [ -n "$TARGET_PING_RTT" ]; then
       ok "ping $TARGET: ${TARGET_PING_LOSS:-?}% loss, ${TARGET_PING_RTT} ms avg"
     else

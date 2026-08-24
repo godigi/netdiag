@@ -60,7 +60,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 
 ## `run_mode`
 
-Which shape of run produced this record. A closed set:
+Which shape of run produced this record. The CLI currently emits:
 
 | value | flags | counts as a check? |
 |---|---|---|
@@ -69,6 +69,9 @@ Which shape of run produced this record. A closed set:
 | `speed-only` | `--speed-only` | no |
 | `mtu-only` | `--mtu-only` | no |
 | `wifi-only` | `--wifi-only` | no |
+| `dns-only` | `--dns-only` | no |
+| `bufferbloat-only` | `--bufferbloat-only` | no |
+| `ping-only` | `--ping-only` | no |
 
 Every record looked alike before v0.9.0, which is why "1,986 checks" on a
 network overstated what had actually been measured: a `--quick` run skips
@@ -81,19 +84,18 @@ and nothing else. `helpers/history.py` counts its metrics into
 `severity_counts`. A speed test is a measurement, not an opinion about the
 network's health.
 
-The suffix is the rule rather than a list of the three that exist today,
-because every focused mode comes from the same `FOCUS` mechanism and every
-`FOCUS` flag is named `--<section>-only`. A list would go stale the day a
-`--dns-only` landed, and it would go stale silently, by counting the new
-mode as a full check.
+The suffix is the rule rather than a hand-maintained list, because every
+focused mode comes from the same `FOCUS` mechanism and every `FOCUS` flag is
+named `--<section>-only`. New focused modes therefore remain partial without
+requiring a second history predicate.
 
 **`null` on every record written before v0.9.0**, and absence decodes as
 "unknown, treat as a check" — those runs were full or quick ones, and
 reclassifying them would rewrite two months of history.
 
-`--speed-only` is the one focused mode that *is* recorded. `--mtu-only` and
-`--wifi-only` still write no history record, which is the behaviour their
-existing records were written under.
+`--speed-only` is the one focused mode that *is* recorded. The other focused
+modes write no history record, because their measurements are not comparable
+to the full-check population.
 
 ## `run_id`
 
@@ -106,13 +108,16 @@ after its next poll. `lib/output.sh` computes it by importing
 reimplementing them, from the exact record about to be appended, so the
 value here and the one `--history` derives later can never disagree.
 
-`null` in four cases. Three are "no record was appended this run":
+`null` in these cases. The first group is "no record was appended this run":
 
 | case | why |
 |---|---|
 | `--no-baseline` | disables the append outright |
 | `--mtu-only` | a focused run isn't comparable to a full one; unrecorded since before `run_id` existed |
 | `--wifi-only` | same as `--mtu-only` |
+| `--dns-only` | same as `--mtu-only` |
+| `--bufferbloat-only` | same as `--mtu-only` |
+| `--ping-only` | same as `--mtu-only` |
 
 `--speed-only` is **not** in that list: it appends per v0.9.0, and gets a
 real `run_id` like a `full` or `quick` run.
@@ -797,7 +802,8 @@ every optional dependency below is missing.
   "schemas": {"run": 1, "monitor": 2, "history": 1, "show": 1,
               "rules_catalog": 1, "signal_scale": 1, "progress": 1},
   "features": ["capabilities", "version", "progress", "monitor", "history",
-               "show", "redact", "speed-only", "watcher", "rules-catalog",
+               "show", "redact", "speed-only", "dns-only",
+               "bufferbloat-only", "ping-only", "watcher", "rules-catalog",
                "signal-scale"],
   "deps": {
     "bash": "5.2.37",

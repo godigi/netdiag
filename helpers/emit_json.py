@@ -309,7 +309,10 @@ def main() -> None:
     target = _env("TARGET")
 
     data: dict = {
-        "version": _env("VERSION") or "0.5.0",
+        # The CLI always supplies VERSION. A direct helper invocation should
+        # expose missing metadata as null rather than inventing an old
+        # version that looks like a real record.
+        "version": _env("VERSION"),
         "timestamp": _env("TIMESTAMP"),
         # How much of the battery this run actually attempted. Null only
         # when this helper is invoked by hand — bin/netdiag always sets it.
@@ -324,8 +327,9 @@ def main() -> None:
         # the one --history derives later can never disagree.
         #
         # null whenever lib/output.sh did not append a record this run —
-        # --no-baseline, --mtu-only, --wifi-only (--speed-only does append,
-        # per v0.9.0) — and also, unconditionally, under --redact: see
+        # --no-baseline and focused modes other than --speed-only
+        # (--speed-only does append, per v0.9.0) — and also, unconditionally,
+        # under --redact: see
         # redact() below for why that second case isn't left to the
         # ordinary secret-scrub.
         #

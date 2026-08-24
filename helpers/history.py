@@ -148,9 +148,8 @@ SEVERITY_ORDER = {"info": 1, "warn": 2, "critical": 3}
 
 # The suffix that marks a run as partial. Every focused mode comes from the
 # same FOCUS mechanism in bin/netdiag, and every FOCUS flag is named
-# --<section>-only, so the suffix is the rule — a list of the three that
-# exist today would go stale the day a --dns-only lands, and it would go
-# stale silently, by counting the new mode as a full check.
+# --<section>-only, so the suffix is the rule — a hand-maintained list would
+# go stale silently the next time a focused mode is added.
 PARTIAL_MODE_SUFFIX = "-only"
 
 

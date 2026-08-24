@@ -79,6 +79,11 @@
 # reports the pid of a process that no longer exists. `kill -0` is a
 # builtin, costs nothing, and flips the moment the parent is reaped.
 
+# The WiFi scrapes are shared with the scanner; one parser per upstream
+# format means a macOS release that moves a label is fixed once.
+# shellcheck source=lib/wifi_common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/wifi_common.sh"
+
 # ── Sample state ─────────────────────────────────────────────────────────
 # All MON_* — a distinct namespace from the scanner's globals so that
 # sourcing both (as bin/netdiag does) can't have one silently read the
@@ -116,6 +121,8 @@ MON_INET_LOSS_STREAK=0
 # link rather than of one burst; see _mon_loss_summarize.
 MON_GW_HIST=""
 MON_INET_HIST=""
+MON_INET_HIST_ALT=""
+MON_INET_LOSS_ALT=""
 MON_WIFI_RSSI=""
 MON_WIFI_NOISE=""
 MON_WIFI_SNR=""
@@ -140,6 +147,7 @@ MON_DEGRADED=0
 MON_REFRESHED=""
 MON_STOP=0
 MON_PAUSED=0
+MON_REFRESH_REQUESTED=0
 MON_HW_PORTS=""
 # launchd's pid. Named rather than written as a bare 1 so the orphan check
 # below reads as the sentinel it is, and so tests/test_thresholds.bats's
@@ -187,16 +195,17 @@ _mon_probe_link() {
   MON_IFACE_TYPE="wired"
   MON_SSID=""; MON_BSSID=""
   if [ -n "$MON_INTERFACE" ]; then
-    local hw_port
-    hw_port="$(printf '%s\n' "$MON_HW_PORTS" | awk -v d="$MON_INTERFACE" '
-      /^Hardware Port:/{port=substr($0, index($0,$3))}
-      /^Device:/{if($2==d){print port; exit}}')"
-    if printf '%s' "$hw_port" | grep -qi 'Wi-Fi\|AirPort'; then
+    local hw_port ssid bssid
+    hw_port="$(wifi_hw_port_for_device "$MON_INTERFACE" "$MON_HW_PORTS")"
+    if wifi_port_is_wireless "$hw_port"; then
       MON_IFACE_TYPE="wifi"
       local summary
       summary="$(ipconfig getsummary "$MON_INTERFACE" 2>/dev/null || true)"
-      MON_SSID="$(printf '%s\n' "$summary"  | awk -F': ' '/^[[:space:]]*SSID[[:space:]]*:/{print $2; exit}')"
-      MON_BSSID="$(printf '%s\n' "$summary" | awk -F': ' '/^[[:space:]]*BSSID[[:space:]]*:/{print $2; exit}')"
+      {
+        IFS=$'\t' read -r ssid bssid _
+      } <<<"$(wifi_parse_ipconfig_summary "$summary")"
+      MON_SSID="$ssid"
+      MON_BSSID="$bssid"
     fi
   fi
 
@@ -233,20 +242,14 @@ _mon_identity() {
 }
 
 _mon_probe_vpn() {
-  MON_VPN_ACTIVE=0; MON_VPN_TYPE=""; MON_VPN_NAME=""
-  # A utun/wg interface carrying the default route is free to detect —
-  # _mon_probe_link already read it.
-  if printf '%s' "$MON_INTERFACE" | grep -qE '^(utun|wg)'; then
-    MON_VPN_ACTIVE=1; MON_VPN_TYPE="utun-route"; MON_VPN_NAME="$MON_INTERFACE"
-    return 0
-  fi
-  local scutil_nc
-  scutil_nc="$(scutil --nc list 2>/dev/null || true)"
-  if printf '%s' "$scutil_nc" | grep -q '(Connected)'; then
-    MON_VPN_ACTIVE=1
-    MON_VPN_TYPE="managed"
-    MON_VPN_NAME="$(printf '%s' "$scutil_nc" | awk -F'"' '/\(Connected\)/{print $2; exit}')"
-  fi
+  # Reuse the scan's detector, including Tailscale. Dynamic locals keep the
+  # shared function from mutating scanner globals in the monitor process.
+  # shellcheck disable=SC2034
+  local INTERFACE="$MON_INTERFACE" VPN_ACTIVE=0 VPN_TYPE="" VPN_NAME=""
+  vpn_detect
+  MON_VPN_ACTIVE="$VPN_ACTIVE"
+  MON_VPN_TYPE="$VPN_TYPE"
+  MON_VPN_NAME="$VPN_NAME"
 }
 
 # ── Rolling loss window ──────────────────────────────────────────────────
@@ -292,6 +295,7 @@ _mon_loss_pct() {
 _mon_loss_reset() {
   MON_GW_HIST=""
   MON_INET_HIST=""
+  MON_INET_HIST_ALT=""
 }
 
 # Parse ping's -q summary into raw counts, fold it into a leg's history,
@@ -344,7 +348,7 @@ _mon_probe_gateway() {
   summary="$(_mon_loss_fold "$MON_GW_HIST" "$out" "$MONITOR_PING_COUNT")"
   MON_GW_HIST="${summary%%|*}"
   MON_GW_LOSS="${summary#*|}"
-  MON_GW_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  MON_GW_RTT="$(ping_parse_summary "$out" | cut -d'|' -f2)"
   is_numeric "$MON_GW_RTT"  || MON_GW_RTT=""
 }
 
@@ -387,9 +391,11 @@ _mon_probe_tcp() {
 }
 
 _mon_probe_internet() {
-  MON_INET_LOSS=""; MON_INET_RTT=""
+  MON_INET_LOSS=""; MON_INET_LOSS_ALT=""; MON_INET_RTT=""
   [ "$MON_LINK_UP" -eq 1 ] || return 0
-  local out summary
+  local out out_alt summary summary_alt tmp_dir target target_alt
+  target="${INET_TARGET:-1.1.1.1}"
+  target_alt="${INET_TARGET_ALT:-8.8.8.8}"
   # MONITOR_INET_PING_COUNT, not a token burst: at five packets one dropped
   # packet reads as exactly LOSS_CRIT_PCT, so a single routine drop at a
   # rate-limiting resolver fired L1 as an immediate critical — the red card
@@ -397,14 +403,30 @@ _mon_probe_internet() {
   # scanner's own count; see lib/thresholds.sh. The reported figure is the
   # rolling window over the last MONITOR_LOSS_WINDOW_PROBES probes
   # (_mon_loss_fold), so the percentage's denominator is ~100 packets and
-  # one drop moves it one point, not twenty. Interval shared with
-  # LOSS_PROBE_INTERVAL. The outer bound scales with the longer run: ~4 s
-  # of probing under an 8 s deadline.
-  out="$(with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" 1.1.1.1 2>/dev/null || true)"
+  # one drop moves it one point, not twenty. The two independent targets run
+  # concurrently, matching internet_ping.sh's scanner path; L1 is allowed
+  # only when both windows agree.
+  netdiag_mktemp_dir monitor-inet || return 0
+  tmp_dir="$NETDIAG_TMP_DIR"
+  with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" \
+    "$target" >"$tmp_dir/primary" 2>/dev/null &
+  local pid_a=$!
+  with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" \
+    "$target_alt" >"$tmp_dir/alternate" 2>/dev/null &
+  local pid_b=$!
+  wait "$pid_a" 2>/dev/null || true
+  wait "$pid_b" 2>/dev/null || true
+  out="$(cat "$tmp_dir/primary" 2>/dev/null || true)"
+  out_alt="$(cat "$tmp_dir/alternate" 2>/dev/null || true)"
+  rm -rf "$tmp_dir"
+  netdiag_tmp_forget "$tmp_dir"
   summary="$(_mon_loss_fold "$MON_INET_HIST" "$out" "$MONITOR_INET_PING_COUNT")"
   MON_INET_HIST="${summary%%|*}"
   MON_INET_LOSS="${summary#*|}"
-  MON_INET_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  summary_alt="$(_mon_loss_fold "$MON_INET_HIST_ALT" "$out_alt" "$MONITOR_INET_PING_COUNT")"
+  MON_INET_HIST_ALT="${summary_alt%%|*}"
+  MON_INET_LOSS_ALT="${summary_alt#*|}"
+  MON_INET_RTT="$(ping_parse_summary "$out" | cut -d'|' -f2)"
   is_numeric "$MON_INET_RTT"  || MON_INET_RTT=""
 }
 
@@ -419,9 +441,10 @@ _mon_probe_wifi_signal() {
   local out rssi noise
   out="$(with_timeout 4 sudo -n wdutil info 2>/dev/null || true)"
   [ -n "$out" ] || return 0
-  rssi="$(printf  '%s\n' "$out" | awk -F': ' '/^[[:space:]]*RSSI/{gsub(/ dBm/,"",$2); print $2; exit}')"
-  noise="$(printf '%s\n' "$out" | awk -F': ' '/^[[:space:]]*Noise/{gsub(/ dBm/,"",$2); print $2; exit}')"
-  MON_WIFI_CHAN="$(printf '%s\n' "$out" | awk -F': ' '/^[[:space:]]*Channel/{print $2; exit}')"
+  {
+    # Fields 1-3 only; the parser's SSID/BSSID tail is scanner policy.
+    IFS=$'\t' read -r rssi noise MON_WIFI_CHAN _
+  } <<<"$(wifi_parse_wdutil "$out")"
   is_numeric "$rssi"  || rssi=""
   is_numeric "$noise" || noise=""
   MON_WIFI_RSSI="$rssi"
@@ -452,10 +475,11 @@ _mon_probe_public() {
   local captive
   captive="$(curl -s -m 3 -o /dev/null -w '%{http_code}' \
     http://captive.apple.com/hotspot-detect.html 2>/dev/null || true)"
-  case "$captive" in
-    200)      MON_CAPTIVE=0 ;;
-    3[0-9][0-9]) MON_CAPTIVE=1 ;;
-    *)        MON_CAPTIVE="" ;;
+  # Same classifier lib/public.sh uses — see lib/common.sh.
+  case "$(captive_portal_classify "$captive")" in
+    ok)     MON_CAPTIVE=0 ;;
+    portal) MON_CAPTIVE=1 ;;
+    *)      MON_CAPTIVE="" ;;
   esac
 }
 
@@ -563,7 +587,8 @@ _mon_rules() {
   # ── L1 / L2 — internet-side packet loss ────────────────────────────────
   local _mon_icmp_filtered=0
   if [ "${MON_PUBLIC_OK:-0}" = "1" ] && [ "${MON_TCP_OK:-0}" = "1" ] \
-     && loss_at_least "$MON_INET_LOSS" "$THRESH_ICMP_TOTAL_LOSS_PCT"; then
+     && loss_at_least "$MON_INET_LOSS" "$THRESH_ICMP_TOTAL_LOSS_PCT" \
+     && loss_at_least "$MON_INET_LOSS_ALT" "$THRESH_ICMP_TOTAL_LOSS_PCT"; then
     _mon_icmp_filtered=1
     _mon_add_rule info ICMP-1
   fi
@@ -573,10 +598,12 @@ _mon_rules() {
   # the streak — a cycle where the condition could not even be evaluated is
   # not a cycle where it held.
   if [ "$_mon_icmp_filtered" -eq 0 ] && loss_below "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
-    if loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT"; then
+    if loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT" \
+       && loss_at_least "$MON_INET_LOSS_ALT" "$LOSS_CRIT_PCT"; then
       MON_INET_LOSS_STREAK=0
       _mon_add_rule critical L1
-    elif loss_at_least "$MON_INET_LOSS" "$LOSS_WARN_PCT"; then
+    elif loss_at_least "$MON_INET_LOSS" "$LOSS_WARN_PCT" \
+         || loss_at_least "$MON_INET_LOSS_ALT" "$LOSS_WARN_PCT"; then
       MON_INET_LOSS_STREAK=$((MON_INET_LOSS_STREAK + 1))
       if [ "$MON_INET_LOSS_STREAK" -ge "$THRESH_MON_LOSS_CONFIRM_CYCLES" ]; then
         _mon_add_rule warn L2
@@ -698,6 +725,10 @@ _mon_emit() {
 # so a GUI sending SIGTERM would wait up to a full cadence for the process
 # to die; backgrounding it and waiting makes the trap fire immediately.
 _mon_sleep() {
+  if [ "$MON_REFRESH_REQUESTED" -eq 1 ]; then
+    MON_REFRESH_REQUESTED=0
+    return 0
+  fi
   sleep "$1" &
   wait $! 2>/dev/null || true
 }
@@ -710,6 +741,8 @@ _mon_on_signal() { MON_STOP=1; }
 _mon_on_pause()  { MON_PAUSED=1; }
 # shellcheck disable=SC2317,SC2329
 _mon_on_resume() { MON_PAUSED=0; }
+# shellcheck disable=SC2317,SC2329
+_mon_on_refresh() { MON_REFRESH_REQUESTED=1; }
 
 monitor_run() {
   local now next_fast=0 next_medium=0 next_slow=0 cadence
@@ -720,9 +753,23 @@ monitor_run() {
   trap _mon_on_signal INT TERM
   trap _mon_on_pause  USR1
   trap _mon_on_resume USR2
+  # The GUI uses SIGALRM as a cheap "sample now" nudge after a network
+  # transition. Bash's default action is to terminate the monitor, so this
+  # must stay an explicit, harmless flag rather than an untrapped signal.
+  trap _mon_on_refresh ALRM
 
   while :; do
     [ "$MON_STOP" -eq 0 ] || break
+
+    # A refresh request interrupts the remainder of the cadence. The signal
+    # is intentionally handled between cycles: a probe already in flight
+    # must finish and be emitted as a coherent sample before the next one.
+    if [ "$MON_REFRESH_REQUESTED" -eq 1 ]; then
+      MON_REFRESH_REQUESTED=0
+      next_fast=0
+      next_medium=0
+      next_slow=0
+    fi
     # Checked even while paused — a paused monitor whose consumer died is
     # exactly as orphaned as a running one, and rather harder to notice.
     # A parent of MON_INIT_PID means we were started by launchd, or were

@@ -87,7 +87,7 @@ say() {
       printf '%s\n' "$*"
     fi
   fi
-  printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG"
+  printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG" 2>/dev/null || true
 }
 # tell() prints regardless of EXPERT/QUIET — used for the "netdiag" header
 # and other always-visible lines that should appear even in compact-default
@@ -100,7 +100,7 @@ tell() {
       printf '%s\n' "$*"
     fi
   fi
-  printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG"
+  printf '%s\n' "$*" | sed $'s/\033\\[[0-9;]*m//g' >> "$LOG" 2>/dev/null || true
 }
 hdr() {
   # The "punchline" section names flip the QUIET / default gate so the
@@ -133,11 +133,6 @@ _progress_active() {
   [ "$JSON_MODE" -eq 0 ] || return 1
   [ "${WATCH_CHILD:-0}" -eq 0 ] || return 1
   return 0
-}
-progress() {
-  _progress_active || return 0
-  # \r returns to column 1; \e[K clears to end of line.
-  printf '\r\e[K%s⟳ %s…%s' "${C_DIM}" "$*" "${C_RESET}" >&2
 }
 progress_clear() {
   _progress_active || return 0
@@ -249,6 +244,9 @@ progress_plan_phases() {
     mtu-only)   printf '%s\n' iface netid public mtu ;;
     wifi-only)  printf '%s\n' iface wifi netid wifi_scan wifi_disconnect ;;
     speed-only) printf '%s\n' iface gateway arp wifi netid public speedtest ;;
+    dns-only)   printf '%s\n' iface dhcp netid dns ;;
+    ping-only)  printf '%s\n' iface gateway arp wifi netid internet_ping ;;
+    bufferbloat-only) printf '%s\n' iface gateway arp wifi netid public bufferbloat ;;
   esac
 }
 
@@ -368,14 +366,14 @@ log_pipe() {
     if [ "${REDACT:-0}" -eq 1 ]; then
       local line
       while IFS= read -r line; do
-        printf '%s\n' "$line" >> "$LOG"
+        printf '%s\n' "$line" >> "$LOG" 2>/dev/null || true
         printf '%s\n' "$(_redact_line "$line")"
       done
     else
-      tee -a "$LOG"
+      tee -a "$LOG" 2>/dev/null || cat
     fi
   else
-    cat >> "$LOG"
+    cat >> "$LOG" 2>/dev/null || cat
   fi
 }
 
@@ -412,6 +410,19 @@ add_diag() {
   # silently truncated the diagnosis list. Recording a diagnosis always
   # succeeds; say so explicitly.
   return 0
+}
+
+# ── Captive-portal classification ────────────────────────────────────────
+# One classifier for the same probe run in two places (lib/public.sh in a
+# scan, lib/monitor.sh between scans) so they cannot disagree about what
+# the answer means. $1 is curl's %{http_code}; prints ok | portal | unknown.
+# A failed probe is unknown, never "no portal" — silence beats a guess.
+captive_portal_classify() {
+  case "${1:-}" in
+    2[0-9][0-9])        printf 'ok' ;;
+    3[0-9][0-9])        printf 'portal' ;;
+    *)                  printf 'unknown' ;;
+  esac
 }
 
 # ── Loss-percentage predicates ───────────────────────────────────────────
@@ -513,6 +524,21 @@ is_numeric() {
   [[ "${1:-}" =~ ^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)$ ]]
 }
 
+# Parse the common macOS ping summary once for every caller. The output is
+# loss percentage, average RTT, and standard deviation separated by pipes;
+# each field is intentionally empty when that part of the summary is absent.
+# An absent summary means "not measured", not 100% loss.
+ping_parse_summary() {
+  local out="${1:-}" loss avg jitter
+  loss="$(printf '%s\n' "$out" \
+    | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
+  avg="$(printf '%s\n' "$out" \
+    | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  jitter="$(printf '%s\n' "$out" \
+    | awk -F'[ /]' '/round-trip|rtt/{print $(NF-1); exit}')"
+  printf '%s|%s|%s' "$loss" "$avg" "$jitter"
+}
+
 # ── Bufferbloat grading ──────────────────────────────────────────────────
 # Waveform/DSLReports thresholds, held in lib/thresholds.sh alongside every
 # other cutoff a diagnosis rule fires on: A < +5ms, B < +30ms, C < +60ms,
@@ -537,6 +563,21 @@ grade_bufferbloat() {
 # so its orphaned `sleep` child can't pin open the command-substitution
 # pipe — otherwise $() would block for the full timeout duration even
 # after the wrapped command completed.
+#
+# Second subtlety: `wait` can return >128 for two different reasons. The
+# ordinary one is the killer's TERM landing on the command (timeout —
+# report 124). The other is a trapped signal (INT/TERM under --monitor)
+# interrupting the wait while the command is still running. In that case
+# the command must be reaped before returning, or a probe outlives the
+# cycle that spawned it and keeps sampling a link this tool promised was
+# quiet. Either way anything above 128 reports as 124: the caller only
+# needs "it did not finish in its budget".
+#
+# Known limit: TERM goes to the direct child only. A wrapper that doesn't
+# relay signals can leave grandchildren alive; every probe this repo wraps
+# is a single self-bounded binary, so no process-group kill is attempted
+# (the subshell shares the script's process group — killing it would take
+# netdiag down with it).
 with_timeout() {
   local secs="$1"; shift
   ( "$@" ) &
@@ -545,10 +586,50 @@ with_timeout() {
   local killer_pid=$!
   wait "$cmd_pid" 2>/dev/null
   local rc=$?
+  if [ "$rc" -gt 128 ]; then
+    # The wait ended without the command ending it: reap the command and
+    # the pending killer before reporting the timeout.
+    kill -TERM "$cmd_pid" 2>/dev/null
+    wait "$cmd_pid" 2>/dev/null
+    kill -TERM "$killer_pid" 2>/dev/null
+    wait "$killer_pid" 2>/dev/null
+    return 124
+  fi
   kill -TERM "$killer_pid" 2>/dev/null
   wait "$killer_pid" 2>/dev/null
-  if [ "$rc" -gt 128 ]; then return 124; fi
   return "$rc"
+}
+
+# ── Temp-dir registry ────────────────────────────────────────────────────
+# The orchestrator owns the parallel scratch directory. On an abort
+# (Ctrl-C, SIGHUP, or a killed parallel check) collect_parallel never gets
+# to its normal cleanup, so register that directory for bin/netdiag's EXIT
+# trap. A directory created inside a parallel child cannot update the
+# parent's shell variables; those modules still clean up on their success
+# path, while this registry covers the long-lived parent-owned directory.
+_NETDIAG_TMP_DIRS=""
+NETDIAG_TMP_DIR=""
+netdiag_mktemp_dir() {
+  local d
+  d="$(mktemp -d "${TMPDIR:-/tmp}/${1:-netdiag}.XXXXXX")" || return 1
+  NETDIAG_TMP_DIR="$d"
+  _NETDIAG_TMP_DIRS+="$d"$'\n'
+}
+netdiag_tmp_forget() {
+  local target="$1" d kept=""
+  while IFS= read -r d; do
+    [ -n "$d" ] && [ "$d" != "$target" ] && kept+="$d"$'\n'
+  done <<<"$_NETDIAG_TMP_DIRS"
+  _NETDIAG_TMP_DIRS="$kept"
+  [ "$NETDIAG_TMP_DIR" = "$target" ] && NETDIAG_TMP_DIR=""
+}
+_netdiag_tmp_cleanup() {
+  local d
+  # shellcheck disable=SC2034
+  while IFS= read -r d; do
+    [ -n "$d" ] && [ -d "$d" ] && rm -rf "$d"
+  done <<<"$_NETDIAG_TMP_DIRS"
+  _NETDIAG_TMP_DIRS=""
 }
 
 # ── Parallel-launch helpers ──────────────────────────────────────────────
@@ -566,7 +647,8 @@ PAR_TMP=""
 launch_parallel() {
   local name="$1" fn="$2"
   if [ -z "$PAR_TMP" ]; then
-    PAR_TMP="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-par.XXXXXX")"
+    netdiag_mktemp_dir netdiag-par || return 1
+    PAR_TMP="$NETDIAG_TMP_DIR"
   fi
   PAR_NAMES+=("$name")
   # The subshell below intentionally redefines say/hdr/etc. The launched
@@ -583,6 +665,12 @@ launch_parallel() {
     : >"$NETDIAG_PAR_OUT"
     : >"$NETDIAG_PAR_VARS"
     exec 1>"$NETDIAG_PAR_OUT" 2>&1
+    # The parent registry contains PAR_TMP itself. Give this child a fresh
+    # registry so its module scratch dirs can be removed on SIGTERM/abort
+    # without deleting the files collect_parallel still needs to read.
+    _NETDIAG_TMP_DIRS=""
+    NETDIAG_TMP_DIR=""
+    trap _netdiag_tmp_cleanup EXIT
     # fd 3 is deliberately NOT part of the redirect above, which is the
     # whole reason the progress stream is on it: this check's result is
     # announced the moment it lands, not when collect_parallel gets round
@@ -658,7 +746,7 @@ collect_parallel() {
       if _should_print_stdout; then
         cat "$out"
       fi
-      sed $'s/\033\\[[0-9;]*m//g' "$out" >> "$LOG"
+      sed $'s/\033\\[[0-9;]*m//g' "$out" >> "$LOG" 2>/dev/null || true
     fi
     if [ -s "$vars" ]; then
       # shellcheck disable=SC1090
@@ -668,6 +756,7 @@ collect_parallel() {
   PAR_NAMES=()
   if [ -n "$PAR_TMP" ] && [ -d "$PAR_TMP" ]; then
     rm -rf "$PAR_TMP"
+    netdiag_tmp_forget "$PAR_TMP"
     PAR_TMP=""
   fi
 }

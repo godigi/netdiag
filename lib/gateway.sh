@@ -24,16 +24,19 @@ gateway_run() {
   # No -t: on macOS it is a deadline for the whole run, so `-c 20 -t 3`
   # transmitted only as many packets as fit in 3 seconds and reported loss
   # over that truncated count. See lib/internet_ping.sh for the numbers.
-  local ping_out count="$LOSS_PROBE_COUNT"
-  [ "$QUICK" -eq 1 ] && count=10
+  local ping_out parsed count="$LOSS_PROBE_COUNT"
+  [ "$QUICK" -eq 1 ] && count="$THRESH_GATEWAY_QUICK_PING_COUNT"
   ping_out="$(with_timeout 15 ping -c "$count" -i "$LOSS_PROBE_INTERVAL" "$GATEWAY" 2>&1)"
   printf '%s\n' "$ping_out" >> "$LOG"
-  GW_LOSS="$(printf '%s\n' "$ping_out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
-  # ping's summary: "round-trip min/avg/max/stddev = 3.024/3.485/4.197/0.305 ms"
-  # Splitting by [ /] gives ... avg=NF-3, stddev (jitter)=NF-1.
-  GW_LATENCY="$(printf '%s\n' "$ping_out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3)}' | head -1)"
-  GW_JITTER="$(printf '%s\n' "$ping_out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-1)}' | head -1)"
-  GW_LOSS="${GW_LOSS:-100}"
+  parsed="$(ping_parse_summary "$ping_out")"
+  IFS='|' read -r GW_LOSS GW_LATENCY GW_JITTER <<<"$parsed"
+  # No summary means the probe did not measure loss. Keep it empty so the
+  # diagnosis layer cannot turn a command failure into a confident 100%
+  # loss claim.
+  if [ -z "$GW_LOSS" ]; then
+    warn "Gateway $GATEWAY: no packet-loss summary — loss unknown."
+    return 0
+  fi
   # Thresholds shared with the G1/G2/G3 rules so this line and the
   # diagnosis below it can never disagree. A single dropped packet (5%)
   # stays "ok": it is within the probe's own noise floor, and calling it

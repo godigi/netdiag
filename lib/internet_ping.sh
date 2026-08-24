@@ -53,14 +53,7 @@
 # "the probe measured total loss" are different facts, and conflating them
 # is what made ping6 report a permanently broken IPv6 stack in v0.5.1.
 internet_ping_parse() {
-  local out="$1" loss avg jitter
-  loss="$(printf '%s\n' "$out" \
-    | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
-  # "round-trip min/avg/max/stddev = 3.024/3.485/4.197/0.305 ms"
-  # Split on [ /] puts avg at NF-3 and stddev at NF-1.
-  avg="$(printf    '%s\n' "$out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
-  jitter="$(printf '%s\n' "$out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-1); exit}')"
-  printf '%s|%s|%s' "$loss" "$avg" "$jitter"
+  ping_parse_summary "$1"
 }
 
 internet_ping_run() {

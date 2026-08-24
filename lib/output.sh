@@ -205,6 +205,35 @@ history_archive_path() {
 # helpers/history.py dedupes on timestamp precisely so that the safe
 # failure is also the harmless one.
 prune_history() {
+  local file="$1" keep="$2" pid
+  local lock="${file}.lock"
+  # Appends happen before pruning, and launchd/manual runs can overlap. A
+  # directory is an atomic lock on macOS; without it two pruners can each
+  # archive the same head and then race their tail into the live store.
+  if ! mkdir "$lock" 2>/dev/null; then
+    # Recover a lock left by a killed process, but never disturb a live one.
+    if [ -r "$lock/pid" ]; then
+      pid="$(cat "$lock/pid" 2>/dev/null || true)"
+      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$lock/pid" 2>/dev/null || true
+        rmdir "$lock" 2>/dev/null || true
+        mkdir "$lock" 2>/dev/null || return 0
+      else
+        return 0
+      fi
+    else
+      return 0
+    fi
+  fi
+  printf '%s\n' "$$" >"$lock/pid" 2>/dev/null || true
+  _prune_history_locked "$file" "$keep"
+  local rc=$?
+  rm -f "$lock/pid" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || true
+  return "$rc"
+}
+
+_prune_history_locked() {
   local file="$1" keep="$2" lines tmp archive head_lines
   [ "$keep" -gt 0 ]   || return 0
   [ -f "$file" ]      || return 0
@@ -219,12 +248,15 @@ prune_history() {
   # that is over its cap costs a little parse time; a history whose oldest
   # runs were deleted because an append failed costs the runs.
   head -n "$head_lines" "$file" >> "$archive" 2>/dev/null || return 0
-  tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-hist.XXXXXX")" || return 0
+  netdiag_mktemp_dir netdiag-hist || return 0
+  tmp="$NETDIAG_TMP_DIR/record"
   if tail -n "$keep" "$file" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$file"
   else
     rm -f "$tmp"
   fi
+  rm -rf "$NETDIAG_TMP_DIR"
+  netdiag_tmp_forget "$NETDIAG_TMP_DIR"
 }
 
 prune_logs() {
@@ -244,7 +276,7 @@ prune_logs() {
 }
 
 output_run() {
-  local json_tmp baseline_out baseline_lines reg
+  local json_tmp json_tmp_dir baseline_out baseline_lines reg
   # Frozen once, here, before the first render. Every build_json call this
   # run makes — the private snapshot below, its regression rebuild, and
   # the stdout render at the bottom — reads this same value through
@@ -265,11 +297,15 @@ output_run() {
   # `local run_id_val` is not enough to make an unconditional read of it
   # safe; the declaration has to carry a value.
   local run_id_val=""
-  # macOS mktemp(1) only substitutes the trailing X's. Any suffix after
-  # them (e.g. ".json") is treated as literal and breaks subsequent runs
-  # because the file already exists. Keep X's at the end; the file is
-  # internal so the extension doesn't matter.
-  json_tmp="$(mktemp "${TMPDIR:-/tmp}/netdiag-out.XXXXXX")"
+  # Keep the private record in a registered directory so an interrupted run
+  # cannot leave a network snapshot behind in the system temp directory.
+  if ! netdiag_mktemp_dir netdiag-out; then
+    warn "Temporary storage is unavailable; no report was written."
+    [ "$JSON_MODE" -eq 1 ] && build_json
+    return 0
+  fi
+  json_tmp_dir="$NETDIAG_TMP_DIR"
+  json_tmp="$json_tmp_dir/record.json"
   # Unredacted throughout: this file feeds the baseline comparison and the
   # history append, both of which are local and both of which need the real
   # network.id to be worth anything. See build_json_private.
@@ -309,8 +345,8 @@ for r in d.get('regressions', []):
     elif kind == 'drop':
         print(f'{label} dropped to {cur} from {med} median')
     elif kind == 'change':
-        print(f'{label} changed: \"{cur}\" (was previously \"{med}\")')
-")"
+            print(f'{label} changed: \"{cur}\" (was previously \"{med}\")')
+" 2>/dev/null || true)"
       if [ -n "$baseline_lines" ]; then
         while IFS= read -r reg; do
           [ -z "$reg" ] && continue
@@ -398,10 +434,9 @@ print(rid)
     # this render's timings match the stored record's exactly — run_id
     # isn't the only thing this render and that record now agree on.
     #
-    # Rendered straight to stdout rather than through a temp file: the
-    # mktemp+write+cat+rm sequence this used to go through was a relic of
-    # a removed redact-only branch that needed a file to diff against, and
-    # left a mktemp failure meaning --json silently emitted nothing.
+    # Rendered straight to stdout rather than rereading the private record:
+    # that record intentionally omits run_id, while the public render carries
+    # it without changing the bytes history.py hashes.
     NETDIAG_RUN_ID="$run_id_val" build_json
   elif [ "$WATCH_CHILD" -eq 0 ]; then
     say ""
@@ -412,5 +447,6 @@ print(rid)
     fi
     say "${C_DIM}Report saved to: $LOG${C_RESET}"
   fi
-  rm -f "$json_tmp"
+  rm -rf "$json_tmp_dir"
+  netdiag_tmp_forget "$json_tmp_dir"
 }

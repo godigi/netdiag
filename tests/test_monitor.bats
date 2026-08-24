@@ -36,8 +36,8 @@ setup() {
 reset_state() {
   # monitor side
   MON_LINK_UP=1 MON_IFACE_TYPE=wifi MON_GATEWAY=192.168.1.1
-  MON_GW_LOSS=0 MON_GW_RTT=3 MON_INET_LOSS="" MON_INET_RTT=""
-  MON_GW_HIST="" MON_INET_HIST=""
+  MON_GW_LOSS=0 MON_GW_RTT=3 MON_INET_LOSS="" MON_INET_LOSS_ALT="" MON_INET_RTT=""
+  MON_GW_HIST="" MON_INET_HIST="" MON_INET_HIST_ALT=""
   MON_WIFI_RSSI="" MON_WIFI_SNR=""
   MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
   MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
@@ -157,11 +157,19 @@ scanner_rules() {
 }
 
 @test "parity: severe internet loss over a clean router is L1 on both" {
-  reset_state; MON_INET_LOSS=25 INET_LOSS=25 INET_LOSS_ALT=25
+  reset_state; MON_INET_LOSS=25 MON_INET_LOSS_ALT=25 INET_LOSS=25 INET_LOSS_ALT=25
   local m; m="$(monitor_rules)"; reset_state
-  MON_INET_LOSS=25 INET_LOSS=25 INET_LOSS_ALT=25
+  MON_INET_LOSS=25 MON_INET_LOSS_ALT=25 INET_LOSS=25 INET_LOSS_ALT=25
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"L1"* ]]
+}
+
+@test "monitor does not make L1 critical from one lossy internet target" {
+  reset_state; MON_INET_LOSS=25 MON_INET_LOSS_ALT=0
+  _mon_rules
+  _mon_rules
+  [[ "$(monitor_rules)" == *"L2"* ]]
+  [[ "$(monitor_rules)" != *"L1"* ]]
 }
 
 @test "parity: moderate internet loss is L2 on both" {
@@ -176,9 +184,9 @@ scanner_rules() {
 }
 
 @test "parity: total ping loss on a working link is ICMP-1 on both, not L1" {
-  reset_state; MON_INET_LOSS=100 INET_LOSS=100 INET_LOSS_ALT=100
+  reset_state; MON_INET_LOSS=100 MON_INET_LOSS_ALT=100 INET_LOSS=100 INET_LOSS_ALT=100
   local m; m="$(monitor_rules)"; reset_state
-  MON_INET_LOSS=100 INET_LOSS=100 INET_LOSS_ALT=100
+  MON_INET_LOSS=100 MON_INET_LOSS_ALT=100 INET_LOSS=100 INET_LOSS_ALT=100
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"ICMP-1"* ]]
   [[ "$m" != *"L1"* ]]
@@ -209,6 +217,31 @@ scanner_rules() {
   run grep -nE '(loss_at_least|loss_below) "\$[A-Z_]+" [0-9]+|-lt -?[1-9][0-9]* \]|-ge -?[1-9][0-9]* \]|-gt -?[1-9][0-9]* \]' \
     "$REPO/lib/monitor.sh"
   [ "$status" -ne 0 ] || { echo "inline cutoff in monitor.sh:"; echo "$output"; return 1; }
+}
+
+@test "SIGALRM requests a refresh without stopping the monitor" {
+  MON_STOP=0 MON_REFRESH_REQUESTED=0
+  _mon_on_refresh
+  [ "$MON_REFRESH_REQUESTED" -eq 1 ]
+  [ "$MON_STOP" -eq 0 ]
+}
+
+@test "monitor installs a harmless SIGALRM refresh trap" {
+  run grep -n 'trap _mon_on_refresh ALRM' "$REPO/lib/monitor.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "registered parent temp directories are cleaned up" {
+  netdiag_mktemp_dir test-registry
+  local d="$NETDIAG_TMP_DIR"
+  [ -d "$d" ]
+  [[ "$_NETDIAG_TMP_DIRS" == *"$d"* ]]
+  netdiag_tmp_forget "$d"
+  [ -z "$_NETDIAG_TMP_DIRS" ]
+  rm -rf "$d"
+  _netdiag_tmp_cleanup
+  [ ! -e "$d" ]
+  [ -z "$_NETDIAG_TMP_DIRS" ]
 }
 
 # ── Freshness on internet-side loss ──────────────────────────────────────

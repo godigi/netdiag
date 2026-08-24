@@ -4,15 +4,13 @@
 # parallel 5-packet-per-hop loop when mtr/jq/sudo are unavailable.
 #
 # Reads:  QUICK, HOPS
-# Writes: PER_HOP_LINES, NEXTHOP_LOSS, MTR_FIRST_LOSSY_HOP
+# Writes: PER_HOP_LINES, MTR_FIRST_LOSSY_HOP
 # Entry:  mtr_run
 
-# NEXTHOP_LOSS is declared in globals.sh and is reserved for upcoming JSON
-# / baseline support — currently set but not yet read elsewhere.
-# shellcheck disable=SC2034
-
 # Threshold above which a hop's loss% is "interesting" (vs measurement noise).
-_MTR_LOSS_THRESHOLD=2
+# It lives in thresholds.sh with the other judgement cutoffs so the parser
+# and the report cannot drift apart.
+_MTR_LOSS_THRESHOLD="$THRESH_MTR_HOP_LOSS_PCT"
 
 # Classify a hop as "rate_limited" when its loss exceeds the threshold but
 # at least one downstream hop is healthy — that means data is making it
@@ -73,15 +71,19 @@ _run_per_hop_fallback() {
   # Fire all hop pings concurrently to one temp file per hop, then collect in
   # original hop order. Bounded by the slowest hop (~1-2 s) rather than the
   # sum (~12 s for 8 hops).
-  local hop_tmp i h out loss lat
-  hop_tmp="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-hops.XXXXXX")"
+  local hop_tmp i h out parsed loss lat
+  netdiag_mktemp_dir netdiag-hops || { warn "MTR scratch directory unavailable — skipping hop loss."; return 0; }
+  hop_tmp="$NETDIAG_TMP_DIR"
   i=0
   # Track each ping's PID so we wait only on our own children, not on
   # the progress-spinner the orchestrator may have forked.
   local ping_pids=()
   for h in "${HOPS[@]}"; do
     i=$((i+1))
-    ping -c 5 -t 2 -i 0.2 "$h" > "$hop_tmp/hop-$i" 2>&1 &
+    # macOS ping's -t is a deadline for the whole run, not a per-reply
+    # timeout. The old flag could truncate this probe before five packets
+    # were sent and turn a healthy hop into a fabricated loss reading.
+    with_timeout 4 ping -c 5 -i 0.2 "$h" > "$hop_tmp/hop-$i" 2>&1 &
     ping_pids+=("$!")
   done
   local pid
@@ -93,18 +95,17 @@ _run_per_hop_fallback() {
   for h in "${HOPS[@]}"; do
     i=$((i+1))
     out="$(cat "$hop_tmp/hop-$i" 2>/dev/null)"
-    loss="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
-    lat="$(printf '%s\n' "$out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3)}' | head -1)"
+    parsed="$(ping_parse_summary "$out")"
+    IFS='|' read -r loss lat _ <<<"$parsed"
     HOP_NUMS+=("$i")
     HOP_IPS+=("$h")
-    HOP_LOSSES+=("${loss:-100}")
+    # No summary means the probe did not produce a measurement. Keep it
+    # unknown instead of turning a command failure into 100% loss.
+    HOP_LOSSES+=("${loss:-}")
     HOP_AVGS+=("${lat:-}")
-    # NEXTHOP_LOSS tracks hop 2's loss for legacy JSON consumers.
-    if [ "$i" -eq 2 ] && [ -n "$loss" ] && [ "${loss%.*}" -gt 0 ]; then
-      NEXTHOP_LOSS="$loss"
-    fi
   done
   rm -rf "$hop_tmp"
+  netdiag_tmp_forget "$hop_tmp"
   _emit_per_hop_results
 }
 

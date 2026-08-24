@@ -195,7 +195,8 @@ speedtest_run() {
       while IFS= read -r st_line; do
         speedtest_translate_line "$st_line"
         case "$st_line" in *'"type":"result"'*) st_out="$st_line" ;; esac
-      done < <("$bin" --format=jsonl --progress=yes --accept-license --accept-gdpr 2>/dev/null || true)
+      done < <(with_timeout 45 "$bin" --format=jsonl --progress=yes \
+        --accept-license --accept-gdpr 2>/dev/null || true)
       if _speedtest_parse_result "$st_out"; then
         ok "Down ${SPEEDTEST_DOWN_MBPS} Mbps · Up ${SPEEDTEST_UP_MBPS} Mbps · ${SPEEDTEST_LATENCY_MS} ms (jitter ${SPEEDTEST_JITTER_MS} ms)"
         info "Server: $SPEEDTEST_SERVER"
@@ -211,7 +212,7 @@ speedtest_run() {
       # would be the UI's only source of motion and it would be a lie —
       # nothing in this branch knows how far along the test is.
       progress_speed running
-      st_out="$("$bin" --json 2>/dev/null || true)"
+      st_out="$(with_timeout 45 "$bin" --json 2>/dev/null || true)"
       if _speedtest_parse_result "$st_out"; then
         ok "Down ${SPEEDTEST_DOWN_MBPS} Mbps · Up ${SPEEDTEST_UP_MBPS} Mbps · ${SPEEDTEST_LATENCY_MS} ms"
         info "Server: $SPEEDTEST_SERVER"

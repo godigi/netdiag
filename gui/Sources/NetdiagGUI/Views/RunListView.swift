@@ -1,15 +1,5 @@
 import SwiftUI
 
-/// Where a network card leads.
-///
-/// The route carries the group's id rather than the `Network` struct: the
-/// struct is a snapshot of a merge that the user can change while this view
-/// is on screen, and pushing a copy of it would pin the list to how the
-/// grouping looked at the moment the row was tapped.
-struct NetworkRoute: Hashable {
-    let networkID: String
-}
-
 /// Every check ever run on one network, newest first.
 ///
 /// Nothing here calls the CLI. `--history` already returns each run's
@@ -67,8 +57,8 @@ struct RunListView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(store.displayName(for: networkID)).font(.headline)
             Text(visibleRuns.count == allRuns.count
-                 ? "\(allRuns.count) check(s)"
-                 : "\(visibleRuns.count) of \(allRuns.count) check(s)")
+                 ? "\(allRuns.count) check\(allRuns.count == 1 ? "" : "s")"
+                 : "\(visibleRuns.count) of \(allRuns.count) check\(allRuns.count == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -127,7 +117,7 @@ struct RunListView: View {
             if filter == .problems {
                 Label("No warnings on this network", systemImage: "checkmark.circle")
                     .font(.callout)
-                Text("None of the \(allRuns.count) check(s) recorded against this network was marked a warning or a critical. Switch to All to see them.")
+                Text("None of the \(allRuns.count) check\(allRuns.count == 1 ? "" : "s") recorded against this network was marked a warning or a critical. Switch to All to see them.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -148,7 +138,7 @@ struct RunListView: View {
     /// for a while, not an error.
     private var unopenableNotice: some View {
         Label {
-            Text("\(unopenableCount) of these check(s) can't be opened: the netdiag command line on this Mac is older than this app and didn't record an id for them. Updating netdiag makes them openable.")
+            Text("\(unopenableCount) of these check\(unopenableCount == 1 ? "" : "s") can't be opened: the netdiag command line on this Mac is older than this app and didn't record an id for them. Updating netdiag makes them openable.")
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
         } icon: {

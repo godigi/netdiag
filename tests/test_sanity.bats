@@ -39,6 +39,24 @@ setup() {
   [[ "$output" == *"expects a path"* ]]
 }
 
+@test "--watch rejects a non-numeric interval before starting a loop" {
+  run "$NETDIAG" --watch=abc
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"--watch expects"* ]]
+}
+
+@test "--watch rejects a zero interval before starting a loop" {
+  run "$NETDIAG" --watch=0
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"--watch expects"* ]]
+}
+
+@test "--summary rejects a non-numeric window with the script-error status" {
+  run env HOME="$BATS_TEST_TMPDIR" "$NETDIAG" --summary=abc
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"--summary expects"* ]]
+}
+
 @test "--mtu-only with --quick is rejected as a conflict" {
   run "$NETDIAG" --mtu-only --quick
   [ "$status" -eq 3 ]

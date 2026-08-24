@@ -31,7 +31,7 @@ def load_jsonl(p: Path) -> list[dict]:
     if not p.exists():
         return []
     out: list[dict] = []
-    with p.open() as f:
+    with p.open(errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -93,7 +93,9 @@ def main() -> None:
     in_window: list[dict] = []
     for r in records:
         ts = parse_ts(r.get("timestamp"))
-        if ts is None or ts >= cutoff:
+        # A malformed timestamp cannot be placed in a time window. Exclude
+        # it rather than keeping ancient/corrupt records in every summary.
+        if ts is not None and ts >= cutoff:
             in_window.append(r)
     if not in_window:
         print(f"No runs in the last {args.window}h.")

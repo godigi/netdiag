@@ -69,8 +69,6 @@ FEATURES = [
     "bufferbloat-only",
     "ping-only",
     "watcher",
-    "watcher-status",
-    "prune-history",
     "rules-catalog",
     "signal-scale",
 ]

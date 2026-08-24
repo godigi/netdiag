@@ -231,7 +231,7 @@ struct HistoryDocument: Decodable, Sendable {
             return diagnosisCount == 0 ? "No problems found" : "\(diagnosisCount) finding(s)"
         }
 
-        /// A presentational relabeling of the closed `run_mode` set
+        /// A presentational relabeling of the documented `run_mode` values
         /// docs/JSON-SCHEMA.md documents — "how much of the battery this
         /// run attempted", not a judgement about the network, so per the
         /// redesign's risk register this is safe to keep in Swift. `nil`
@@ -243,7 +243,7 @@ struct HistoryDocument: Decodable, Sendable {
         /// carries the identical `run_mode` field for a run that has not
         /// been through `--history` at all — can render the exact same
         /// vocabulary rather than re-deriving it. Still just a
-        /// presentational relabeling of the closed `run_mode` set, per this
+        /// presentational relabeling of the documented `run_mode` values, per this
         /// property's own doc comment above.
         static func modeBadge(for runMode: String?) -> String? {
             switch runMode {
@@ -252,6 +252,9 @@ struct HistoryDocument: Decodable, Sendable {
             case "speed-only": return "speed reading"
             case "mtu-only":   return "MTU check"
             case "wifi-only":  return "WiFi scan"
+            case "dns-only":   return "DNS check"
+            case "bufferbloat-only": return "Bufferbloat check"
+            case "ping-only":  return "Latency check"
             default:           return nil
             }
         }

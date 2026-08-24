@@ -189,6 +189,12 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Changed
 
+- **Counts pluralize properly.** "175 event(s)", "2.034 runs across 6
+  network(s)", "1 check(s)" — the parenthesised shorthand read as
+  programmer furniture everywhere it appeared (Activity, Trends, the
+  Networks merge sheet, the run list). All of it now writes "175
+  events", "1 check", "2 runs were skipped", singular and plural both
+  grammatical.
 - **The Networks list shows each network's last-seen time instead of the
   "inferred" badge.** "Inferred" says how the grouping was computed,
   which a person scanning their networks has no use for; "3h ago" says
@@ -267,6 +273,12 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ### Fixed
 
+- **The Trends charts' sample count carried the metric's unit** —
+  "Gateway RTT · 2027 samples (ms)" read as though "ms" counted samples.
+  The unit now sits on the metric's name ("Gateway RTT (ms) · 2027
+  samples"), where it belongs. The two Trends charts also disagreed on
+  which side their y-axis lives on (metric chart leading, incidents
+  chart trailing) — both lead now.
 - **A Wi-Fi name adopted from CoreWLAN showed on Home but not in the
   Networks tab.** The app renames the current network under the id the
   monitor reports, but the monitor's `network.id` is the *record* format

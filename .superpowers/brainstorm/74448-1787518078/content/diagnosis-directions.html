@@ -1,0 +1,80 @@
+<h2>What should the first screen help me do?</h2>
+<p class="subtitle">Three directions for the balanced, whole-product roadmap. Click the one that feels most useful when the internet is acting up.</p>
+
+<div class="cards">
+  <div class="card" data-choice="status-first" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">Status-first report</div>
+        <div class="mockup-body">
+          <div class="label">HOME WI-FI · CHECKED 2 MIN AGO</div>
+          <h3 style="margin: 8px 0 4px;">Your connection is struggling</h3>
+          <p style="margin: 0 0 12px; color: #b5becd;">The router is healthy. Delay appears when the connection is busy.</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <span class="mock-button" style="background:#7d3040;">Bufferbloat · likely</span>
+            <span class="mock-button">Wi-Fi signal · good</span>
+          </div>
+          <div style="margin-top:16px; padding:10px; border-radius:8px; background:#202936;">
+            <div class="label">NEXT BEST STEP</div>
+            <div style="margin-top:4px;">Try a wired test or enable SQM on the router.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Status-first</h3>
+      <p>Keep the current report-card model, but make the primary diagnosis, confidence, evidence, and next action unmistakable.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="change-first" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">Change-first report</div>
+        <div class="mockup-body">
+          <div class="label">WHAT CHANGED</div>
+          <h3 style="margin: 8px 0 4px;">Latency rose 4× since yesterday</h3>
+          <p style="margin: 0 0 12px; color: #b5becd;">The change started at 09:42 on Home Wi-Fi.</p>
+          <div style="height:72px; border-radius:8px; background:linear-gradient(180deg, #243348, #18202b); position:relative; overflow:hidden;">
+            <div style="position:absolute; left:8%; right:8%; bottom:20px; height:2px; background:linear-gradient(90deg,#65d6a2 0 38%,#f0b45c 38% 55%,#ec6c7c 55%); transform:rotate(-5deg); transform-origin:left;"></div>
+            <div style="position:absolute; left:8%; bottom:7px; font-size:10px; color:#8e9aae;">yesterday</div>
+            <div style="position:absolute; right:8%; bottom:7px; font-size:10px; color:#8e9aae;">now</div>
+          </div>
+          <div style="margin-top:14px; display:flex; justify-content:space-between;"><span>Router</span><strong style="color:#65d6a2;">healthy</strong></div>
+          <div style="margin-top:6px; display:flex; justify-content:space-between;"><span>Internet under load</span><strong style="color:#f0b45c;">degraded</strong></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Change-first</h3>
+      <p>Lead with the meaningful delta against the network baseline, then show which hop changed and whether the issue is local or upstream.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="guided-check" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">Guided check</div>
+        <div class="mockup-body">
+          <div class="label">LET’S NARROW IT DOWN</div>
+          <h3 style="margin: 8px 0 4px;">Where is the slowdown?</h3>
+          <p style="margin: 0 0 14px; color: #b5becd;">We found a problem. These two checks will separate Wi-Fi from your ISP.</p>
+          <div style="padding:10px 12px; border:1px solid #40516b; border-radius:8px; margin-bottom:8px;"><strong>1</strong><span style="margin-left:10px;">Test beside the router</span><span style="float:right; color:#65d6a2;">done</span></div>
+          <div style="padding:10px 12px; border:1px solid #5273a6; border-radius:8px;"><strong>2</strong><span style="margin-left:10px;">Run a wired comparison</span><span style="float:right; color:#88b4ff;">start</span></div>
+          <button class="mock-button" style="margin-top:14px; width:100%;">Start next check</button>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Guided check</h3>
+      <p>Turn a diagnosis into a short decision tree that tells the user exactly what to test next and how each result changes the conclusion.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 22px;">
+  <div class="pros-cons">
+    <div class="pros"><h4>Shared foundation</h4><ul><li>CLI remains the sole source of measurements, thresholds, and diagnosis prose.</li><li>Expert detail stays available without crowding the default path.</li></ul></div>
+    <div class="cons"><h4>Key trade-off</h4><ul><li>Status-first is fastest to ship.</li><li>Change-first is strongest for intermittent problems.</li><li>Guided check has the clearest action loop but needs more interaction design.</li></ul></div>
+  </div>
+</div>

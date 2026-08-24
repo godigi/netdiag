@@ -140,6 +140,9 @@ THRESH_WIFI_CHANNEL_NEIGHBOURS=3
 # counts as flapping.
 THRESH_WIFI_DISCONNECTS=3
 
+# Presentation cutoffs shared by the report card and section output.
+THRESH_LATENCY_JITTER_WARN_MS=30
+
 # ── IPv6 ─────────────────────────────────────────────────────────────────
 # V6-1 — ping6 loss above this counts as broken IPv6 (given IPv4 works).
 THRESH_IPV6_LOSS_PCT=20
@@ -150,6 +153,12 @@ THRESH_IPV6_LOSS_PCT=20
 # because at that point ordinary HTTPS responses stop fitting.
 THRESH_MTU_STANDARD=1400
 THRESH_MTU_CRIT=1280
+THRESH_MTU_FULL_PATH=1480
+THRESH_MTU_ETHERNET=1500
+
+# Quick gateway probes use a smaller sample to stay within the quick-run
+# budget. Keep the probe geometry centralized with the other shared values.
+THRESH_GATEWAY_QUICK_PING_COUNT=10
 
 # ── Clock ────────────────────────────────────────────────────────────────
 # NT-1 — drift in seconds. Past the critical floor, certificate validity
@@ -220,3 +229,8 @@ THRESH_BUFFERBLOAT_A_MS=5
 THRESH_BUFFERBLOAT_B_MS=30
 THRESH_BUFFERBLOAT_C_MS=60
 THRESH_BUFFERBLOAT_D_MS=200
+
+# MTR — per-hop loss above this is interesting enough to display as loss.
+# A middle hop above this with a clean destination is classified as ICMP
+# rate limiting; the same boundary must be used by both branches.
+THRESH_MTR_HOP_LOSS_PCT=2

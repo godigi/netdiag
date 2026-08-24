@@ -8,6 +8,9 @@
 # Entry:  wifi_run
 
 # Writes IS_WIFI, WIFI_* — read by diagnosis.sh / output.sh / emit_json.py.
+# The upstream scrapes are shared with the live monitor; parse them once.
+# shellcheck source=lib/wifi_common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/wifi_common.sh"
 # shellcheck disable=SC2034
 wifi_run() {
   hdr "WiFi"
@@ -18,17 +21,18 @@ wifi_run() {
   # reports "not associated").
   if [ -n "$INTERFACE" ]; then
     local hw_port
-    hw_port="$(networksetup -listallhardwareports 2>/dev/null | awk -v d="$INTERFACE" '
-      /^Hardware Port:/{port=substr($0, index($0,$3))}
-      /^Device:/{if($2==d){print port; exit}}')"
-    if printf '%s' "$hw_port" | grep -qi 'Wi-Fi\|AirPort'; then
+    hw_port="$(wifi_hw_port_for_device "$INTERFACE")"
+    if wifi_port_is_wireless "$hw_port"; then
       IS_WIFI=1
       # Pull SSID from ipconfig getsummary (works without sudo on modern macOS).
-      local summary
+      local summary ssid bssid sec
       summary="$(ipconfig getsummary "$INTERFACE" 2>/dev/null)"
-      WIFI_SSID="$(printf '%s\n' "$summary"  | awk -F': ' '/^[[:space:]]*SSID[[:space:]]*:/{print $2; exit}')"
-      WIFI_BSSID="$(printf '%s\n' "$summary" | awk -F': ' '/^[[:space:]]*BSSID[[:space:]]*:/{print $2; exit}')"
-      WIFI_SEC="$(printf '%s\n' "$summary"   | awk -F': ' '/^[[:space:]]*Security[[:space:]]*:/{print $2; exit}')"
+      {
+        IFS=$'\t' read -r ssid bssid sec
+      } <<<"$(wifi_parse_ipconfig_summary "$summary")"
+      WIFI_SSID="$ssid"
+      WIFI_BSSID="$bssid"
+      WIFI_SEC="$sec"
       ok "SSID: ${WIFI_SSID:-?}  (interface $INTERFACE)"
       [ -n "$WIFI_BSSID" ] && info "BSSID: $WIFI_BSSID"
       [ -n "$WIFI_SEC" ]   && info "Security: $WIFI_SEC"
@@ -39,38 +43,36 @@ wifi_run() {
     # cached creds.
     local wdutil_out=""
     if sudo -n true 2>/dev/null; then
-      wdutil_out="$(sudo -n wdutil info 2>/dev/null)"
+      wdutil_out="$(with_timeout 5 sudo -n wdutil info 2>/dev/null || true)"
     fi
 
     if [ -n "$wdutil_out" ]; then
-      local rssi noise wdutil_ssid wdutil_bssid
+      local rssi noise chan tx phy w_ssid w_bssid
+      # One parse for the whole scrape — see wifi_common.sh.
+      {
+        IFS=$'\t' read -r rssi noise chan tx phy w_ssid w_bssid
+      } <<<"$(wifi_parse_wdutil "$wdutil_out")"
       # wdutil's SSID/BSSID is unredacted *if* the calling process has
       # Wi-Fi-access entitlement (Terminal with Location Services granted).
       # Override the ipconfig values when wdutil gave us something real.
-      wdutil_ssid="$(printf '%s\n' "$wdutil_out"  | awk -F': ' '/^[[:space:]]*SSID[[:space:]]*:/{
-        gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit}')"
-      wdutil_bssid="$(printf '%s\n' "$wdutil_out" | awk -F': ' '/^[[:space:]]*BSSID[[:space:]]*:/{
-        gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit}')"
-      if [ -n "$wdutil_ssid" ] && [ "$wdutil_ssid" != "<redacted>" ]; then
-        WIFI_SSID="$wdutil_ssid"
+      if [ -n "$w_ssid" ] && [ "$w_ssid" != "<redacted>" ]; then
+        WIFI_SSID="$w_ssid"
       fi
-      if [ -n "$wdutil_bssid" ] && [ "$wdutil_bssid" != "<redacted>" ]; then
-        WIFI_BSSID="$wdutil_bssid"
+      if [ -n "$w_bssid" ] && [ "$w_bssid" != "<redacted>" ]; then
+        WIFI_BSSID="$w_bssid"
       fi
-      rssi="$(printf '%s\n' "$wdutil_out"   | awk -F': ' '/^[[:space:]]*RSSI/{gsub(/ dBm/,"",$2); print $2; exit}')"
-      noise="$(printf '%s\n' "$wdutil_out"  | awk -F': ' '/^[[:space:]]*Noise/{gsub(/ dBm/,"",$2); print $2; exit}')"
-      WIFI_CHAN="$(printf '%s\n' "$wdutil_out"   | awk -F': ' '/^[[:space:]]*Channel/{print $2; exit}')"
-      WIFI_TX="$(printf '%s\n'   "$wdutil_out"   | awk -F': ' '/Tx Rate/{print $2; exit}')"
-      WIFI_PHY="$(printf '%s\n'  "$wdutil_out"   | awk -F': ' '/PHY Mode/{print $2; exit}')"
       # wdutil's label/value layout shifts between macOS releases. If a
       # scrape lands on the wrong field, `$((rssi - noise))` below raises a
-      # syntax error and the `[ "$rssi" -ge -55 ]` ladder spews "integer
-      # expression expected". Blank anything non-numeric so those blocks
+      # syntax error and the RSSI/SNR comparisons spew "integer expression
+      # expected". Blank anything non-numeric so those blocks
       # skip cleanly and the section reports "unknown" instead.
       is_numeric "$rssi"  || rssi=""
       is_numeric "$noise" || noise=""
       WIFI_RSSI="${rssi:-}"
       WIFI_NOISE="${noise:-}"
+      WIFI_CHAN="$chan"
+      WIFI_TX="$tx"
+      WIFI_PHY="$phy"
       [ -n "$rssi" ]  && info "RSSI: ${rssi} dBm"
       [ -n "$noise" ] && info "Noise: ${noise} dBm"
       if [ -n "$rssi" ] && [ -n "$noise" ]; then
@@ -82,18 +84,17 @@ wifi_run() {
       [ -n "$WIFI_TX" ]   && info "Tx Rate: $WIFI_TX"
 
       if [ -n "$rssi" ]; then
-        if   [ "$rssi" -ge -55 ]; then ok   "Signal: excellent (RSSI ${rssi})"
-        elif [ "$rssi" -ge -65 ]; then ok   "Signal: good (RSSI ${rssi})"
-        elif [ "$rssi" -ge -72 ]; then warn "Signal: fair (RSSI ${rssi}) — may see latency spikes"
-        elif [ "$rssi" -ge -80 ]; then warn "Signal: weak (RSSI ${rssi}) — expect retransmissions"
-        else                            bad  "Signal: very weak (RSSI ${rssi}) — likely the problem"
+        if   [ "$rssi" -ge "$THRESH_WIFI_RSSI_EXCELLENT_DBM" ]; then ok   "Signal: excellent (RSSI ${rssi})"
+        elif [ "$rssi" -ge "$THRESH_WIFI_RSSI_G1_DBM" ]; then ok   "Signal: good (RSSI ${rssi})"
+        elif [ "$rssi" -ge "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then warn "Signal: fair (RSSI ${rssi}) — may see latency spikes"
+        else                            warn "Signal: weak (RSSI ${rssi}) — expect retransmissions"
         fi
       fi
       if [ -n "$WIFI_SNR" ]; then
-        if   [ "$WIFI_SNR" -ge 40 ]; then :
-        elif [ "$WIFI_SNR" -ge 25 ]; then info "SNR fine"
-        elif [ "$WIFI_SNR" -ge 15 ]; then warn "SNR low (${WIFI_SNR} dB) — interference likely"
-        else                              bad  "SNR very low (${WIFI_SNR} dB) — heavy interference"
+        if [ "$WIFI_SNR" -ge "$THRESH_WIFI_SNR_LOW_DB" ]; then
+          info "SNR fine"
+        else
+          warn "SNR low (${WIFI_SNR} dB) — interference likely"
         fi
       fi
     fi

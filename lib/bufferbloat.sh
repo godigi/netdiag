@@ -26,9 +26,11 @@ bufferbloat_run() {
 
   # Idle baseline: reuse gateway RTT from section 3; do a quick internet ping.
   local bb_idle_inet_out
-  bb_idle_inet_out="$(ping -c 8 -t 2 -i 0.2 1.1.1.1 2>/dev/null || true)"
-  BUFFERBLOAT_IDLE_INET_RTT="$(printf '%s\n' "$bb_idle_inet_out" \
-    | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
+  # macOS ping's -t is a deadline for the whole run, not a per-reply
+  # timeout. with_timeout supplies the outer bound without truncating a
+  # healthy eight-packet baseline.
+  bb_idle_inet_out="$(with_timeout 12 ping -c 8 -i 0.2 1.1.1.1 2>/dev/null || true)"
+  BUFFERBLOAT_IDLE_INET_RTT="$(ping_parse_summary "$bb_idle_inet_out" | cut -d'|' -f2)"
   BUFFERBLOAT_IDLE_GW_RTT="${GW_LATENCY:-}"
 
   if [ -z "$BUFFERBLOAT_IDLE_INET_RTT" ] || [ -z "$BUFFERBLOAT_IDLE_GW_RTT" ]; then
@@ -40,7 +42,8 @@ bufferbloat_run() {
   info "Loading link with 100 MB download for 10 s..."
 
   local bb_tmp bb_dl_pid bb_pg_pid bb_pi_pid
-  bb_tmp="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-bb.XXXXXX")"
+  netdiag_mktemp_dir netdiag-bb || { warn "Bufferbloat scratch directory unavailable — skipping."; return 0; }
+  bb_tmp="$NETDIAG_TMP_DIR"
   # Background: 100 MB download capped at 10 s wall-clock.
   curl -s -o /dev/null --max-time 10 \
     'https://speed.cloudflare.com/__down?bytes=104857600' \
@@ -49,17 +52,18 @@ bufferbloat_run() {
 
   # Brief settle so the TCP slow-start ramps before we start sampling.
   sleep 0.5
-  ping -c 45 -t 2 -i 0.2 "$GATEWAY" > "$bb_tmp/gw.ping" 2>/dev/null &
+  with_timeout 12 ping -c 45 -i 0.2 "$GATEWAY" > "$bb_tmp/gw.ping" 2>/dev/null &
   bb_pg_pid=$!
-  ping -c 45 -t 2 -i 0.2 1.1.1.1   > "$bb_tmp/inet.ping" 2>/dev/null &
+  with_timeout 12 ping -c 45 -i 0.2 1.1.1.1   > "$bb_tmp/inet.ping" 2>/dev/null &
   bb_pi_pid=$!
   wait "$bb_pg_pid" "$bb_pi_pid"
   # Reap the download (--max-time should have already ended it).
   wait "$bb_dl_pid" 2>/dev/null || true
 
-  BUFFERBLOAT_LOADED_GW_RTT="$(awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}' "$bb_tmp/gw.ping")"
-  BUFFERBLOAT_LOADED_INET_RTT="$(awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}' "$bb_tmp/inet.ping")"
+  BUFFERBLOAT_LOADED_GW_RTT="$(ping_parse_summary "$(cat "$bb_tmp/gw.ping" 2>/dev/null)" | cut -d'|' -f2)"
+  BUFFERBLOAT_LOADED_INET_RTT="$(ping_parse_summary "$(cat "$bb_tmp/inet.ping" 2>/dev/null)" | cut -d'|' -f2)"
   rm -rf "$bb_tmp"
+  netdiag_tmp_forget "$bb_tmp"
 
   if [ -z "$BUFFERBLOAT_LOADED_GW_RTT" ] || [ -z "$BUFFERBLOAT_LOADED_INET_RTT" ]; then
     warn "Loaded ping returned no rtt summary — link likely saturated to the point of total loss."

@@ -24,7 +24,8 @@ wan_load_balancing_run() {
 
   hdr "WAN load-balancing probe"
   local tmp i resp asn ip
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-wan.XXXXXX")"
+  netdiag_mktemp_dir netdiag-wan || { warn "WAN probe scratch directory unavailable — skipping."; return 0; }
+  tmp="$NETDIAG_TMP_DIR"
   for i in 1 2 3; do
     curl -s -m 4 https://ifconfig.co/json > "$tmp/probe-$i.json" 2>/dev/null &
   done
@@ -39,6 +40,7 @@ wan_load_balancing_run() {
     [ -n "$ip" ]  && case " $ips "  in *" $ip "*)  ;; *) ips="${ips:+$ips }$ip"   ;; esac
   done
   rm -rf "$tmp"
+  netdiag_tmp_forget "$tmp"
   WAN_LB_ASNS="$asns"
   WAN_LB_IPS="$ips"
 
@@ -287,4 +289,3 @@ wan_diagnosis_run() {
   # marker. We deliberately do NOT re-emit it in Diagnosis to avoid
   # duplicating the same info in two places.
 }
-

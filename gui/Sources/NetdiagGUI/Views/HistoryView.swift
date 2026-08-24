@@ -95,8 +95,11 @@ struct HistoryView: View {
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(descriptor?.label ?? metricKey).font(.headline)
-                Text(sampleLabel(count, unit: descriptor?.unit ?? ""))
+                // The unit belongs on the metric's name — "Gateway RTT
+                // (ms) · 2027 samples" — not on the sample count, where
+                // "(ms)" reads as the unit of "samples".
+                Text(chartTitle).font(.headline)
+                Text(sampleLabel(count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -137,7 +140,7 @@ struct HistoryView: View {
             if let descriptor {
                 Text(descriptor.samples == 0
                      ? "No run in your history has ever recorded \(descriptor.label.lowercased()). \(hint(for: descriptor.key))"
-                     : "\(descriptor.samples) run(s) elsewhere in your history recorded it — try a longer window or a different network.")
+                     : "\(descriptor.samples) run\(descriptor.samples == 1 ? "" : "s") elsewhere in your history recorded it — try a longer window or a different network.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -165,11 +168,17 @@ struct HistoryView: View {
         }
     }
 
-    private func sampleLabel(_ count: Int, unit: String) -> String {
+    private var chartTitle: String {
+        let label = store.metric(metricKey)?.label ?? metricKey
+        guard let unit = store.metric(metricKey)?.unit, !unit.isEmpty else { return label }
+        return "\(label) (\(unit))"
+    }
+
+    private func sampleLabel(_ count: Int) -> String {
         switch count {
         case 0:  return "no samples"
-        case 1:  return "1 sample\(unit.isEmpty ? "" : " (\(unit))")"
-        default: return "\(count) samples\(unit.isEmpty ? "" : " (\(unit))")"
+        case 1:  return "1 sample"
+        default: return "\(count) samples"
         }
     }
 
@@ -185,7 +194,7 @@ struct HistoryView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Checks and problems found").font(.headline)
-                Text(sampleLabel(runs.count, unit: "")).font(.caption).foregroundStyle(.secondary)
+                Text(sampleLabel(runs.count)).font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             if buckets.isEmpty {
@@ -205,6 +214,10 @@ struct HistoryView: View {
                 .chartForegroundStyleScale([
                     "critical": Color.red, "warn": Color.yellow, "ok": Color.green,
                 ])
+                // Leading, matching the metric chart above — one chart
+                // reading from the left and the next from the right reads
+                // as two different apps stacked.
+                .chartYAxis { AxisMarks(position: .leading) }
                 .frame(height: 160)
             }
         }
@@ -252,15 +265,15 @@ struct HistoryView: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("\(counts.runs) runs across \(counts.networks) network(s), read from ~/net-diag/baseline.jsonl and its archive.")
+            Text("\(counts.runs) run\(counts.runs == 1 ? "" : "s") across \(counts.networks) network\(counts.networks == 1 ? "" : "s"), read from ~/net-diag/baseline.jsonl and its archive.")
                 .font(.caption).foregroundStyle(.secondary)
             if counts.redactedDropped > 0 {
-                Text("\(counts.redactedDropped) run(s) were skipped: they were recorded with --redact, so their network identity was masked and they can't be attributed to any network.")
+                Text("\(counts.redactedDropped) run\(counts.redactedDropped == 1 ? " was" : "s were") skipped: they were recorded with --redact, so their network identity was masked and they can't be attributed to any network.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if counts.duplicatesDropped > 0 {
-                Text("\(counts.duplicatesDropped) duplicate record(s) were merged.")
+                Text("\(counts.duplicatesDropped) duplicate record\(counts.duplicatesDropped == 1 ? " was" : "s were") merged.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !coordinator.watcher.isInstalled {

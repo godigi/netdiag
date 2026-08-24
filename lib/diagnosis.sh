@@ -35,6 +35,26 @@ diagnosis_run() {
     add_diag critical N1b "Your Mac has a router but nothing on the public internet responded. $_rerun for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
   fi
 
+  # W1/W2/WS-1 — WiFi conditions that are worth reporting even when they
+  # have not yet caused packet loss. These rules used to be documented and
+  # catalogued but never emitted, so a weak signal or crowded channel could
+  # appear in the measurements with no actionable diagnosis.
+  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] \
+     && is_numeric "$WIFI_RSSI" \
+     && [ "$WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then
+    add_diag warn W1 "Your WiFi signal is weak (${WIFI_RSSI} dBm), which can cause retransmissions, latency spikes, and dropouts. Move closer to the router, switch to a nearer access point, or try the other WiFi band."
+  fi
+  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_SNR" ] \
+     && is_numeric "$WIFI_SNR" \
+     && [ "$WIFI_SNR" -lt "$THRESH_WIFI_SNR_LOW_DB" ]; then
+    add_diag warn W2 "Your WiFi signal is being overwhelmed by interference (SNR ${WIFI_SNR} dB). Try a less crowded channel or move the router away from sources of radio interference."
+  fi
+  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" ] \
+     && is_numeric "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" \
+     && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt "$THRESH_WIFI_CHANNEL_NEIGHBOURS" ]; then
+    add_diag warn WS-1 "Your WiFi channel is crowded (${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} neighbouring networks). If performance is inconsistent, choose a less busy channel or let the router select one automatically."
+  fi
+
   # G1/G2/G3 — gateway loss. All three describe trouble on the connection
   # between the Mac and the router *inside the home* — never the ISP or the
   # wider internet — and say so in plain words, because a reader who

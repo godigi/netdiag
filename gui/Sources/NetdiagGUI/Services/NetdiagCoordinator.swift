@@ -360,17 +360,6 @@ final class NetdiagCoordinator {
         launch(depth: depth, reason: reason, target: target, adoptAsReport: true)
     }
 
-    /// The dropdown's "Speed test": `--speed-only`, with the same live
-    /// progress a full scan shows.
-    ///
-    /// `adoptAsReport: false` is the whole difference. A speed-only run
-    /// carries a measurement and no diagnosis, so it neither replaces the
-    /// report card nor reaches the alert engine — a fast link is not
-    /// evidence that nothing is wrong.
-    func runSpeedTest() {
-        launch(depth: .speedOnly, reason: "speed test", target: nil, adoptAsReport: false)
-    }
-
     private func launch(depth: NetdiagRunner.Depth, reason: String,
                         target: String?, adoptAsReport: Bool) {
         guard !isScanning else {
@@ -441,22 +430,6 @@ final class NetdiagCoordinator {
     }
 
     // MARK: - Latency test
-
-    /// The dropdown's "Latency test". Deliberately not a check: it asks the
-    /// monitor already running to sample faster for a minute and shows the
-    /// result live. Spawning a second `netdiag --monitor` would put two
-    /// probers on the link one of them is trying to measure.
-    func startLatencyTest() {
-        requestedDestination = .live
-        guard Defaults.monitoringEnabled, monitor.isRunning else {
-            // The Live section explains the off state itself, which is why
-            // this still opens it rather than silently doing nothing.
-            log.debug("latency test asked for while monitoring is off")
-            return
-        }
-        monitor.beginBurst(interval: Defaults.latencyTestInterval,
-                           duration: Defaults.latencyTestDuration)
-    }
 
     func stopLatencyTest() { monitor.endBurst() }
 
@@ -532,26 +505,6 @@ final class NetdiagCoordinator {
                 // the monitor's own timers do not know that.
                 await self?.history.load()
             }
-        }
-    }
-
-    // MARK: - Sharing
-
-    /// `netdiag --redact --json` on the clipboard. Built for the case it
-    /// was written for: a non-technical user pasting into an ISP support
-    /// chat without handing over their public IP, SSID, gateway MAC or
-    /// city. Runs the CLI rather than re-encoding the snapshot on screen,
-    /// because redaction is defined once in helpers/emit_json.py and a
-    /// second implementation here is a second thing that can leak.
-    func copyShareableReport() async -> Bool {
-        do {
-            let report = try await NetdiagRunner.redactedReport(depth: .quick)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(report, forType: .string)
-            return true
-        } catch {
-            lastRunError = error.localizedDescription
-            return false
         }
     }
 

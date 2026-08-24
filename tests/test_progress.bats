@@ -39,7 +39,8 @@ wrapper_names() {
 # Every phase name any mode declares, deduped and sorted.
 declared_names() {
   local mode
-  for mode in full quick mtu-only wifi-only speed-only; do
+  for mode in full quick mtu-only wifi-only speed-only dns-only \
+              bufferbloat-only ping-only; do
     progress_plan_phases "$mode"
   done | sort -u
 }

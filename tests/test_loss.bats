@@ -147,7 +147,7 @@ sev_of() {
   # -t 2` reported a permanent 5.0% loss because the final reply landed
   # after the deadline. Both artefacts read as network faults. The outer
   # bound belongs to with_timeout, which does not corrupt the measurement.
-  run grep -nE '^[^#]*ping .*-t ' "$REPO/lib/internet_ping.sh" "$REPO/lib/gateway.sh"
+  run grep -nE '^[^#]*ping .*-t ' "$REPO/lib/internet_ping.sh" "$REPO/lib/gateway.sh" "$REPO/lib/mtu.sh"
   [ "$status" -ne 0 ]
 }
 

@@ -14,7 +14,7 @@ wifi_disconnect_run() {
 
   hdr "WiFi disconnects (past ${WIFI_DISCONNECT_WINDOW_HOURS}h)"
   local wifi_log_out
-  wifi_log_out="$(log show \
+  wifi_log_out="$(with_timeout 10 log show \
       --predicate 'subsystem CONTAINS[c] "wifi" OR subsystem CONTAINS[c] "airport"' \
       --info --last "${WIFI_DISCONNECT_WINDOW_HOURS}h" 2>/dev/null \
     | grep -Ei 'association|disassoc|deauth|roam|link down|link up' || true)"
@@ -24,7 +24,7 @@ wifi_disconnect_run() {
     | grep -Eic '(disassociated|deauthenticated|link[[:space:]]+down|disconnect[[:space:]]+reason|reassociating)' \
     || true)"
   WIFI_DISCONNECT_COUNT="${WIFI_DISCONNECT_COUNT:-0}"
-  info "Disconnect/reassoc events in last hour: $WIFI_DISCONNECT_COUNT"
+  info "Disconnect/reassoc events in last ${WIFI_DISCONNECT_WINDOW_HOURS}h: $WIFI_DISCONNECT_COUNT"
   # Only show event detail when there were actual disconnects — otherwise the
   # 2KB-per-line airportd dumps drown out the rest of the report. Each event
   # is condensed to "YYYY-MM-DD HH:MM:SS  <message after airportd:>",
@@ -50,8 +50,8 @@ wifi_disconnect_run() {
         }' \
       | log_pipe
   fi
-  if [ "$WIFI_DISCONNECT_COUNT" -gt 3 ]; then
-    warn "WiFi link is flapping ($WIFI_DISCONNECT_COUNT disconnects in 1h)."
+  if [ "$WIFI_DISCONNECT_COUNT" -gt "$THRESH_WIFI_DISCONNECTS" ]; then
+    warn "WiFi link is flapping ($WIFI_DISCONNECT_COUNT disconnects in ${WIFI_DISCONNECT_WINDOW_HOURS}h)."
   fi
 
   if [ -n "${NETDIAG_PAR_VARS:-}" ]; then

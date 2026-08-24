@@ -102,6 +102,9 @@ netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
 netdiag --mtu-only               # just the path-MTU probe
 netdiag --wifi-only              # just the WiFi checks
 netdiag --speed-only             # just the speed test, recorded to history
+netdiag --dns-only               # just DNS and resolver checks
+netdiag --bufferbloat-only       # just the loaded-vs-idle latency test
+netdiag --ping-only              # just gateway and internet latency/loss
 netdiag --redact --json          # safe to paste into a ticket
 netdiag --watch[=SEC]            # foreground loop, every SEC (default 300)
 netdiag --monitor                # streaming JSONL, one sample per line
@@ -140,6 +143,9 @@ netdiag --rules-catalog          # JSON catalog: every rule ID, title, blurb
 | `--speed-only`       | run only the speed test; recorded as a `speed-only`    |
 |                      | run, so it contributes its number without counting as  |
 |                      | a health check                                         |
+| `--dns-only`         | run only DNS and resolver checks                       |
+| `--bufferbloat-only` | run only the loaded-vs-idle latency test               |
+| `--ping-only`        | run only gateway and internet latency/loss probes      |
 | `--progress`         | emit progress events on **fd 3** while the run happens |
 | `--monitor`          | stream one compact JSON object per line until stopped  |
 | `--history[=N]`      | emit the whole run store as one grouped JSON object    |

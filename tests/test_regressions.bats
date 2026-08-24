@@ -27,6 +27,8 @@ setup() {
   . "$REPO/lib/common.sh"
   # shellcheck source=../lib/globals.sh
   . "$REPO/lib/globals.sh"
+  # shellcheck source=../lib/gateway.sh
+  . "$REPO/lib/gateway.sh"
 }
 
 # Reap anything a failing spinner assertion left behind. Without this a
@@ -132,6 +134,35 @@ spin() {
 @test "missing system resolver data makes no override claim" {
   run dns_is_manual_override "192.168.15.1" ""
   [ "$status" -ne 0 ]
+}
+
+@test "gateway probe keeps loss unmeasured when ping has no summary" {
+  # A command failure is not a measured 100% loss. The fake function keeps
+  # this test offline while still exercising gateway_run's parser and
+  # timeout wrapper.
+  ping() { return 1; }
+  QUICK=1 GATEWAY=192.0.2.1 LOG=/dev/null
+  run gateway_run
+  [ "$status" -eq 0 ]
+  [ -z "$GW_LOSS" ]
+  [[ "$output" != *"100% loss"* ]]
+}
+
+@test "load-sensitive ping probes do not use macOS ping's whole-run deadline" {
+  run grep -nE 'ping -c [0-9]+ -t ' \
+    "$REPO/lib/bufferbloat.sh" "$REPO/lib/mtr.sh" "$REPO/lib/public.sh" "$REPO/lib/mtu.sh"
+  [ "$status" -ne 0 ]
+}
+
+@test "optional macOS probes are wall-clock bounded" {
+  run grep -n 'with_timeout .*system_profiler' "$REPO/lib/wifi_scan.sh"
+  [ "$status" -eq 0 ]
+  run grep -n 'with_timeout .*log show' "$REPO/lib/wifi_disconnect.sh"
+  [ "$status" -eq 0 ]
+  run grep -n 'with_timeout .*wdutil info' "$REPO/lib/wifi.sh"
+  [ "$status" -eq 0 ]
+  run grep -n 'with_timeout .*nc -6' "$REPO/lib/ipv6.sh"
+  [ "$status" -eq 0 ]
 }
 
 @test "comma-separated DHCP lists are split into individual addresses" {
@@ -255,4 +286,3 @@ spin() {
   diagnosis_run >/dev/null
   [[ " ${DIAG_RULE[*]:-} " == *" V6-2 "* ]]
 }
-
