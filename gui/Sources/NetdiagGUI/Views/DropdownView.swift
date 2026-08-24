@@ -498,7 +498,7 @@ struct DropdownView: View {
                     .kerning(0.5)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("History") { openActivity() }
+                Button("Activity") { openActivity() }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
             }
