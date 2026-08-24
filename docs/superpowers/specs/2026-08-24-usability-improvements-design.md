@@ -153,10 +153,12 @@ new coordinator surface is needed.
 **Problem.** `SettingsView.swift:201–211` — every other Settings section
 pairs its toggles with an explanatory caption (e.g. the Automation section,
 `SettingsView.swift:196–198`: "An automatic check skips the speed test…").
-The 12-item "Tell me about" alert list is `Toggle(def.title, isOn: …)` with
-no subtitle — no indication of what triggers each one or how naggy it is —
-and several titles are unexplained jargon to a non-technical reader (e.g.
-"IP address conflict", "Two routers connected (Double NAT)").
+The "Tell me about" alert list (13 entries in `AlertDefinition.all` — the
+file's own header comment says "twelve," which is stale and out of scope
+for this fix) is `Toggle(def.title, isOn: …)` with no subtitle — no
+indication of what triggers each one or how naggy it is — and several
+titles are unexplained jargon to a non-technical reader (e.g. "IP address
+conflict", "Two routers connected (Double NAT)").
 
 **Constraint.** `AlertDefinitions.swift`'s own header is explicit:
 `title` is "a category label… navigation, not diagnosis," and "nothing in
@@ -177,7 +179,7 @@ exactly. This is Swift describing its own alert-timing preferences (already
 Swift-owned data, per the file's "Monitoring" section precedent in
 `SettingsView.swift`'s general tab), not diagnosis prose.
 
-**Files.** `Alerts/AlertDefinitions.swift` (new field, 12 short captions),
+**Files.** `Alerts/AlertDefinitions.swift` (new field, 13 short captions),
 `Views/SettingsView.swift:201–211` (render the caption).
 
 ---
@@ -238,5 +240,5 @@ together exits 3 with the mutual-exclusivity message.
 
 No dependencies between items — all seven are independently shippable, in
 any order. Smallest-diff-first is a reasonable default for the implementation
-plan: #7 (CLI, ~10 lines) → #4 (one label) → #5 → #1 → #3 → #2 → #6 (12 new
+plan: #7 (CLI, ~10 lines) → #4 (one label) → #5 → #1 → #3 → #2 → #6 (13 new
 caption strings, the most content to get right).
