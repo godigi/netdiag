@@ -173,9 +173,15 @@ struct RunReportView: View {
                        metricKey: nil,
                        glossaryKey: "dns",
                        medianFormatter: nil))
-        if let wifi = s.wifi, let rssi = wifi.rssi {
+        // Unconditional on `wifi` alone, matching every other row's
+        // "not measured" fallback (see `format()` below) — only the
+        // presence of `rssi` inside it is optional, not the row. A wired
+        // run has no `wifi` object at all and correctly shows nothing;
+        // a Wi-Fi run without `sudo` now says why instead of the row just
+        // not being there.
+        if let wifi = s.wifi {
             out.append(Row(label: "Wi-Fi signal",
-                           value: "\(rssi) dBm",
+                           value: wifi.rssi.map { "\($0) dBm" } ?? "not measured — needs one sudo run",
                            health: health(["WD-1"], ["wifi"]),
                            metricKey: "wifi_rssi_dbm",
                            glossaryKey: "wifi_signal",
