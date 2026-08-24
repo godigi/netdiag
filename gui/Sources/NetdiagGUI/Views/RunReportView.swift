@@ -52,7 +52,7 @@ struct RunReportView: View {
                     }
                     .frame(width: 156, alignment: .leading)
                     Text(row.value)
-                        .foregroundStyle(row.value == "not measured" ? .secondary : .primary)
+                        .foregroundStyle(row.value.hasPrefix("not measured") ? .secondary : .primary)
                         .lineLimit(1)
                         .frame(width: 128, alignment: .leading)
                     medianColumn(row)
