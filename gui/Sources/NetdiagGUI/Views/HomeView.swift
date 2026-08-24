@@ -152,7 +152,8 @@ struct HomeView: View {
 
     @ViewBuilder
     private var locationWarningBanner: some View {
-        if isConnectedToWiFi && !coordinator.locationPermissions.isAuthorized {
+        if isConnectedToWiFi && !coordinator.locationPermissions.isAuthorized
+            && !appSettings.locationBannerDismissed {
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "location.slash")
                     .font(.title3)
@@ -177,6 +178,19 @@ struct HomeView: View {
                     }
                 }
                 .controlSize(.small)
+
+                // Declining is a settled choice, not a per-visit question —
+                // Settings keeps its own always-on "Allow" row as the
+                // durable way back in, so dismissing here loses no
+                // capability, just the repetition.
+                Button {
+                    appSettings.locationBannerDismissed = true
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
             .padding(12)
             .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))

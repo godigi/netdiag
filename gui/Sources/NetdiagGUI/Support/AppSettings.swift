@@ -65,6 +65,9 @@ final class AppSettings {
     var hasOnboarded: Bool {
         didSet { Defaults.hasOnboarded = hasOnboarded }
     }
+    var locationBannerDismissed: Bool {
+        didSet { Defaults.locationBannerDismissed = locationBannerDismissed }
+    }
     var autoCheckUpdates: Bool {
         didSet { Defaults.autoCheckUpdates = autoCheckUpdates }
     }
@@ -96,6 +99,7 @@ final class AppSettings {
         binaryPath = Defaults.binaryPath
         disabledAlerts = Defaults.disabledAlerts
         hasOnboarded = Defaults.hasOnboarded
+        locationBannerDismissed = Defaults.locationBannerDismissed
         autoCheckUpdates = Defaults.autoCheckUpdates
     }
 }
