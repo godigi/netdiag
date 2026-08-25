@@ -222,6 +222,7 @@ struct SettingsView: View {
                         Text(def.caption)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.vertical, 2)
                 }
