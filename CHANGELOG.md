@@ -182,6 +182,52 @@ All notable changes to `netdiag` are recorded here. Format follows
   latest figures, not the first. On the live store this turned two
   near-duplicate entries into five distinct faults with honest counts,
   with the metric table back on screen.
+- **`lib/netid.sh` and `helpers/history.py` disagreed about what one
+  network is** — two defects in one nine-line block, the second hidden by
+  the first. `lib/netid.sh:60` lowercased the gateway MAC with
+  `${GW_MAC,,}`, a bash 4+ expansion; under macOS's system bash 3.2 that
+  is a fatal runtime "bad substitution" which kills the surrounding
+  subshell, so the parity test failed with "netid_group failed" rather
+  than with a value mismatch — a crash wearing a disagreement's clothes.
+  Uses `tr` now. With that fixed the real disagreement surfaced: the
+  block ordered its preference MAC, then gateway IP, then SSID,
+  contradicting both `group_key` (MAC, SSID, gateway) and this file's own
+  header, which documents a gateway IP as the weakest key because
+  "192.168.1.1 collides constantly". On Wi-Fi with a visible SSID but no
+  gateway MAC — ARP not yet resolved, or a captive network — `netid_run`
+  emitted `gw:192.168.1.1` while `group_key` derived `ssid:Cafe` from the
+  very id `netid_run` had just written, so the live join this key exists
+  to enable silently failed and split one network in two. The old
+  fixtures never carried both an SSID and a gateway at once, so nothing
+  caught it. `tests/test_history.bats` is green for the first time —
+  it has carried this one failure on `main` throughout.
+- **A network joined while another network's first check was running
+  never got its own, ever.** The first-sighting path inserted into
+  `seenNetworks` *before* calling `runScan`, and `launch()` silently
+  no-ops when a scan is already in flight — so the second network was
+  permanently marked seen with no scan behind it. Latent at ~10 s when
+  first-join ran `--quick`; reachable in ordinary use at ~60 s now that
+  it runs a full check, which is the only automatic source of that
+  network's throughput, bufferbloat and MTU history. `launch` now
+  reports whether it actually started, synchronously and before any
+  `await`, and the network is marked seen only when it did — so a
+  declined launch leaves it unseen and the next sighting retries.
+- **`--share` could publish the network's name from a field it did not
+  scrub.** Read-time redaction can only mask values the record carries,
+  and the name is written in three places: a run whose `wifi.ssid` came
+  back null still holds it in `network.label` and in the `ssid=`
+  component of `network.id`, and the CLI interpolates that name into
+  diagnosis prose. Probed directly, a record with `wifi.ssid` null and
+  label `SecretHouse` published "Trouble on SecretHouse" verbatim. Both
+  are now secret sources, with the hidden-SSID placeholder excluded so a
+  generic phrase never becomes a secret. A second pass now also masks any
+  address the path list cannot know about — `wan.load_balancing
+  .distinct_ips` keeps its own copy of the public IP, caught today only
+  because `public.ip` holds an identical string. That sweep is an
+  allow-list, not `if addr.is_global`: Python reports `203.0.113.0/24` as
+  `is_private`, so TEST-NET and several reserved blocks would have sailed
+  through, and a redactor that keeps what it does not recognise is the
+  wrong shape.
 
 ### Changed
 
