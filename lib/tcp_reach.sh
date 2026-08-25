@@ -20,7 +20,8 @@ tcp_reach_run() {
     [ "$_dup" -eq 0 ] && tcp_targets+=( "$TARGET:443" )
   fi
   local tcp_tmp
-  tcp_tmp="$(mktemp -d "${TMPDIR:-/tmp}/netdiag-tcp.XXXXXX")"
+  netdiag_mktemp_dir netdiag-tcp || { warn "TCP reach scratch directory unavailable — skipping."; return 0; }
+  tcp_tmp="$NETDIAG_TMP_DIR"
   for entry in "${tcp_targets[@]}"; do
     host="${entry%:*}"; port="${entry##*:}"
     out_file="$tcp_tmp/${host//[.:\/]/_}-${port}.out"
@@ -57,6 +58,7 @@ tcp_reach_run() {
     fi
   done
   rm -rf "$tcp_tmp"
+  netdiag_tmp_forget "$tcp_tmp"
 
   if [ -n "${NETDIAG_PAR_VARS:-}" ]; then
     setvar TCP_REACH_ANY_OK "$TCP_REACH_ANY_OK"

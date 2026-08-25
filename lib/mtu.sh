@@ -22,19 +22,19 @@ mtu_run() {
   # in the worst case than three separate 2 s probes would have been.
   local size
   for size in 1472 1452 1432 1412 1392 1372 1352 1300 1200; do
-    if ping -D -c 3 -i 0.2 -t 2 -s "$size" 1.1.1.1 >/dev/null 2>&1; then
+    if with_timeout 4 ping -D -c 3 -i 0.2 -s "$size" 1.1.1.1 >/dev/null 2>&1; then
       MTU_PATH_SIZE="$size"
       break
     fi
   done
   if [ -n "$MTU_PATH_SIZE" ]; then
     MTU_EFFECTIVE=$((MTU_PATH_SIZE + 28))
-    if [ "$MTU_EFFECTIVE" -ge 1480 ]; then
+    if [ "$MTU_EFFECTIVE" -ge "$THRESH_MTU_FULL_PATH" ]; then
       ok "Effective path MTU: ${MTU_EFFECTIVE} (standard ethernet / PPPoE frames pass DF)"
-    elif [ "$MTU_EFFECTIVE" -ge 1400 ]; then
+    elif [ "$MTU_EFFECTIVE" -ge "$THRESH_MTU_STANDARD" ]; then
       ok "Effective path MTU: ${MTU_EFFECTIVE} (tunneled / VPN MTU)"
     else
-      warn "Effective path MTU: ${MTU_EFFECTIVE} (< 1400) — likely restricted MTU / tunnel clamp."
+      warn "Effective path MTU: ${MTU_EFFECTIVE} (< ${THRESH_MTU_STANDARD}) — likely restricted MTU / tunnel clamp."
     fi
   else
     bad "PMTU probe: even 1228-byte frames fail with DF. Severe MTU issue or DF stripped."

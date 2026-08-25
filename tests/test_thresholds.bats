@@ -36,13 +36,17 @@ setup() {
            THRESH_ICMP_TOTAL_LOSS_PCT THRESH_WIFI_RSSI_WEAK_DBM \
            THRESH_WIFI_RSSI_G1_DBM THRESH_WIFI_SNR_LOW_DB \
            THRESH_WIFI_CHANNEL_NEIGHBOURS THRESH_WIFI_DISCONNECTS \
+           THRESH_WIFI_RSSI_EXCELLENT_DBM THRESH_LATENCY_JITTER_WARN_MS \
            THRESH_IPV6_LOSS_PCT THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+           THRESH_MTU_FULL_PATH THRESH_MTU_ETHERNET \
+           THRESH_GATEWAY_QUICK_PING_COUNT \
            THRESH_NTP_DRIFT_CRIT_S THRESH_NTP_DRIFT_WARN_S \
            THRESH_DHCP_LEASE_WARN_S THRESH_BUFFERBLOAT_A_MS \
            THRESH_BUFFERBLOAT_B_MS THRESH_BUFFERBLOAT_C_MS \
            THRESH_BUFFERBLOAT_D_MS THRESH_COMPARE_MIN_SAMPLES \
            THRESH_COMPARE_TAIL_PCTL THRESH_MON_LOSS_CONFIRM_CYCLES \
-           THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS; do
+           THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS \
+           THRESH_MTR_HOP_LOSS_PCT; do
     [ -n "${!v:-}" ] || { echo "undefined threshold: $v"; return 1; }
   done
 }
@@ -149,6 +153,39 @@ setup() {
   [[ "$rules" == *" G3 "* ]]
 }
 
+@test "weak WiFi signal emits W1 even without gateway loss" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-76 WIFI_SNR=30
+  WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS=0 PUBLIC_OK=1 PUBLIC_CHECKED=1
+  GW_LOSS=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]} " == *" W1 "* ]]
+}
+
+@test "low WiFi SNR emits W2" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-60 WIFI_SNR=19
+  WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS=0 PUBLIC_OK=1 PUBLIC_CHECKED=1
+  GW_LOSS=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]} " == *" W2 "* ]]
+}
+
+@test "a crowded WiFi channel emits WS-1" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY=192.168.1.1 IS_WIFI=1 WIFI_RSSI=-60 WIFI_SNR=30
+  WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS=4 PUBLIC_OK=1 PUBLIC_CHECKED=1
+  GW_LOSS=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [[ " ${DIAG_RULE[*]} " == *" WS-1 "* ]]
+}
+
 # ── grade_bufferbloat reads the same table ───────────────────────────────
 
 @test "grade_bufferbloat maps the Waveform bands from the shared constants" {
@@ -162,4 +199,21 @@ setup() {
 @test "grade_bufferbloat boundaries are exclusive at the lower edge" {
   [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_A_MS")" = B ]
   [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_D_MS")" = F ]
+}
+
+@test "helpers/summary.py carries no inline numeric cutoff either" {
+  # --summary now judges each metric line, so this file is the fourth
+  # thing in the project that decides whether a number is normal. Same
+  # guard as the history.py one above, same reasoning: a cutoff creeping
+  # back as a Python literal is a number lib/thresholds.sh would never
+  # reflect a change to.
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$REPO/helpers/summary.py"
+  [ "$status" -ne 0 ] || { echo "inline cutoff in summary.py:"; echo "$output"; return 1; }
+}
+
+@test "the guard would actually catch a cutoff planted in summary.py" {
+  cp "$REPO/helpers/summary.py" "$BATS_TEST_TMPDIR/planted_summary.py"
+  printf '\nif False:\n    pass  # if loss >= 20:\n' >> "$BATS_TEST_TMPDIR/planted_summary.py"
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$BATS_TEST_TMPDIR/planted_summary.py"
+  [ "$status" -eq 0 ]
 }

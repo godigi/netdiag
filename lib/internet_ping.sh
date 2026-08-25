@@ -53,14 +53,7 @@
 # "the probe measured total loss" are different facts, and conflating them
 # is what made ping6 report a permanently broken IPv6 stack in v0.5.1.
 internet_ping_parse() {
-  local out="$1" loss avg jitter
-  loss="$(printf '%s\n' "$out" \
-    | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' | head -1)"
-  # "round-trip min/avg/max/stddev = 3.024/3.485/4.197/0.305 ms"
-  # Split on [ /] puts avg at NF-3 and stddev at NF-1.
-  avg="$(printf    '%s\n' "$out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
-  jitter="$(printf '%s\n' "$out" | awk -F'[ /]' '/round-trip|rtt/{print $(NF-1); exit}')"
-  printf '%s|%s|%s' "$loss" "$avg" "$jitter"
+  ping_parse_summary "$1"
 }
 
 internet_ping_run() {
@@ -80,11 +73,18 @@ internet_ping_run() {
   # per-packet TTL — see the header comment. with_timeout provides the
   # outer bound instead, generously, so it only ever fires on a genuinely
   # stuck probe rather than truncating a healthy one.
+  #
+  # -W is the *per-reply* wait, which is safe and necessary: without it a
+  # fully black-holed target costs 4 s of sending plus a ~10 s tail wait
+  # before the statistics line appears, leaving one second of margin under
+  # with_timeout 15. Losing that race loses the measurement entirely — the
+  # monitor's tighter wrappers already did, and reported a dead link as
+  # "not measured" rather than 100% loss. See PING_REPLY_WAIT_MS.
   with_timeout 15 ping -c "$LOSS_PROBE_COUNT" -i "$LOSS_PROBE_INTERVAL" \
-    "$INET_TARGET"     >"$tmp_a" 2>/dev/null &
+    -W "$PING_REPLY_WAIT_MS" "$INET_TARGET"     >"$tmp_a" 2>/dev/null &
   local pid_a=$!
   with_timeout 15 ping -c "$LOSS_PROBE_COUNT" -i "$LOSS_PROBE_INTERVAL" \
-    "$INET_TARGET_ALT" >"$tmp_b" 2>/dev/null &
+    -W "$PING_REPLY_WAIT_MS" "$INET_TARGET_ALT" >"$tmp_b" 2>/dev/null &
   local pid_b=$!
   wait "$pid_a" 2>/dev/null || true
   wait "$pid_b" 2>/dev/null || true

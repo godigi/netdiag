@@ -442,7 +442,7 @@ struct MergeSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Merge \"\(coordinator.history.displayName(for: source.id))\"")
                 .font(.headline)
-            Text("Its \(source.runCount) check(s) will be shown as part of the network you pick. This only changes how history is grouped in this app — nothing is deleted, and you can undo it.")
+            Text("Its \(source.runCount) check\(source.runCount == 1 ? "" : "s") will be shown as part of the network you pick. This only changes how history is grouped in this app — nothing is deleted, and you can undo it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

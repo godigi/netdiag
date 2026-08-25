@@ -87,9 +87,9 @@ def main() -> None:
             "label": "Excellent",
             "tone": "good",
             "blurb": (
-                "Your Wi-Fi signal is as strong as it gets — you're "
-                "right next to the router or access point, and the "
-                "wireless link is never going to be the bottleneck."
+                "Your Mac has a strong radio signal to the access point. "
+                "That does not test whether the router or internet path "
+                "is delivering traffic."
             ),
         },
         {
@@ -97,8 +97,9 @@ def main() -> None:
             "label": "Good",
             "tone": "ok",
             "blurb": (
-                "Your Wi-Fi signal is solid. Streaming, video calls, "
-                "and downloads should all work smoothly from here."
+                "Your Mac has a solid radio signal to the access point. "
+                "Signal strength alone cannot confirm that websites will "
+                "load."
             ),
         },
         {
@@ -106,9 +107,9 @@ def main() -> None:
             "label": "Fair",
             "tone": "warn",
             "blurb": (
-                "Your Wi-Fi signal is on the weaker side. You might "
-                "notice occasional slowdowns or a video call stutter, "
-                "especially the further you get from the router."
+                "Your radio signal is on the weaker side, but this reading "
+                "still does not identify whether an internet problem is "
+                "local Wi-Fi, the router, or the provider."
             ),
         },
         {
@@ -116,8 +117,9 @@ def main() -> None:
             "label": "Weak",
             "tone": "bad",
             "blurb": (
-                "Your Mac is far from the router or something is "
-                "blocking the signal — expect stalls and dropped calls."
+                "Your radio signal is weak or obstructed. Confirm the "
+                "router and internet path with a reachability check before "
+                "assuming signal strength is the cause."
             ),
         },
     ]

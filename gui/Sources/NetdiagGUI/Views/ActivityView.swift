@@ -34,7 +34,7 @@ struct ActivityView: View {
     private var heading: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Activity").font(.headline)
-            Text(events.isEmpty ? "No events yet" : "\(events.count) event(s)")
+            Text(events.isEmpty ? "No events yet" : "\(events.count) event\(events.count == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

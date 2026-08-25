@@ -43,19 +43,28 @@ struct HomeView: View {
                 // failed scan needs to surface whether or not the screen
                 // underneath it is empty.
                 if let error = coordinator.lastRunError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 8) {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button("Try Again") {
+                            coordinator.runScan(depth: .quick, reason: "retry after failure")
+                        }
+                        .controlSize(.small)
+                    }
                 }
 
                 switch coordinator.reportSource {
                 case .live(let run):
-                    RunReportView(snapshot: run.snapshot, showRuleIDs: appSettings.expertExpanded)
+                    RunReportView(snapshot: run.snapshot, rawJSON: run.rawJSON,
+                                  showRuleIDs: appSettings.expertExpanded)
                 case .stored(let detail):
                     // Comparison chips come free: `detail` is a `--show`
                     // response, and RunReportView already knows how to
                     // render one — RunDetailView passes the identical pair.
                     RunReportView(snapshot: detail.run, comparison: detail.comparison,
+                                  rawJSON: detail.asRunResult.rawJSON,
                                   showRuleIDs: appSettings.expertExpanded)
                 case nil:
                     emptyState
@@ -99,7 +108,9 @@ struct HomeView: View {
             let cell = SignalScale.cellContent(rssi: resolvedRSSI, scale: coordinator.signalScale.scale)
             HStack(spacing: 10) {
                 Image(systemName: "wifi")
-                    .foregroundStyle(cell.tint)
+                    // RSSI describes the radio leg only; it is not the
+                    // connection verdict, so keep the icon neutral.
+                    .foregroundStyle(.secondary)
                     .frame(width: 18)
                 if let name = coordinator.wifiDisplayName {
                     Text(name).fontWeight(.medium)
@@ -109,7 +120,7 @@ struct HomeView: View {
                 Spacer()
                 Text(cell.value)
                     .fontWeight(.medium)
-                    .foregroundStyle(cell.tint)
+                    .foregroundStyle(.primary)
                 if let unit = cell.unit {
                     Text(unit)
                         .font(.caption)
@@ -145,7 +156,8 @@ struct HomeView: View {
 
     @ViewBuilder
     private var locationWarningBanner: some View {
-        if isConnectedToWiFi && !coordinator.locationPermissions.isAuthorized {
+        if isConnectedToWiFi && !coordinator.locationPermissions.isAuthorized
+            && !appSettings.locationBannerDismissed {
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "location.slash")
                     .font(.title3)
@@ -170,6 +182,19 @@ struct HomeView: View {
                     }
                 }
                 .controlSize(.small)
+
+                // Declining is a settled choice, not a per-visit question —
+                // Settings keeps its own always-on "Allow" row as the
+                // durable way back in, so dismissing here loses no
+                // capability, just the repetition.
+                Button {
+                    appSettings.locationBannerDismissed = true
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
             .padding(12)
             .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
@@ -224,12 +249,39 @@ struct HomeView: View {
                     Button("Cancel") { coordinator.cancelScan() }
                 }
             } else {
-                Button("Run a check") {
-                    coordinator.runScan(depth: .full, reason: "you asked")
+                HStack(spacing: 8) {
+                    // Secondary, and second: the quick check answers "is it
+                    // broken right now" while the problem is still
+                    // happening, and that stays the default. This one is
+                    // the deliberate, slower question — the only depth that
+                    // measures throughput, latency under load and path MTU.
+                    Button(fullCheckLabel) {
+                        coordinator.runFullCheck()
+                    }
+                    .help(fullCheckHelp)
+
+                    Button("Run a check") {
+                        coordinator.runScan(depth: .quick, reason: "you asked")
+                    }
+                    .keyboardShortcut("r")
+                    .buttonStyle(.borderedProminent)
                 }
-                .keyboardShortcut("r")
             }
         }
+    }
+
+    // Both of these are `FullCheckPolicy`'s wording, not this view's — see
+    // that file for why the label has to track which depth will actually
+    // run, and why the fallback text states only what the app knows. The
+    // dropdown's own control reads the same two functions, so the two can
+    // never describe the same button differently.
+
+    private var fullCheckLabel: String {
+        FullCheckPolicy.controlLabel(isSafe: coordinator.fullCheckIsSafe)
+    }
+
+    private var fullCheckHelp: String {
+        FullCheckPolicy.controlHelp(isSafe: coordinator.fullCheckIsSafe)
     }
 
     private func elapsedLabel(at now: Date) -> String {

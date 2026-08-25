@@ -62,6 +62,11 @@ or P2. That branch points the user at a full run rather than guessing.
 - Severity: `warn`
 - Recommendation: change channel — interference on the current one.
 
+> **G1, G2 and G3 all fire only when `TCP-1` does not.** A gateway that
+> drops pings while still carrying TCP is filtering, not failing; see the
+> precedence note under TCP-1 below. The trigger lines here read as
+> `... AND NOT TCP-1`.
+
 ### G1 — Gateway loss + weak WiFi
 
 - Trigger: `gateway.loss_pct >= 20 AND wifi.rssi < -70`
@@ -337,6 +342,21 @@ All of the below are implemented and can fire.
   letting TCP through.
 - Rationale: ping-based diagnostics conflate "ICMP works" with "network
   works." A green TCP panel + red ICMP panel is the textbook tell.
+- **Precedence: TCP-1 suppresses G1, G2 and G3.** It is evaluated before
+  them, in both `lib/diagnosis.sh` and `lib/monitor.sh`, and when it fires
+  the gateway-loss rules do not. Until this was so, both fired together and
+  the report carried "reboot the router (unplug it for 30 seconds)"
+  immediately above "the network is up; don't worry about the ping numbers
+  above" — with the critical one owning the headline and the exit code, so
+  every hotel and corporate network scored a `2`. TCP reaching 1.1.1.1:443
+  means packets *are* crossing the gateway, so the gateway is forwarding and
+  merely declining to answer pings itself; `THRESH_ICMP_FILTERED_LOSS_PCT`
+  is deliberately set well above `LOSS_CRIT_PCT` so that inference is safe.
+  No figure is lost — TCP-1's own text quotes the gateway loss percentage.
+  If TCP is *not* reaching anything, there is no evidence the gateway
+  forwards at all, TCP-1 does not fire, and G1/G2/G3 call the loss what it
+  is.
+
 ### WS-1 — WiFi channel is congested
 
 - Trigger: `wifi_scan.current_channel_neighbors > 3`.

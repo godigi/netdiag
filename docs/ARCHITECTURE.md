@@ -1,6 +1,6 @@
 # Architecture
 
-## Current shape (v0.9.0)
+## Current shape (v0.10.0)
 
 `bin/netdiag` is a ~230-line orchestrator. Every section lives in its
 own `lib/*.sh` module with a `Reads / Writes / Entry` header comment.
@@ -55,7 +55,7 @@ helpers/speedtest_result.py  # speed test's final result JSON → tab-separated
 gui/                         # SwiftUI menu-bar client (SwiftPM, macOS 14+)
 ```
 
-## The CLI/GUI split (v0.9.0)
+## The CLI/GUI split (v0.10.0)
 
 `gui/` is a **client**. It renders; it does not decide.
 

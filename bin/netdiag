@@ -6,6 +6,7 @@
 #
 # Usage: netdiag [TARGET] [--quick] [--quiet] [--json] [--no-gping]
 #                [--speed] [--no-speed] [--mtu-only] [--wifi-only]
+#                [--dns-only] [--bufferbloat-only] [--ping-only]
 #                [--baseline] [--no-baseline] [--log PATH] [-h|--help]
 #
 # This file is the orchestrator. Each section is implemented in lib/*.sh
@@ -56,6 +57,10 @@ _netdiag_on_exit() {
   # prompt. Guarded because the trap is installed before lib/common.sh is
   # sourced, so an early failure can reach here with the function undefined.
   command -v progress_spin_stop >/dev/null 2>&1 && progress_spin_stop
+  # Same guard, same reason: the parent-owned parallel scratch dir is
+  # registered from lib/common.sh, which may not be sourced yet when an
+  # early failure lands here. Without this sweep an aborted run leaks it.
+  command -v _netdiag_tmp_cleanup >/dev/null 2>&1 && _netdiag_tmp_cleanup
   # The status is settled first and reported once, rather than exiting from
   # each branch, so the --progress stream's closing event can carry it. A
   # consumer renders every phase still unresolved at that point as "didn't
@@ -110,6 +115,13 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 unset NETDIAG_RUN_ID
 
 NETDIAG_VERSION="0.10.0"
+
+_require_python3() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf 'netdiag: python3 is required but was not found on PATH\n' >&2
+    return 1
+  fi
+}
 
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
@@ -180,6 +192,13 @@ HISTORY_LIMIT=0
 # whether their network is behaving.
 SHOW=0
 SHOW_ID=""
+# --share renders one stored run — or one fed in on stdin — as plain
+# text with identifying values masked, for pasting into a support chat.
+# Distinct from --redact, which masks a run as it happens: the store
+# deliberately keeps full detail (see lib/output.sh's REDACT save/restore),
+# so sharing a *past* run has to redact at read time.
+SHARE=0
+SHARE_ID=""
 # --monitor: the machine-readable sibling of --watch. Streams one compact
 # JSON object per line until stopped. Three cadence tiers, each overridable
 # so the GUI's Settings sliders have something to drive.
@@ -201,6 +220,18 @@ _take_monitor=""
 # Same reasoning for `--show <id>`: its own state, so a dangling --log
 # never swallows the run id and vice versa.
 _take_show=0
+# Each --*-only flag below overwrites FOCUS with a bare assignment —
+# stacking two used to silently keep only the last one and run it with no
+# warning. This guard rejects the second one instead, matching the
+# --mtu-only/--quick and --speed-only/--no-speed conflicts already handled
+# further down in the flag-conflict validation block.
+_set_focus() {
+  if [ -n "$FOCUS" ]; then
+    printf 'netdiag: --%s-only and --%s-only are mutually exclusive (see --help)\n' "$FOCUS" "$1" >&2
+    exit 3
+  fi
+  FOCUS="$1"
+}
 while [ "$#" -gt 0 ]; do
   if [ "$_take_value" -eq 1 ]; then
     LOG_OVERRIDE="$1"; _take_value=0; shift; continue
@@ -229,12 +260,15 @@ while [ "$#" -gt 0 ]; do
     --quiet)          QUIET=1 ;;
     --expert)         EXPERT=1 ;;
     --redact)         REDACT=1 ;;
-    --mtu-only)       FOCUS="mtu" ;;
-    --wifi-only)      FOCUS="wifi" ;;
+    --mtu-only)       _set_focus mtu ;;
+    --wifi-only)      _set_focus wifi ;;
     # --speed-only implies an explicit --speed: the whole point is "answer
     # this one question now", and leaving SPEED_EXPLICIT unset would let a
     # stray --quick silently turn the run into a no-op that still exited 0.
-    --speed-only)     FOCUS="speed"; SPEED=1; SPEED_EXPLICIT=1 ;;
+    --speed-only)     _set_focus speed; SPEED=1; SPEED_EXPLICIT=1 ;;
+    --dns-only)       _set_focus dns ;;
+    --bufferbloat-only) _set_focus bufferbloat ;;
+    --ping-only)      _set_focus ping ;;
     --progress)       PROGRESS=1 ;;
     --log)            _take_value=1 ;;
     --log=*)          LOG_OVERRIDE="${1#--log=}" ;;
@@ -248,6 +282,8 @@ while [ "$#" -gt 0 ]; do
     --history=*)      HISTORY=1; HISTORY_LIMIT="${1#--history=}" ;;
     --show)           SHOW=1; _take_show=1 ;;
     --show=*)         SHOW=1; SHOW_ID="${1#--show=}" ;;
+    --share)          SHARE=1 ;;
+    --share=*)        SHARE=1; SHARE_ID="${1#--share=}" ;;
     --monitor)        MONITOR=1 ;;
     --monitor-fast-interval)      _take_monitor=FAST ;;
     --monitor-fast-interval=*)    MONITOR_FAST_INTERVAL="${1#*=}" ;;
@@ -266,6 +302,7 @@ while [ "$#" -gt 0 ]; do
       printf 'netdiag %s\n' "$NETDIAG_VERSION"
       exit 0 ;;
     --capabilities)
+      _require_python3 || exit 3
       # A handshake, not a run: gather facts in bash, let python write the
       # JSON. Sourcing lib/speedtest.sh here is safe — the file is function
       # definitions only — and we need speedtest_flavor() to report which
@@ -293,6 +330,7 @@ while [ "$#" -gt 0 ]; do
       python3 "$HELPERS_DIR/capabilities.py" || exit 3
       exit 0 ;;
     --rules-catalog)
+      _require_python3 || exit 3
       # Same shape as --capabilities: a static handshake, not a run.
       # helpers/rules_catalog.py is pure module-level data — bash's only
       # job is naming the running version, the one fact python can't know
@@ -302,6 +340,7 @@ while [ "$#" -gt 0 ]; do
       python3 "$HELPERS_DIR/rules_catalog.py" || exit 3
       exit 0 ;;
     --signal-scale)
+      _require_python3 || exit 3
       # Same shape as --rules-catalog: a static handshake, not a run. The
       # three RSSI cutoffs that define the Excellent/Good/Fair/Weak bands
       # already live in lib/thresholds.sh; they reach the helper through
@@ -324,43 +363,50 @@ monitoring at the end.
 
 Usage: netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
                [--json] [--quiet] [--expert] [--progress] [--log PATH]
-               [--mtu-only | --wifi-only | --speed-only]
+               [--mtu-only | --wifi-only | --speed-only | --dns-only |
+                --bufferbloat-only | --ping-only] [--share[=ID]]
 
 Positional:
   TARGET            hostname/IP to add to ping, DNS, TCP reach, and a second
                     traceroute — useful for "this specific site is slow"
 
-Flags:
-  --quick           skip slow checks (bufferbloat, per-hop loss, speed test,
-                    internet packet-loss probe, WiFi scan)
-  --gping           after the report, launch a live ping monitor on the
-                    discovered hops (gping must be installed). Without
-                    this flag you'll be prompted; default is no.
-  --no-gping        skip the gping prompt entirely (used by scripts /
-                    watchers; equivalent to answering "no" upfront)
-  --no-bufferbloat  skip the 100 MB / 10 s bufferbloat probe (saves data on
-                    metered links)
-  --speed           run the speedtest even under --quick (it is already on
-                    by default in a normal run; ~30 s and ~50 MB)
+Common:
+  --quick           skip slow checks (bufferbloat, per-hop loss, speed
+                    test, internet packet-loss probe, MTU probe, WiFi
+                    scan). Finishes in ~8 s on a healthy network.
   --no-speed        skip the speedtest — use on metered or slow links, and
-                    to bring a full run back under ~30 s
-  --json            emit one JSON object on stdout; no human-readable output
-                    unless --log PATH is also passed
-  --quiet           print only the diagnoses; suppress the Report card too
+                    to bring a full run back under ~30 s (to force it back
+                    on under --quick, see --speed under Advanced)
   --expert          show every detailed measurement section (RSSI, full
                     DNS / TCP / traceroute / DHCP / per-hop loss). Default
                     output is a compact Report card + diagnoses only.
   --redact          mask identifying values (public IP, SSID, BSSID, IPv6
                     address, gateway MAC, city) on stdout and in --json so
                     the report is safe to paste into a forum or ticket.
-                    The log file on disk keeps full detail. Implies
+                    The ISP name is deliberately kept — it names a
+                    provider, which is what makes the report useful to
+                    read. The log file on disk keeps full detail. Implies
                     compact output (--expert is ignored).
+
+Sharing and output:
+  --share[=ID|-]    print one run as plain text, no colours, identifying
+                    values masked — the paste-ready form of a report.
+                    Bare: the most recent stored run. =ID: that stored run
+                    (ids come from --history). =-: read one run's JSON on
+                    stdin.
+  --json            emit one JSON object on stdout; no human-readable output
+                    unless --log PATH is also passed
+  --quiet           print only the diagnoses; suppress the Report card too
+  --log PATH        write the human-readable log to PATH (default
+                    ~/net-diag/<timestamp>.log)
   --progress        stream one JSON progress event per line on fd 3 (which
                     is pointed at stderr) as the run moves through its
                     phases: the plan, each phase starting and finishing,
                     and the speed test's own stages. stdout is untouched,
                     so --json --progress still emits exactly one object.
                     See docs/JSON-SCHEMA.md for the event reference.
+
+Just one check:
   --mtu-only        run only the path-MTU probe (plus the interface and
                     public-reach checks it depends on)
   --wifi-only       run only the WiFi checks: link quality, neighbourhood
@@ -373,11 +419,6 @@ Flags:
   --dns-only        run only the DNS checks and resolvers probe
   --bufferbloat-only run only the bufferbloat load test
   --ping-only       run only gateway and internet latency / packet loss probes
-  --log PATH        write the human-readable log to PATH (default
-                    ~/net-diag/<timestamp>.log)
-  --baseline        compare this run against medians of the last 10 runs
-                    in ~/net-diag/baseline.jsonl (default on)
-  --no-baseline     skip the baseline comparison and don't append to history
 
 Modes (exit after running, don't run the normal check battery):
   --watch[=SEC]            re-run --quick netdiag every SEC seconds
@@ -406,8 +447,6 @@ Modes (exit after running, don't run the normal check battery):
   --install-watcher        install a launchd plist that runs netdiag
                            every 15 min in the background.
   --uninstall-watcher      remove the launchd plist.
-  --watcher-status         print JSON status of the background watcher.
-  --prune-history[=DAYS]   prune history records older than DAYS (default 90).
   --version                print "netdiag VERSION" and exit.
   --capabilities           print one JSON object describing this install:
                            per-mode schema numbers, a feature list, and
@@ -427,6 +466,20 @@ Modes (exit after running, don't run the normal check battery):
                            tone, and a plain sentence per band — the word a
                            GUI shows next to a raw RSSI reading instead of
                            inventing its own scale.
+
+Advanced:
+  --speed           run the speedtest even under --quick (it is already on
+                    by default in a normal run; ~30 s and ~50 MB)
+  --no-bufferbloat  skip the 100 MB / 10 s bufferbloat probe (saves data on
+                    metered links)
+  --gping           after the report, launch a live ping monitor on the
+                    discovered hops (gping must be installed). Without
+                    this flag you'll be prompted; default is no.
+  --no-gping        skip the gping prompt entirely (used by scripts /
+                    watchers; equivalent to answering "no" upfront)
+  --baseline        compare this run against medians of the last 10 runs
+                    in ~/net-diag/baseline.jsonl (default on)
+  --no-baseline     skip the baseline comparison and don't append to history
 HELP
       exit 0 ;;
     -*)
@@ -459,6 +512,8 @@ fi
 if [ -n "$FOCUS" ] && [ "$WATCH" -eq 0 ] && [ "$SUMMARY" -eq 0 ]; then
   case "$FOCUS" in
     mtu)  [ "$QUICK" -eq 0 ] || { printf 'netdiag: --mtu-only and --quick conflict (--quick skips the MTU probe)\n' >&2; exit 3; } ;;
+    bufferbloat) [ "$QUICK" -eq 0 ] || { printf 'netdiag: --bufferbloat-only and --quick conflict (--quick skips the bufferbloat probe)\n' >&2; exit 3; } ;;
+    ping) [ "$QUICK" -eq 0 ] || { printf 'netdiag: --ping-only and --quick conflict (--quick skips the internet loss probe)\n' >&2; exit 3; } ;;
     # Same shape as the conflict above: a run whose only job is the speed
     # test, told not to run the speed test, would do nothing at all and
     # still exit 0 — a success status over an empty report.
@@ -495,6 +550,30 @@ fi
 
 LOG_DIR="$HOME/net-diag"
 
+# Reject malformed mode values before dispatching to a loop or helper. A
+# bad --watch interval otherwise makes sleep return immediately and spins a
+# destructive history-writing loop; a bad summary window otherwise reaches
+# argparse with exit 2, which is reserved for a critical diagnosis.
+if [ "$WATCH" -eq 1 ]; then
+  case "$WATCH_INTERVAL_S" in
+    ''|*[!0-9]*|0)
+      printf 'netdiag: --watch expects a whole number of seconds >= 1 (got: %s)\n' "$WATCH_INTERVAL_S" >&2
+      exit 3 ;;
+  esac
+fi
+if [ "$SUMMARY" -eq 1 ]; then
+  case "$SUMMARY_WINDOW_HOURS" in
+    ''|*[!0-9]*|0)
+      printf 'netdiag: --summary expects a whole number of hours >= 1 (got: %s)\n' "$SUMMARY_WINDOW_HOURS" >&2
+      exit 3 ;;
+  esac
+fi
+
+# All report and history modes delegate JSON shaping to Python. Fail once at
+# the boundary with a usage/tooling error instead of silently producing a
+# partial report when a minimal installation has no python3.
+_require_python3 || exit 3
+
 # ── Mode dispatch (exit after handling) ────────────────────────────────────
 if [ "$INSTALL_WATCHER" -eq 1 ]; then
   # shellcheck source=lib/launchd.sh
@@ -507,11 +586,22 @@ if [ "$UNINSTALL_WATCHER" -eq 1 ]; then
   uninstall_watcher_run
 fi
 if [ "$SUMMARY" -eq 1 ]; then
+  # --summary now judges each metric line, so it needs the cutoffs, and
+  # they reach Python through the environment exactly as --history's and
+  # --show's do. The helper refuses to start without them rather than
+  # carrying a default — see summary.py's _require_threshold.
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
+         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
+         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
   python3 "$HELPERS_DIR/summary.py" \
     --history "$LOG_DIR/baseline.jsonl" \
-    --window "$SUMMARY_WINDOW_HOURS"
+    --window "$SUMMARY_WINDOW_HOURS" || exit 3
   exit 0
 fi
+
 if [ "$HISTORY" -eq 1 ]; then
   # A non-numeric --history=X is a usage error, not something to pass to
   # python and let argparse turn into an exit 2 — that status is reserved
@@ -529,7 +619,7 @@ if [ "$HISTORY" -eq 1 ]; then
   export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL
   python3 "$HELPERS_DIR/history.py" \
     --history "$LOG_DIR/baseline.jsonl" \
-    --limit "$HISTORY_LIMIT"
+    --limit "$HISTORY_LIMIT" || exit 3
   exit 0
 fi
 if [ "$SHOW" -eq 1 ]; then
@@ -553,6 +643,68 @@ if [ "$SHOW" -eq 1 ]; then
   python3 "$HELPERS_DIR/history.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --show "$SHOW_ID" || exit 3
+  exit 0
+fi
+if [ "$SHARE" -eq 1 ]; then
+  # stdin: the app's path. It already holds the run's JSON and needs no
+  # store lookup, so a run that finished two seconds ago shares exactly
+  # like one from last week.
+  if [ "$SHARE_ID" = "-" ]; then
+    python3 "$HELPERS_DIR/share.py" || exit 3
+    exit 0
+  fi
+  # Sourced before the id lookup, not after: history.py refuses to start
+  # without THRESH_COMPARE_*, including for a plain --history listing,
+  # because every network row carries metric_stats.
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL NETDIAG_VERSION
+  _share_id="$SHARE_ID"
+  if [ -z "$_share_id" ]; then
+    # Bare --share: the newest run in the store. --history's `runs` is a
+    # flat top-level array, each row keyed `id` and `ts` — not nested
+    # under networks[], and not run_id/timestamp.
+    _share_id="$(python3 "$HELPERS_DIR/history.py" \
+        --history "$LOG_DIR/baseline.jsonl" 2>/dev/null \
+      | python3 -c 'import json, sys
+try:
+    runs = json.load(sys.stdin).get("runs") or []
+except Exception:
+    runs = []
+runs.sort(key=lambda r: r.get("ts") or "")
+print(runs[-1].get("id", "") if runs else "")' 2>/dev/null)"
+    if [ -z "$_share_id" ]; then
+      printf 'netdiag: no stored run to share yet — run a check first\n' >&2
+      exit 3
+    fi
+  fi
+  # --show returns {schema, version, id, run, context, comparison}; `run`
+  # is the complete record as it was written.
+  #
+  # This is a 3-stage pipeline, and bin/netdiag does not set `pipefail`
+  # (deliberately — see the header comment on the EXIT trap): in
+  # `a | b | c`, `$?` is `c`'s status alone, so a mid-pipeline failure
+  # (a bogus id makes history.py's --show exit 3 with nothing on stdout)
+  # can be masked if a later stage happens to exit 0 anyway. Scoping
+  # `set -o pipefail` to a subshell around just this pipeline makes the
+  # subshell's own exit status the *worst* of the three, without changing
+  # pipefail behavior anywhere else in the script.
+  if ! (
+    set -o pipefail
+    python3 "$HELPERS_DIR/history.py" \
+        --history "$LOG_DIR/baseline.jsonl" \
+        --show "$_share_id" 2>/dev/null \
+      | python3 -c 'import json, sys
+doc = json.load(sys.stdin)
+json.dump(doc["run"], sys.stdout)' 2>/dev/null \
+      | python3 "$HELPERS_DIR/share.py" 2>/dev/null
+  ); then
+    # share.py's own "not valid JSON" message would otherwise also print
+    # here, on empty input cascading down from the failed lookup above —
+    # true, but confusing next to the reason actually printed below.
+    printf 'netdiag: no stored run to share (id: %s)\n' "$_share_id" >&2
+    exit 3
+  fi
   exit 0
 fi
 if [ "$WATCH" -eq 1 ]; then
@@ -592,6 +744,8 @@ if [ "$MONITOR" -eq 1 ]; then
   # join one to the other.
   # shellcheck source=lib/netid.sh
   . "$LIB_DIR/netid.sh"
+  # shellcheck source=lib/vpn.sh
+  . "$LIB_DIR/vpn.sh"
   # shellcheck source=lib/monitor.sh
   . "$LIB_DIR/monitor.sh"
   monitor_run
@@ -640,7 +794,7 @@ done
 tell "${C_BOLD}netdiag${C_RESET}  ${C_DIM}$STAMP${C_RESET}"
 tell "${C_DIM}log: $LOG${C_RESET}"
 
-# ── Focused runs (--mtu-only / --wifi-only) ────────────────────────────────
+# ── Focused runs (--*-only) ────────────────────────────────────────────────
 # Run one section plus the checks it depends on, then the Report card and
 # diagnoses over whatever that produced. gping and the baseline diff are
 # both suppressed: a partial run isn't comparable to a full one, and
@@ -698,6 +852,29 @@ if [ -n "$FOCUS" ]; then
       run_timed netid   netid_run
       run_timed public  public_run   # speedtest_run gates on PUBLIC_OK
       run_timed speedtest speedtest_run
+      ;;
+    dns)
+      run_timed iface iface_run
+      run_timed dhcp dhcp_run
+      run_timed netid netid_run
+      run_timed dns dns_run
+      ;;
+    bufferbloat)
+      run_timed iface        iface_run
+      run_timed gateway      gateway_run
+      run_timed arp          arp_run
+      run_timed wifi         wifi_run
+      run_timed netid        netid_run
+      run_timed public       public_run
+      run_timed bufferbloat  bufferbloat_run
+      ;;
+    ping)
+      run_timed iface          iface_run
+      run_timed gateway        gateway_run
+      run_timed arp            arp_run
+      run_timed wifi           wifi_run
+      run_timed netid          netid_run
+      run_timed internet_ping  internet_ping_run
       ;;
   esac
   headline_run

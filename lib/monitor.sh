@@ -79,6 +79,11 @@
 # reports the pid of a process that no longer exists. `kill -0` is a
 # builtin, costs nothing, and flips the moment the parent is reaped.
 
+# The WiFi scrapes are shared with the scanner; one parser per upstream
+# format means a macOS release that moves a label is fixed once.
+# shellcheck source=lib/wifi_common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/wifi_common.sh"
+
 # ── Sample state ─────────────────────────────────────────────────────────
 # All MON_* — a distinct namespace from the scanner's globals so that
 # sourcing both (as bin/netdiag does) can't have one silently read the
@@ -107,6 +112,17 @@ MON_GW_RTT=""
 # `set -u` and the very first cycle reads them before ever writing them.
 MON_GW_LOSS_STREAK=0
 MON_INET_LOSS_STREAK=0
+# Rolling loss windows, one per leg: newest-last "sent:lost" pairs, one per
+# completed probe, trimmed to MONITOR_LOSS_WINDOW_PROBES entries. Plain
+# space-separated scalars rather than arrays — this file must run under
+# zsh AND bash, and array syntax (and even subscript origin) differs
+# between them. The reported MON_GW_LOSS / MON_INET_LOSS are computed over
+# the whole window, which is what makes the percentage a property of the
+# link rather than of one burst; see _mon_loss_summarize.
+MON_GW_HIST=""
+MON_INET_HIST=""
+MON_INET_HIST_ALT=""
+MON_INET_LOSS_ALT=""
 MON_WIFI_RSSI=""
 MON_WIFI_NOISE=""
 MON_WIFI_SNR=""
@@ -116,6 +132,11 @@ MON_DNS_RESOLVER=""
 MON_DNS_MS=""
 MON_TCP_OK=""
 MON_TCP_LINES=""
+# A small HTTPS reachability probe runs with the fast tier. It answers the
+# question users actually care about — whether ordinary internet traffic can
+# leave the Mac — rather than treating Wi-Fi association or ICMP replies as
+# proof that websites will load.
+MON_WEB_OK=""
 MON_PUB_IP=""
 MON_PUB_ISP=""
 MON_PUB_ASN=""
@@ -126,11 +147,16 @@ MON_PUBLIC_OK=""
 MON_CAPTIVE=""
 MON_RULES=""
 MON_SEVERITY="ok"
+# `ok` severity means no diagnosis rule fired. It does not mean the probes
+# succeeded; keep measurement availability separate so the GUI can avoid a
+# green "all good" card when the link could not be tested.
+MON_MEASUREMENT_STATE="unknown"
 MON_ICMP_FILTERED=0
 MON_DEGRADED=0
 MON_REFRESHED=""
 MON_STOP=0
 MON_PAUSED=0
+MON_REFRESH_REQUESTED=0
 MON_HW_PORTS=""
 # launchd's pid. Named rather than written as a bare 1 so the orphan check
 # below reads as the sentinel it is, and so tests/test_thresholds.bats's
@@ -178,16 +204,17 @@ _mon_probe_link() {
   MON_IFACE_TYPE="wired"
   MON_SSID=""; MON_BSSID=""
   if [ -n "$MON_INTERFACE" ]; then
-    local hw_port
-    hw_port="$(printf '%s\n' "$MON_HW_PORTS" | awk -v d="$MON_INTERFACE" '
-      /^Hardware Port:/{port=substr($0, index($0,$3))}
-      /^Device:/{if($2==d){print port; exit}}')"
-    if printf '%s' "$hw_port" | grep -qi 'Wi-Fi\|AirPort'; then
+    local hw_port ssid bssid
+    hw_port="$(wifi_hw_port_for_device "$MON_INTERFACE" "$MON_HW_PORTS")"
+    if wifi_port_is_wireless "$hw_port"; then
       MON_IFACE_TYPE="wifi"
       local summary
       summary="$(ipconfig getsummary "$MON_INTERFACE" 2>/dev/null || true)"
-      MON_SSID="$(printf '%s\n' "$summary"  | awk -F': ' '/^[[:space:]]*SSID[[:space:]]*:/{print $2; exit}')"
-      MON_BSSID="$(printf '%s\n' "$summary" | awk -F': ' '/^[[:space:]]*BSSID[[:space:]]*:/{print $2; exit}')"
+      {
+        IFS=$'\t' read -r ssid bssid _
+      } <<<"$(wifi_parse_ipconfig_summary "$summary")"
+      MON_SSID="$ssid"
+      MON_BSSID="$bssid"
     fi
   fi
 
@@ -224,26 +251,96 @@ _mon_identity() {
 }
 
 _mon_probe_vpn() {
-  MON_VPN_ACTIVE=0; MON_VPN_TYPE=""; MON_VPN_NAME=""
-  # A utun/wg interface carrying the default route is free to detect —
-  # _mon_probe_link already read it.
-  if printf '%s' "$MON_INTERFACE" | grep -qE '^(utun|wg)'; then
-    MON_VPN_ACTIVE=1; MON_VPN_TYPE="utun-route"; MON_VPN_NAME="$MON_INTERFACE"
+  # Reuse the scan's detector, including Tailscale. Dynamic locals keep the
+  # shared function from mutating scanner globals in the monitor process.
+  # shellcheck disable=SC2034
+  local INTERFACE="$MON_INTERFACE" VPN_ACTIVE=0 VPN_TYPE="" VPN_NAME=""
+  vpn_detect
+  MON_VPN_ACTIVE="$VPN_ACTIVE"
+  MON_VPN_TYPE="$VPN_TYPE"
+  MON_VPN_NAME="$VPN_NAME"
+}
+
+# ── Rolling loss window ──────────────────────────────────────────────────
+# A loss percentage is only as fine as its denominator: at 20 packets per
+# probe one dropped packet reads 5%, at 10 it reads 10%, and either way the
+# instrument swings on a single packet and back — movement of the probe,
+# not of the network. So the reported figure is accumulated across probes:
+# each leg keeps its last MONITOR_LOSS_WINDOW_PROBES results and reports
+# lost×100÷sent over the whole window. At the defaults that is five
+# 20-packet probes — a 100-packet denominator, 1% quantum — refreshed
+# every fast cycle, so real loss ramps smoothly toward the thresholds and
+# routine noise contributes a fraction of a percent that then decays out.
+#
+# Counts, not percentages, are what accumulate: averaging ratios weights a
+# short run equally with a long one. The probes send fixed counts today,
+# but the arithmetic stays honest if that ever changes.
+
+# Fold one probe's "sent:lost" into a history string and summarise it:
+# prints "<trimmed history>|<total sent>|<total lost>", keeping only the
+# newest MONITOR_LOSS_WINDOW_PROBES entries. Pure: no globals read or
+# written, so both legs share it and tests can drive it directly.
+_mon_loss_summarize() {
+  printf '%s' "$1" | awk -v k="$MONITOR_LOSS_WINDOW_PROBES" '
+    { n = split($0, f, / /); start = n - k + 1; if (start < 1) start = 1;
+      ts = ""; s = 0; l = 0;
+      for (i = start; i <= n; i++) {
+        split(f[i], p, /:/); s += p[1]; l += p[2];
+        ts = (ts == "" ? "" : ts " ") f[i]
+      }
+      print ts "|" s "|" l }'
+}
+
+# Report a leg's windowed loss percentage from its totals. Kept separate
+# so the rounding rule lives in exactly one place.
+_mon_loss_pct() {
+  awk -v s="$1" -v l="$2" 'BEGIN { if (s > 0) printf "%.0f", l * 100 / s }'
+}
+
+# Clear both windows: a dead link or a different network invalidates every
+# reading in them. Stale packets from before the change would dilute a
+# fresh problem; a window half full of the old network is measuring
+# neither network.
+_mon_loss_reset() {
+  MON_GW_HIST=""
+  MON_INET_HIST=""
+  MON_INET_HIST_ALT=""
+}
+
+# Parse ping's -q summary into raw counts, fold it into a leg's history,
+# and report the windowed percentage. Pure: takes the current history
+# string, prints "<new history>|<loss pct>", and prints "|"" on a probe
+# that produced no parseable summary — clearing the window rather than
+# leaving it frozen, because "could not measure" must not read as
+# "measured, clean", and a window reporting last cycle's answer forever is
+# the stale-data bug this file has already been burned by once.
+# Args: history string, ping output, expected sent count.
+_mon_loss_fold() {
+  local hist="$1" out="$2" expect="$3"
+  local sent recv summary totals sent_t lost_t
+  # Fields carry trailing commas ("20 packets transmitted, 20 packets
+  # received, …"), so the keyword is matched as a prefix, not exactly, and
+  # the count sits two fields before it ("20" "packets" "transmitted,").
+  sent="$(printf '%s\n' "$out" | awk '/packets transmitted/{for(i=1;i<=NF;i++)if($i ~ /^transmitted/){print $(i-2); exit}}')"
+  recv="$(printf '%s\n' "$out" | awk '/packets transmitted/{for(i=1;i<=NF;i++)if($i ~ /^received/){print $(i-2); exit}}')"
+  case "$sent" in ''|*[!0-9]*) sent="" ;; esac
+  case "$recv" in ''|*[!0-9]*) recv="" ;; esac
+  if [ -z "$sent" ] || [ -z "$recv" ] || [ "$recv" -gt "$sent" ] \
+     || [ "$sent" -ne "$expect" ]; then
+    printf '|'
     return 0
   fi
-  local scutil_nc
-  scutil_nc="$(scutil --nc list 2>/dev/null || true)"
-  if printf '%s' "$scutil_nc" | grep -q '(Connected)'; then
-    MON_VPN_ACTIVE=1
-    MON_VPN_TYPE="managed"
-    MON_VPN_NAME="$(printf '%s' "$scutil_nc" | awk -F'"' '/\(Connected\)/{print $2; exit}')"
-  fi
+  summary="$(_mon_loss_summarize "${hist:+$hist }${sent}:$((sent - recv))")"
+  totals="${summary#*|}"
+  sent_t="${totals%%|*}"
+  lost_t="${totals##*|}"
+  printf '%s|%s' "${summary%%|*}" "$(_mon_loss_pct "$sent_t" "$lost_t")"
 }
 
 _mon_probe_gateway() {
   MON_GW_LOSS=""; MON_GW_RTT=""
   [ -n "$MON_GATEWAY" ] || return 0
-  local out
+  local out summary
   # -q: summary only. The scanner keeps the per-packet lines because it
   # logs them; nothing here reads them.
   #
@@ -251,14 +348,23 @@ _mon_probe_gateway() {
   # suggests, and the reason is quantisation rather than accuracy. At 3
   # packets the only reportable losses are 0/33/67/100%, so one dropped
   # packet reads as 33% — comfortably past the 20% critical floor. At 5 it
-  # reads as exactly 20%, which still trips it. At 10 the quantum is 10%:
-  # one drop lands in G3's warn band and it takes two to reach critical,
-  # which is the same shape the scanner's 20-packet probe produces. Cost
-  # is 2 s of a 10 s cycle, at one packet per second average.
-  out="$(with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" "$MON_GATEWAY" 2>/dev/null || true)"
-  MON_GW_LOSS="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
-  MON_GW_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
-  is_numeric "$MON_GW_LOSS" || MON_GW_LOSS=""
+  # reads as exactly 20%, which still trips it. Per-probe quantisation no
+  # longer decides anything by itself — the reported figure accumulates
+  # over the rolling window (_mon_loss_fold) — but a wider burst still
+  # fills the window faster and costs little at 0.2 s spacing. Cost is 2 s
+  # of a 10 s cycle, at one packet per second average.
+  #
+  # -W bounds the wait for the last reply; without it macOS ping sits ~10 s
+  # past the final packet before printing statistics, and with_timeout 6
+  # killed it first. The statistics line is the measurement, so losing it
+  # meant a dead gateway reported "not measured" rather than 100% loss.
+  # See PING_REPLY_WAIT_MS in lib/thresholds.sh.
+  out="$(with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" \
+    -W "$PING_REPLY_WAIT_MS" "$MON_GATEWAY" 2>/dev/null || true)"
+  summary="$(_mon_loss_fold "$MON_GW_HIST" "$out" "$MONITOR_PING_COUNT")"
+  MON_GW_HIST="${summary%%|*}"
+  MON_GW_LOSS="${summary#*|}"
+  MON_GW_RTT="$(ping_parse_summary "$out" | cut -d'|' -f2)"
   is_numeric "$MON_GW_RTT"  || MON_GW_RTT=""
 }
 
@@ -301,14 +407,100 @@ _mon_probe_tcp() {
 }
 
 _mon_probe_internet() {
-  MON_INET_LOSS=""; MON_INET_RTT=""
+  MON_INET_LOSS=""; MON_INET_LOSS_ALT=""; MON_INET_RTT=""
   [ "$MON_LINK_UP" -eq 1 ] || return 0
-  local out
-  out="$(with_timeout 3 ping -q -c 5 -i 0.2 1.1.1.1 2>/dev/null || true)"
-  MON_INET_LOSS="$(printf '%s\n' "$out" | awk -F'[ %]' '/packet loss/{for(i=1;i<=NF;i++)if($i=="packet")print $(i-2)}' | head -1)"
-  MON_INET_RTT="$(printf '%s\n' "$out"  | awk -F'[ /]' '/round-trip|rtt/{print $(NF-3); exit}')"
-  is_numeric "$MON_INET_LOSS" || MON_INET_LOSS=""
+  local out out_alt summary summary_alt tmp_dir target target_alt
+  target="${INET_TARGET:-1.1.1.1}"
+  target_alt="${INET_TARGET_ALT:-8.8.8.8}"
+  # MONITOR_INET_PING_COUNT, not a token burst: at five packets one dropped
+  # packet reads as exactly LOSS_CRIT_PCT, so a single routine drop at a
+  # rate-limiting resolver fired L1 as an immediate critical — the red card
+  # flashed for one cycle and cleared on the next. Twenty packets is the
+  # scanner's own count; see lib/thresholds.sh. The reported figure is the
+  # rolling window over the last MONITOR_LOSS_WINDOW_PROBES probes
+  # (_mon_loss_fold), so the percentage's denominator is ~100 packets and
+  # one drop moves it one point, not twenty. The two independent targets run
+  # concurrently, matching internet_ping.sh's scanner path; L1 is allowed
+  # only when both windows agree.
+  netdiag_mktemp_dir monitor-inet || return 0
+  tmp_dir="$NETDIAG_TMP_DIR"
+  # -W for the same reason as the gateway probe above: 20 packets at 0.2 s
+  # is 4 s of sending, and macOS ping's ~10 s tail wait put the statistics
+  # line outside with_timeout 8 on exactly the dead paths it describes.
+  with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" \
+    -W "$PING_REPLY_WAIT_MS" "$target" >"$tmp_dir/primary" 2>/dev/null &
+  local pid_a=$!
+  with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" \
+    -W "$PING_REPLY_WAIT_MS" "$target_alt" >"$tmp_dir/alternate" 2>/dev/null &
+  local pid_b=$!
+  wait "$pid_a" 2>/dev/null || true
+  wait "$pid_b" 2>/dev/null || true
+  out="$(cat "$tmp_dir/primary" 2>/dev/null || true)"
+  out_alt="$(cat "$tmp_dir/alternate" 2>/dev/null || true)"
+  rm -rf "$tmp_dir"
+  netdiag_tmp_forget "$tmp_dir"
+  summary="$(_mon_loss_fold "$MON_INET_HIST" "$out" "$MONITOR_INET_PING_COUNT")"
+  MON_INET_HIST="${summary%%|*}"
+  MON_INET_LOSS="${summary#*|}"
+  summary_alt="$(_mon_loss_fold "$MON_INET_HIST_ALT" "$out_alt" "$MONITOR_INET_PING_COUNT")"
+  MON_INET_HIST_ALT="${summary_alt%%|*}"
+  MON_INET_LOSS_ALT="${summary_alt#*|}"
+  MON_INET_RTT="$(ping_parse_summary "$out" | cut -d'|' -f2)"
   is_numeric "$MON_INET_RTT"  || MON_INET_RTT=""
+}
+
+# Probe normal HTTPS traffic, not just Wi-Fi association or ICMP. A Mac can
+# remain associated at full RSSI while a wall/interference makes data traffic
+# unusable. Two independent 204 canaries keep one blocked endpoint from
+# becoming an ISP verdict; a captive portal normally returns a redirect or a
+# 200 page instead of the expected 204 and is therefore not counted as web
+# reachability.
+_mon_probe_web() {
+  MON_WEB_OK=""
+  [ "$MON_LINK_UP" -eq 1 ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+
+  local tmp_dir code_a code_b
+  netdiag_mktemp_dir monitor-web || return 0
+  tmp_dir="$NETDIAG_TMP_DIR"
+  curl -4 -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 1 --max-time 2 \
+    https://cp.cloudflare.com/generate_204 >"$tmp_dir/cloudflare" 2>/dev/null &
+  local pid_a=$!
+  curl -4 -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 1 --max-time 2 \
+    https://www.gstatic.com/generate_204 >"$tmp_dir/google" 2>/dev/null &
+  local pid_b=$!
+  wait "$pid_a" 2>/dev/null || true
+  wait "$pid_b" 2>/dev/null || true
+
+  code_a="$(cat "$tmp_dir/cloudflare" 2>/dev/null || true)"
+  code_b="$(cat "$tmp_dir/google" 2>/dev/null || true)"
+  rm -rf "$tmp_dir"
+  netdiag_tmp_forget "$tmp_dir"
+
+  MON_WEB_OK="$(_mon_web_verdict "$code_a" "$code_b")"
+}
+
+# Turn two canary status codes into a reachability verdict: "1" reachable,
+# "0" answered but intercepted, "" nothing answered. Pure, so the three-way
+# distinction is testable without a network.
+#
+# 000 is curl's code for a request that never completed — DNS failure,
+# refused connection, timeout. It is the *absence* of an answer, and reading
+# it as one is what let a dead link report as a captive portal and, worse,
+# satisfy the "measurement" gate: the app's own "checking" card then could
+# not appear on the outage it was written for. A real portal answers with a
+# redirect or a login page, which is a genuine response and still reads 0.
+_mon_web_verdict() {
+  local a="$1" b="$2"
+  [ "$a" = "000" ] && a=""
+  [ "$b" = "000" ] && b=""
+  if [ "$a" = "204" ] || [ "$b" = "204" ]; then
+    printf '1'
+  elif [ -n "$a" ] || [ -n "$b" ]; then
+    printf '0'
+  fi
 }
 
 _mon_probe_wifi_signal() {
@@ -322,9 +514,10 @@ _mon_probe_wifi_signal() {
   local out rssi noise
   out="$(with_timeout 4 sudo -n wdutil info 2>/dev/null || true)"
   [ -n "$out" ] || return 0
-  rssi="$(printf  '%s\n' "$out" | awk -F': ' '/^[[:space:]]*RSSI/{gsub(/ dBm/,"",$2); print $2; exit}')"
-  noise="$(printf '%s\n' "$out" | awk -F': ' '/^[[:space:]]*Noise/{gsub(/ dBm/,"",$2); print $2; exit}')"
-  MON_WIFI_CHAN="$(printf '%s\n' "$out" | awk -F': ' '/^[[:space:]]*Channel/{print $2; exit}')"
+  {
+    # Fields 1-3 only; the parser's SSID/BSSID tail is scanner policy.
+    IFS=$'\t' read -r rssi noise MON_WIFI_CHAN _
+  } <<<"$(wifi_parse_wdutil "$out")"
   is_numeric "$rssi"  || rssi=""
   is_numeric "$noise" || noise=""
   MON_WIFI_RSSI="$rssi"
@@ -355,10 +548,11 @@ _mon_probe_public() {
   local captive
   captive="$(curl -s -m 3 -o /dev/null -w '%{http_code}' \
     http://captive.apple.com/hotspot-detect.html 2>/dev/null || true)"
-  case "$captive" in
-    200)      MON_CAPTIVE=0 ;;
-    3[0-9][0-9]) MON_CAPTIVE=1 ;;
-    *)        MON_CAPTIVE="" ;;
+  # Same classifier lib/public.sh uses — see lib/common.sh.
+  case "$(captive_portal_classify "$captive")" in
+    ok)     MON_CAPTIVE=0 ;;
+    portal) MON_CAPTIVE=1 ;;
+    *)      MON_CAPTIVE="" ;;
   esac
 }
 
@@ -386,10 +580,13 @@ _mon_rules() {
   MON_RULES=""
   MON_SEVERITY="ok"
   MON_ICMP_FILTERED=0
+  MON_MEASUREMENT_STATE="unknown"
 
   if [ "$MON_LINK_UP" -eq 0 ]; then
     _mon_add_rule critical N1
     MON_DEGRADED=1
+    MON_MEASUREMENT_STATE="link-down"
+    MON_WEB_OK=""
     # No link means neither leg was probed this cycle — a streak the link
     # drop interrupted is not a streak that held.
     MON_GW_LOSS_STREAK=0
@@ -397,17 +594,49 @@ _mon_rules() {
     return 0
   fi
 
-  # G1/G2/G3, evaluated exactly as lib/diagnosis.sh evaluates them —
-  # including when ICMP turns out to be filtered.
+  # This is data availability, not a health verdict. A healthy RSSI is not
+  # evidence that traffic is usable, and an empty ping summary is not
+  # evidence of zero loss. The state is emitted separately from severity so
+  # the GUI can say "checking" instead of claiming that everything is good.
   #
-  # It is tempting to suppress these when TCP-1 holds, and wrong. The
-  # constraint this project is built on is that the CLI owns every verdict
-  # and the GUI owns only alert policy. A monitor that quietly withheld G2
-  # on a hotel network would name a different rule set than a scan taken
-  # one second later on the same link, and the app would show a green dot
-  # over a red report. So the rule fires, `status.icmp_filtered` says the
-  # ping numbers are not to be trusted, and the alert engine — whose job
-  # this is — declines to notify. Same facts, one place to decide.
+  # A loss figure is non-empty only when _mon_loss_fold parsed a complete
+  # transmitted/received pair, so 100 counts here exactly as 0 does: both
+  # are answers. What does not count is a probe that produced nothing —
+  # including MON_WEB_OK, which is now empty rather than 0 when curl's
+  # request never completed (see _mon_web_verdict).
+  if [ -n "$MON_GW_LOSS" ] || [ -n "$MON_INET_LOSS" ] || [ -n "$MON_WEB_OK" ]; then
+    MON_MEASUREMENT_STATE="measured"
+  fi
+
+  # Prefer the fast HTTPS reachability result when it has run. Fall back to
+  # the slower public probe for compatibility with the first sample and with
+  # older test/CLI inputs that do not provide MON_WEB_OK.
+  local _mon_public_ok="${MON_WEB_OK:-$MON_PUBLIC_OK}"
+
+  # Is the gateway's ping loss filtering rather than fault? Decided before
+  # the loss rules below because it decides whether they run at all, and
+  # evaluated identically in lib/diagnosis.sh — the two engines must name
+  # the same rules for the same link (tests/test_monitor.bats's parity
+  # block) or the app shows a green dot over a red report.
+  #
+  # An earlier version of this block let G1/G2/G3 fire anyway and left the
+  # alert engine to decline the notification. That kept the user from being
+  # *pinged*, but the report still printed "reboot your router (unplug it
+  # for 30 seconds)" directly above "the network is up; don't worry about
+  # the ping numbers above", let the critical one own the headline, and
+  # exited 2 on every hotel and corporate network. TCP reaching 1.1.1.1:443
+  # means packets are crossing the gateway, so the gateway is forwarding and
+  # merely declining to answer pings itself; TCP-1's own prose still quotes
+  # the loss figure, so suppressing the contradiction loses no number.
+  local _mon_gw_filtered=0
+  if [ "${MON_TCP_OK:-0}" = "1" ] \
+     && loss_at_least "$MON_GW_LOSS" "$THRESH_ICMP_FILTERED_LOSS_PCT"; then
+    _mon_gw_filtered=1
+    MON_ICMP_FILTERED=1
+    _mon_add_rule info TCP-1
+  fi
+
+  # G1/G2/G3, evaluated exactly as lib/diagnosis.sh evaluates them.
   # G3 is confirmed rather than immediate: a single cycle's loss is a blip
   # (see THRESH_MON_LOSS_CONFIRM_CYCLES), so the warn band only fires once
   # it has held for THRESH_MON_LOSS_CONFIRM_CYCLES consecutive cycles.
@@ -415,7 +644,11 @@ _mon_rules() {
   # window — and any cycle that is not in the warn band (clean, or escalated
   # to critical) resets the streak, so a one-off blip followed by a clean
   # cycle can never quietly accumulate toward firing later.
-  if loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+  if [ "$_mon_gw_filtered" -eq 1 ]; then
+    # TCP-1 already described this link. Reset both streaks: filtered cycles
+    # are not evidence toward a confirmed G3.
+    MON_GW_LOSS_STREAK=0
+  elif loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     MON_GW_LOSS_STREAK=0
     if [ -n "$MON_WIFI_RSSI" ] && is_numeric "$MON_WIFI_RSSI" && [ "$MON_WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
       _mon_add_rule critical G1
@@ -431,10 +664,12 @@ _mon_rules() {
     MON_GW_LOSS_STREAK=0
   fi
 
-  # P1/P2 need the slow tier to have run at least once. An unmeasured
-  # public reach is "" and must not read as an outage — the same
-  # distinction that JSON-SCHEMA.md draws between null and 0.
-  if [ "${MON_PUBLIC_OK:-}" = "0" ] && loss_below "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+  # P1/P2 need a current public reach result. The fast HTTPS canary is
+  # authoritative once it has run; the slower public-IP probe remains the
+  # compatibility fallback. An unmeasured value is "" and must not read as
+  # an outage — the same distinction that JSON-SCHEMA.md draws between null
+  # and 0.
+  if [ "$_mon_public_ok" = "0" ] && loss_below "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ "${MON_DNS_OK:-}" = "0" ]; then
       _mon_add_rule critical P1
     else
@@ -443,7 +678,7 @@ _mon_rules() {
   fi
 
   # D1 — resolution failing while the internet itself is reachable.
-  if [ "${MON_DNS_OK:-}" = "0" ] && [ "${MON_PUBLIC_OK:-}" = "1" ]; then
+  if [ "${MON_DNS_OK:-}" = "0" ] && [ "$_mon_public_ok" = "1" ]; then
     _mon_add_rule warn D1
   fi
 
@@ -455,18 +690,14 @@ _mon_rules() {
     _mon_add_rule info VPN-1
   fi
 
-  # TCP-1 matching lib/diagnosis.sh's logic. Real connections work, only
-  # ping is being dropped — common on hotel and corporate WiFi.
-  if [ "${MON_TCP_OK:-0}" = "1" ] \
-     && loss_at_least "$MON_GW_LOSS" "$THRESH_ICMP_FILTERED_LOSS_PCT"; then
-    MON_ICMP_FILTERED=1
-    _mon_add_rule info TCP-1
-  fi
+  # TCP-1 is decided above the gateway loss rules, because it decides
+  # whether they fire at all.
 
   # ── L1 / L2 — internet-side packet loss ────────────────────────────────
   local _mon_icmp_filtered=0
-  if [ "${MON_PUBLIC_OK:-0}" = "1" ] && [ "${MON_TCP_OK:-0}" = "1" ] \
-     && loss_at_least "$MON_INET_LOSS" "$THRESH_ICMP_TOTAL_LOSS_PCT"; then
+  if [ "$_mon_public_ok" = "1" ] && [ "${MON_TCP_OK:-0}" = "1" ] \
+     && loss_at_least "$MON_INET_LOSS" "$THRESH_ICMP_TOTAL_LOSS_PCT" \
+     && loss_at_least "$MON_INET_LOSS_ALT" "$THRESH_ICMP_TOTAL_LOSS_PCT"; then
     _mon_icmp_filtered=1
     _mon_add_rule info ICMP-1
   fi
@@ -476,10 +707,12 @@ _mon_rules() {
   # the streak — a cycle where the condition could not even be evaluated is
   # not a cycle where it held.
   if [ "$_mon_icmp_filtered" -eq 0 ] && loss_below "$MON_GW_LOSS" "$LOSS_WARN_PCT"; then
-    if loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT"; then
+    if loss_at_least "$MON_INET_LOSS" "$LOSS_CRIT_PCT" \
+       && loss_at_least "$MON_INET_LOSS_ALT" "$LOSS_CRIT_PCT"; then
       MON_INET_LOSS_STREAK=0
       _mon_add_rule critical L1
-    elif loss_at_least "$MON_INET_LOSS" "$LOSS_WARN_PCT"; then
+    elif loss_at_least "$MON_INET_LOSS" "$LOSS_WARN_PCT" \
+         || loss_at_least "$MON_INET_LOSS_ALT" "$LOSS_WARN_PCT"; then
       MON_INET_LOSS_STREAK=$((MON_INET_LOSS_STREAK + 1))
       if [ "$MON_INET_LOSS_STREAK" -ge "$THRESH_MON_LOSS_CONFIRM_CYCLES" ]; then
         _mon_add_rule warn L2
@@ -568,6 +801,7 @@ _mon_emit() {
   NETDIAG_MON_DNS_MS="$MON_DNS_MS" \
   NETDIAG_MON_TCP_OK="$MON_TCP_OK" \
   NETDIAG_MON_TCP_LINES="$MON_TCP_LINES" \
+  NETDIAG_MON_WEB_OK="$MON_WEB_OK" \
   NETDIAG_MON_PUBLIC_OK="$MON_PUBLIC_OK" \
   NETDIAG_MON_PUB_IP="$MON_PUB_IP" \
   NETDIAG_MON_PUB_ISP="$MON_PUB_ISP" \
@@ -578,6 +812,7 @@ _mon_emit() {
   NETDIAG_MON_CAPTIVE="$MON_CAPTIVE" \
   NETDIAG_MON_RULES="$MON_RULES" \
   NETDIAG_MON_SEVERITY="$MON_SEVERITY" \
+  NETDIAG_MON_MEASUREMENT_STATE="$MON_MEASUREMENT_STATE" \
   NETDIAG_MON_ICMP_FILTERED="$MON_ICMP_FILTERED" \
   NETDIAG_MON_DEGRADED="$MON_DEGRADED" \
   NETDIAG_MON_PAUSED="$MON_PAUSED" \
@@ -601,6 +836,10 @@ _mon_emit() {
 # so a GUI sending SIGTERM would wait up to a full cadence for the process
 # to die; backgrounding it and waiting makes the trap fire immediately.
 _mon_sleep() {
+  if [ "$MON_REFRESH_REQUESTED" -eq 1 ]; then
+    MON_REFRESH_REQUESTED=0
+    return 0
+  fi
   sleep "$1" &
   wait $! 2>/dev/null || true
 }
@@ -613,6 +852,8 @@ _mon_on_signal() { MON_STOP=1; }
 _mon_on_pause()  { MON_PAUSED=1; }
 # shellcheck disable=SC2317,SC2329
 _mon_on_resume() { MON_PAUSED=0; }
+# shellcheck disable=SC2317,SC2329
+_mon_on_refresh() { MON_REFRESH_REQUESTED=1; }
 
 monitor_run() {
   local now next_fast=0 next_medium=0 next_slow=0 cadence
@@ -623,9 +864,23 @@ monitor_run() {
   trap _mon_on_signal INT TERM
   trap _mon_on_pause  USR1
   trap _mon_on_resume USR2
+  # The GUI uses SIGALRM as a cheap "sample now" nudge after a network
+  # transition. Bash's default action is to terminate the monitor, so this
+  # must stay an explicit, harmless flag rather than an untrapped signal.
+  trap _mon_on_refresh ALRM
 
   while :; do
     [ "$MON_STOP" -eq 0 ] || break
+
+    # A refresh request interrupts the remainder of the cadence. The signal
+    # is intentionally handled between cycles: a probe already in flight
+    # must finish and be emitted as a coherent sample before the next one.
+    if [ "$MON_REFRESH_REQUESTED" -eq 1 ]; then
+      MON_REFRESH_REQUESTED=0
+      next_fast=0
+      next_medium=0
+      next_slow=0
+    fi
     # Checked even while paused — a paused monitor whose consumer died is
     # exactly as orphaned as a running one, and rather harder to notice.
     # A parent of MON_INIT_PID means we were started by launchd, or were
@@ -667,6 +922,10 @@ monitor_run() {
       if [ "$MON_LINK_UP" -eq 1 ]; then
         _mon_probe_gateway
         _mon_probe_internet
+        _mon_probe_web
+      else
+        # No link, no valid window: every packet in it predates the drop.
+        _mon_loss_reset
       fi
     fi
 
@@ -674,6 +933,11 @@ monitor_run() {
     if [ "$MON_NETWORK_ID" != "$prev_network_id" ]; then
       network_changed=1
       prev_network_id="$MON_NETWORK_ID"
+      # A different network is a different path; loss measured on the old
+      # one says nothing about this one. Cleared here rather than keyed per
+      # network because the window's whole point is describing *this*
+      # link's recent past — there is no "come back to it later" case.
+      [ -n "$MON_NETWORK_ID" ] && _mon_loss_reset
     fi
 
     # A dead link means nothing to probe. Skipping the other tiers here is

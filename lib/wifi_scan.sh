@@ -18,7 +18,10 @@ wifi_scan_run() {
 
   hdr "WiFi neighborhood"
   local sp_out
-  sp_out="$(system_profiler SPAirPortDataType -detailLevel full 2>/dev/null || true)"
+  # system_profiler can spend a surprisingly long time waiting on a stale
+  # CoreWLAN service. A scan is optional, so it must not hold the whole
+  # parallel batch open indefinitely.
+  sp_out="$(with_timeout 15 system_profiler SPAirPortDataType -detailLevel full 2>/dev/null || true)"
   if [ -z "$sp_out" ]; then
     warn "system_profiler returned no WiFi data."
     return 0

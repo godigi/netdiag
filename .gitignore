@@ -30,3 +30,9 @@ gui/build/
 
 # Claude Code personal project settings
 .claude/settings.local.json
+
+# Scratch state from the brainstorming skill's local preview server —
+# a pid file, a stopped-server marker and generated HTML. Three of these
+# were committed in 3e5ca0b before anyone noticed; a tracked .pid is
+# stale the moment the process exits.
+.superpowers/

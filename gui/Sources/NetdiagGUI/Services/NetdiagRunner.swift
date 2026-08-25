@@ -84,24 +84,11 @@ struct NetdiagRunner {
         /// connection that is already failing makes the user's situation
         /// worse in the middle of whatever they were doing.
         case alertTriggered
-        /// One question, answered on its own: `--speed-only`. Its record is
-        /// a *measurement*, not an opinion about the network's health, so
-        /// the caller must not adopt it as the current report — see Part B
-        /// of docs/design/watching-it-happen.md.
-        case speedOnly
-        case dnsOnly
-        case bufferbloatOnly
-        case pingOnly
-
         var arguments: [String] {
             switch self {
             case .full:           return ["--json", "--no-gping"]
             case .quick:          return ["--json", "--no-gping", "--quick"]
             case .alertTriggered: return ["--json", "--no-gping", "--no-bufferbloat", "--no-speed"]
-            case .speedOnly:      return ["--json", "--no-gping", "--speed-only"]
-            case .dnsOnly:        return ["--json", "--no-gping", "--dns-only"]
-            case .bufferbloatOnly: return ["--json", "--no-gping", "--bufferbloat-only"]
-            case .pingOnly:       return ["--json", "--no-gping", "--ping-only"]
             }
         }
 
@@ -113,10 +100,6 @@ struct NetdiagRunner {
             case .full:           return "about a minute"
             case .quick:          return "about 10 seconds"
             case .alertTriggered: return "about 30 seconds"
-            case .speedOnly:      return "about 30 seconds"
-            case .dnsOnly:        return "about 5 seconds"
-            case .bufferbloatOnly: return "about 20 seconds"
-            case .pingOnly:       return "about 5 seconds"
             }
         }
     }
@@ -171,25 +154,13 @@ struct NetdiagRunner {
                          startedAt: started, finishedAt: Date())
     }
 
-    /// `netdiag --redact --json`, for "Copy shareable report". The point of
-    /// running the CLI again rather than re-encoding the snapshot already
-    /// on screen: redaction is defined in helpers/emit_json.py, and a
-    /// second implementation in Swift is a second thing that can leak.
-    static func redactedReport(depth: Depth = .quick) async throws -> String {
-        let (out, _, status) = try await execute(
-            arguments: depth.arguments + ["--redact"])
-        if status == 3 { throw NetdiagError.scriptError(String(out.prefix(400))) }
-        return out
-    }
-
-    /// `netdiag --history`, decoded with optional filters.
-    static func history(limit: Int = 0, network: String? = nil, since: String? = nil, mode: String? = nil) async throws -> HistoryDocument {
+    /// `netdiag --history`, decoded. The CLI intentionally exposes one
+    /// stable query shape; filters belong in the document consumer so the
+    /// command and the GUI cannot drift over unsupported flags.
+    static func history(limit: Int = 0) async throws -> HistoryDocument {
         try await CapabilityStore.shared.requireSupport(for: .history)
         var args: [String] = []
         if limit > 0 { args.append("--history=\(limit)") } else { args.append("--history") }
-        if let network, !network.isEmpty { args.append("--history-network=\(network)") }
-        if let since, !since.isEmpty { args.append("--history-since=\(since)") }
-        if let mode, !mode.isEmpty { args.append("--history-mode=\(mode)") }
 
         let (out, _, status) = try await execute(arguments: args)
         if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
@@ -198,41 +169,6 @@ struct NetdiagRunner {
             throw NetdiagError.badJSON(String(out.prefix(200)))
         }
         return doc
-    }
-
-    /// `netdiag --prune-history[=DAYS]`.
-    static func pruneHistory(days: Int = 90) async throws {
-        let arg = days != 90 ? "--prune-history=\(days)" : "--prune-history"
-        let (out, _, status) = try await execute(arguments: [arg])
-        if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
-    }
-
-    /// Structured output of `netdiag --watcher-status`.
-    struct WatcherStatus: Decodable, Sendable {
-        var installed: Bool = false
-        var plistPath: String?
-        var intervalS: Int?
-        var lastRunTimestamp: String?
-        var lastRunStatus: String = "unknown"
-
-        enum CodingKeys: String, CodingKey {
-            case installed
-            case plistPath = "plist_path"
-            case intervalS = "interval_s"
-            case lastRunTimestamp = "last_run_timestamp"
-            case lastRunStatus = "last_run_status"
-        }
-    }
-
-    /// `netdiag --watcher-status`, decoded.
-    static func watcherStatus() async throws -> WatcherStatus {
-        let (out, _, status) = try await execute(arguments: ["--watcher-status"])
-        if status != 0 { throw NetdiagError.scriptError(String(out.prefix(400))) }
-        guard let data = out.data(using: .utf8),
-              let ws = try? JSONDecoder().decode(WatcherStatus.self, from: data) else {
-            throw NetdiagError.badJSON(String(out.prefix(200)))
-        }
-        return ws
     }
 
     /// `netdiag --show=<id>`, decoded, with the bytes kept alongside.
@@ -256,6 +192,23 @@ struct NetdiagRunner {
         return detail
     }
 
+    /// `netdiag --share=-`, fed the run's own JSON on stdin.
+    ///
+    /// stdin rather than a run id so the report on screen shares exactly
+    /// as it is — including one that finished seconds ago and has not been
+    /// looked up in the store yet. The redaction and every word of the
+    /// wording are the CLI's; this returns its bytes untouched, per
+    /// CLAUDE.md on where the app is allowed to have an opinion.
+    static func share(rawJSON: String) async throws -> String {
+        let (out, err, status) = try await execute(arguments: ["--share=-"],
+                                                    stdin: rawJSON)
+        guard status == 0 else {
+            throw NetdiagError.scriptError(
+                String((err.isEmpty ? out : err).prefix(400)))
+        }
+        return out
+    }
+
     // MARK: - Process plumbing
 
     /// One child process, awaited. Returns (stdout, stderr, exit status).
@@ -277,6 +230,7 @@ struct NetdiagRunner {
     /// itself.
     static func execute(
         arguments: [String],
+        stdin: String? = nil,
         stderrLines: AsyncStream<String>.Continuation? = nil
     ) async throws -> (String, String, Int32) {
         guard let binary = BinaryLocator.resolve() else { throw NetdiagError.binaryNotFound }
@@ -289,6 +243,19 @@ struct NetdiagRunner {
         let outPipe = Pipe(), errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
+
+        // Feeding stdin needs its own pipe, and the write has to happen
+        // off this thread *after* the process is running: a JSON body
+        // larger than the pipe buffer (64 KB on macOS) blocks the writer
+        // until the child drains it, and the child cannot drain while we
+        // are blocked here not reading its stdout. Deadlock, on exactly
+        // the large reports worth sharing.
+        var inPipe: Pipe?
+        if stdin != nil {
+            let pipe = Pipe()
+            inPipe = pipe
+            process.standardInput = pipe
+        }
 
         let collector = OutputCollector()
         let splitter = stderrLines.map { sink in
@@ -330,6 +297,12 @@ struct NetdiagRunner {
                 }
                 do {
                     try process.run()
+                    if let inPipe, let stdin, let data = stdin.data(using: .utf8) {
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            inPipe.fileHandleForWriting.write(data)
+                            try? inPipe.fileHandleForWriting.close()
+                        }
+                    }
                 } catch {
                     stderrLines?.finish()
                     continuation.resume(throwing: NetdiagError.scriptError(error.localizedDescription))

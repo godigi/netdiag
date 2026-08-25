@@ -12,9 +12,9 @@
 # number — when there is no statistics line to read, so callers can tell
 # "the probe failed" apart from "the probe measured total loss".
 ipv6_parse_ping_loss() {
-  printf '%s\n' "$1" \
-    | awk -F'[ %]' '/packet loss/{for(j=1;j<=NF;j++)if($j=="packet")print $(j-2)}' \
-    | head -1
+  local parsed
+  parsed="$(ping_parse_summary "$1")"
+  printf '%s\n' "${parsed%%|*}"
 }
 
 ipv6_run() {
@@ -85,7 +85,7 @@ ipv6_run() {
       info "traceroute6: ${IPV6_TRACE_HOPS} hops to Cloudflare"
     fi
 
-    if nc -6 -G 3 -z ipv6.google.com 443 2>/dev/null; then
+    if with_timeout 5 nc -6 -G 3 -z ipv6.google.com 443 2>/dev/null; then
       IPV6_TCP_OK=1
       ok "TCP/443 to ipv6.google.com: reachable"
     else

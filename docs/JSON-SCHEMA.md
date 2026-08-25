@@ -60,7 +60,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 
 ## `run_mode`
 
-Which shape of run produced this record. A closed set:
+Which shape of run produced this record. The CLI currently emits:
 
 | value | flags | counts as a check? |
 |---|---|---|
@@ -69,6 +69,9 @@ Which shape of run produced this record. A closed set:
 | `speed-only` | `--speed-only` | no |
 | `mtu-only` | `--mtu-only` | no |
 | `wifi-only` | `--wifi-only` | no |
+| `dns-only` | `--dns-only` | no |
+| `bufferbloat-only` | `--bufferbloat-only` | no |
+| `ping-only` | `--ping-only` | no |
 
 Every record looked alike before v0.9.0, which is why "1,986 checks" on a
 network overstated what had actually been measured: a `--quick` run skips
@@ -81,19 +84,18 @@ and nothing else. `helpers/history.py` counts its metrics into
 `severity_counts`. A speed test is a measurement, not an opinion about the
 network's health.
 
-The suffix is the rule rather than a list of the three that exist today,
-because every focused mode comes from the same `FOCUS` mechanism and every
-`FOCUS` flag is named `--<section>-only`. A list would go stale the day a
-`--dns-only` landed, and it would go stale silently, by counting the new
-mode as a full check.
+The suffix is the rule rather than a hand-maintained list, because every
+focused mode comes from the same `FOCUS` mechanism and every `FOCUS` flag is
+named `--<section>-only`. New focused modes therefore remain partial without
+requiring a second history predicate.
 
 **`null` on every record written before v0.9.0**, and absence decodes as
 "unknown, treat as a check" — those runs were full or quick ones, and
 reclassifying them would rewrite two months of history.
 
-`--speed-only` is the one focused mode that *is* recorded. `--mtu-only` and
-`--wifi-only` still write no history record, which is the behaviour their
-existing records were written under.
+`--speed-only` is the one focused mode that *is* recorded. The other focused
+modes write no history record, because their measurements are not comparable
+to the full-check population.
 
 ## `run_id`
 
@@ -106,13 +108,16 @@ after its next poll. `lib/output.sh` computes it by importing
 reimplementing them, from the exact record about to be appended, so the
 value here and the one `--history` derives later can never disagree.
 
-`null` in four cases. Three are "no record was appended this run":
+`null` in these cases. The first group is "no record was appended this run":
 
 | case | why |
 |---|---|
 | `--no-baseline` | disables the append outright |
 | `--mtu-only` | a focused run isn't comparable to a full one; unrecorded since before `run_id` existed |
 | `--wifi-only` | same as `--mtu-only` |
+| `--dns-only` | same as `--mtu-only` |
+| `--bufferbloat-only` | same as `--mtu-only` |
+| `--ping-only` | same as `--mtu-only` |
 
 `--speed-only` is **not** in that list: it appends per v0.9.0, and gets a
 real `run_id` like a `full` or `quick` run.
@@ -371,7 +376,8 @@ it would accumulate forever.
   "public":  {"ok": true, "ip": "…", "isp": "…", "asn": "AS10429",
               "city": "…", "country": "Brazil", "country_iso": "BR",
               "captive_portal": false},
-  "status":  {"severity": "ok", "rules": [], "icmp_filtered": false,
+  "status":  {"severity": "ok", "rules": [], "measurement": "measured",
+              "icmp_filtered": false,
               "degraded": false, "paused": false, "cadence_s": 10},
   "changes": [                    // schema 2+; ABSENT when nothing changed
     {"id": "vpn-disconnected", "field": "vpn.active",
@@ -384,6 +390,15 @@ it would accumulate forever.
 
 ## Conventions specific to the stream
 
+- **`gateway.loss_pct` is a rolling-window figure**, not one probe's
+  reading: lost×100÷sent accumulated over the last
+  `MONITOR_LOSS_WINDOW_PROBES` probes (~100 packets at the defaults,
+  refreshed every fast cycle). A percentage is only as fine as its
+  denominator; accumulating across probes makes one dropped packet move
+  the figure one point and lets routine noise decay out instead of
+  swinging the instrument. It resets to `null` on link-down, a network
+  change, or an unparseable probe — never silently carries readings
+  across a discontinuity.
 - **`network.group_id` is the `--history` group key** (`mac:…`, `gw:…` or
   `ssid:…` — the same string `--history` reports in `networks[].id`),
   derived by `lib/netid.sh` from the same inputs as `network.id`, with
@@ -408,11 +423,22 @@ it would accumulate forever.
   full run name the **same** rule IDs; the bats suite asserts that parity
   over eleven conditions. Consumers render this list. They must not
   re-derive it, or the app can contradict the report it links to.
+- **`status.measurement`** is separate from health severity. `measured`
+  means a fast gateway, internet-loss, or HTTPS reachability probe produced
+  a result; `unknown` means the link may still be associated but traffic was
+  not successfully tested; `link-down` means there was no default route.
+  `unknown` must never be rendered as an all-clear.
 - **`status.icmp_filtered`** is TCP-1 holding: real connections work,
   only ping is being dropped. Common on hotel and corporate networks.
-  The loss rules still fire — withholding them would break parity with a
-  scan — so this flag is what an alert engine reads to suppress a loss
-  notification that would always be wrong.
+  The gateway loss rules (`G1`, `G2`, `G3`) do **not** fire alongside it —
+  TCP-1 is evaluated first and suppresses them in `lib/diagnosis.sh` and
+  `lib/monitor.sh` alike, so the two engines still name the same rules for
+  the same link. (Until v0.10.1 both fired, which put "reboot the router"
+  and "the network is up; don't worry" in one report.) The flag remains what
+  an alert engine reads to suppress a loss notification, and it is also the
+  signal a UI should use to stop presenting `gateway.loss_pct` and the
+  latency figures as meaningful: on such a network they are an artefact of
+  the probe, not a property of the link.
 - **`status.paused`** means `SIGUSR1` suspended probing. Every measurement
   in such a sample is stale by definition; do not plot or alert on it.
 - **`changes`** (schema 2+) lists field-level differences from the
@@ -759,6 +785,77 @@ wrapper can keep telling a mistyped id apart from a broken network.
 
 ---
 
+# `netdiag --share[=ID|-]` schema
+
+`netdiag --share` is the **one mode in this document that emits plain
+text, not JSON** — a pasteable report, not a machine-readable object.
+
+It exists because there is no redacted copy sitting in the store to read
+back. `lib/output.sh:160-163` saves `REDACT`, forces it to `0` while
+building the record appended to history, then restores it, so every
+stored run holds full detail regardless of the flags it was invoked
+with — and `helpers/history.py:355` drops any record that *was* written
+under `--redact` from the store entirely, because a masked record's
+`network.id` is the literal string `wifi:mac=[redacted]`, shared with
+every other redacted run on every other network. So redacting a *past*
+run has to happen at read time, against whatever JSON `--show` would
+return for it. `helpers/share.py` does exactly that.
+
+Three input forms:
+
+| form | source |
+|---|---|
+| `--share` (bare) | the newest run in the store |
+| `--share=ID` | that stored run — ids come from `--history` |
+| `--share=-` | one run's JSON read from stdin, no store lookup — the app's own in-memory result shares identically to a run from last week |
+
+The output is never colored, so it pastes cleanly into a support chat, a
+forum post, or an email.
+
+## Masked vs. kept
+
+`helpers/share.py` mirrors `helpers/emit_json.py`'s `_REDACT_ENV` field
+for field (`helpers/emit_json.py:275-276`), substring-scrubbing the same
+values out of the record itself rather than the environment — there is
+no live run here to source `NETDIAG_*` vars from, only a JSON object read
+from stdin or the store.
+
+| field | masked? | why |
+|---|---|---|
+| `public.ip` | masked | identifies the household |
+| `public.city` | masked | identifies the household |
+| `interface.ip` | masked | identifies the household |
+| `interface.gateway_mac` | masked | identifies the router |
+| `wifi.ssid` | masked | identifies the household |
+| `wifi.bssid` | masked | identifies the router |
+| `ipv6.global_addr` | masked | identifies the household |
+| `ipv6.gateway` | masked | EUI-64-derived from the router's MAC, so leaving it in republishes `interface.gateway_mac` sitting right next to it |
+| `public.isp` | kept, deliberately | names a provider, not a person — needed to reason about the fault |
+| `public.asn` | kept, deliberately | same reason as `isp` |
+| `public.country` / `public.country_iso` | kept, deliberately | two characters is too short to substring-replace safely without corrupting unrelated text |
+| RFC1918 addresses (e.g. `gateway.ip`) | kept, deliberately | identify nobody, and blanking them would gut the router/NAT rows |
+| `network.id` / `network.label` | kept, deliberately | composites of values already masked above (`wifi:ssid=[redacted],mac=[redacted]`) — the parts that identify anything are already gone |
+
+Longest-secret-first ordering and a 3-character minimum are part of the
+algorithm, not incidental: a longer secret is masked before a shorter one
+that happens to sit inside it (an SSID containing a street number that
+also appears alone elsewhere), or the shorter replacement would run first
+and leave a fragment of the longer secret exposed; a 1–2 character
+replacement would corrupt ordinary prose (English is full of 2-letter
+words) rather than protect anything.
+
+## Errors
+
+| case | behaviour |
+|---|---|
+| empty store, bare `--share` | exit `3` — "no stored run to share yet — run a check first" |
+| `--share=ID` naming a run not in the store | exit `3` — "no stored run to share (id: ID)" |
+| `--share=-` given input that is not valid JSON | exit `3` |
+
+Exit `2` is never used here either: it is reserved for a real diagnosis.
+
+---
+
 # `netdiag --version`
 
 Prints `netdiag <VERSION>` to stdout and exits 0. No log file, no
@@ -788,7 +885,8 @@ every optional dependency below is missing.
   "schemas": {"run": 1, "monitor": 2, "history": 1, "show": 1,
               "rules_catalog": 1, "signal_scale": 1, "progress": 1},
   "features": ["capabilities", "version", "progress", "monitor", "history",
-               "show", "redact", "speed-only", "watcher", "rules-catalog",
+               "show", "redact", "speed-only", "dns-only",
+               "bufferbloat-only", "ping-only", "watcher", "rules-catalog",
                "signal-scale"],
   "deps": {
     "bash": "5.2.37",
@@ -935,13 +1033,13 @@ probing, no log file, no `~/net-diag` writes, sudo-free.
   "schema": 1,
   "bands": [
     {"min_dbm": -55, "label": "Excellent", "tone": "good",
-     "blurb": "Your Wi-Fi signal is as strong as it gets — you're right next to the router or access point, and the wireless link is never going to be the bottleneck."},
+     "blurb": "Your Mac has a strong radio signal to the access point. That does not test whether the router or internet path is delivering traffic."},
     {"min_dbm": -70, "label": "Good", "tone": "ok",
-     "blurb": "Your Wi-Fi signal is solid. Streaming, video calls, and downloads should all work smoothly from here."},
+     "blurb": "Your Mac has a solid radio signal to the access point. Signal strength alone cannot confirm that websites will load."},
     {"min_dbm": -75, "label": "Fair", "tone": "warn",
-     "blurb": "Your Wi-Fi signal is on the weaker side. You might notice occasional slowdowns or a video call stutter, especially the further you get from the router."},
+     "blurb": "Your radio signal is on the weaker side, but this reading still does not identify whether an internet problem is local Wi-Fi, the router, or the provider."},
     {"min_dbm": null, "label": "Weak", "tone": "bad",
-     "blurb": "Your Mac is far from the router or something is blocking the signal — expect stalls and dropped calls."}
+     "blurb": "Your radio signal is weak or obstructed. Confirm the router and internet path with a reachability check before assuming signal strength is the cause."}
   ]
 }
 ```

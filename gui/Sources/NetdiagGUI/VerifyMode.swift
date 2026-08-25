@@ -62,6 +62,7 @@ private enum VerifyHarness {
         // policy consistent and run the checks.
         NSApp?.setActivationPolicy(.accessory)
         runStageTests()
+        runFullCheckPolicyTests()
         runSnapshots()
         print("")
         if failures.isEmpty {
@@ -91,7 +92,8 @@ private enum VerifyHarness {
                                isPausedForAnyReason: Bool = false,
                                pauseReason: String? = nil,
                                lastError: String? = nil,
-                               monitorRunning: Bool = true) -> StageResolver.Inputs {
+                               monitorRunning: Bool = true,
+                               measurementState: String = "measured") -> StageResolver.Inputs {
         StageResolver.Inputs(
             isScanning: isScanning,
             monitoringEnabled: monitoringEnabled,
@@ -101,7 +103,8 @@ private enum VerifyHarness {
             monitorRunning: monitorRunning,
             activeAlert: activeAlert,
             severity: severity,
-            linkUp: linkUp
+            linkUp: linkUp,
+            measurementState: measurementState
         )
     }
 
@@ -121,6 +124,7 @@ private enum VerifyHarness {
         // read .healthy for 15–25 s while the timeline already showed the drop.
         equal(StageResolver.resolve(inputs(severity: "warn")), .watching(severity: .warn), "warn → watching (amber, before dwell)")
         equal(StageResolver.resolve(inputs(severity: "critical")), .watching(severity: .critical), "critical → watching (red, before dwell)")
+        equal(StageResolver.resolve(inputs(measurementState: "unknown")), .checking, "unknown measurement → checking, not healthy")
 
         // An active alert wins over watching — once the dwell elapses the
         // card carries the alert's prose, which a scan may have enriched.
@@ -151,9 +155,47 @@ private enum VerifyHarness {
         equal(StageResolver.resolve(inputs(severity: "warn", activeAlert: nil)),
               .watching(severity: .warn), "no alert + warn → watching (alert gate is what kept it healthy before)")
 
-        // No verdict yet (monitor just started) reads healthy, not watching —
-        // a yellow card with no evidence would cry wolf.
-        equal(StageResolver.resolve(inputs(severity: "ok", linkUp: true)), .healthy, "first-sample ok → healthy")
+        // No measurement yet is explicitly neutral, never an all-clear.
+        equal(StageResolver.resolve(inputs(severity: "ok", linkUp: true,
+                                            measurementState: "unknown")),
+              .checking, "first-sample unknown → checking")
+    }
+
+    // MARK: - Full-check policy
+    //
+    // A full check runs a bufferbloat probe that deliberately saturates
+    // the link for ~10 s. Doing that to a connection already reporting
+    // critical makes the user's situation worse in the middle of the
+    // problem they opened the app about. Same reasoning
+    // NetdiagRunner.Depth.alertTriggered already encodes by passing
+    // --no-bufferbloat; this extends it to the manual path.
+
+    private static func runFullCheckPolicyTests() {
+        print("\nFullCheckPolicy")
+        equal(FullCheckPolicy.isSafe(severity: "ok"), true, "ok permits a full check")
+        equal(FullCheckPolicy.isSafe(severity: "info"), true, "info permits a full check")
+        equal(FullCheckPolicy.isSafe(severity: "warn"), true, "warn permits a full check")
+        equal(FullCheckPolicy.isSafe(severity: "critical"), false, "critical blocks a full check")
+        // An unrecognised severity must not silently read as safe: the
+        // CLI is the authority on this vocabulary and a value we do not
+        // know is a value we cannot clear.
+        equal(FullCheckPolicy.isSafe(severity: ""), false, "unknown severity blocks a full check")
+        equal(FullCheckPolicy.isSafe(severity: "catastrophic"), false, "unrecognised severity blocks a full check")
+
+        // The control's label and tooltip must name the depth that will
+        // actually run, and the unsafe help must never author a verdict.
+        // Commit 69fa7fb shipped one that asserted the connection was
+        // down at that instant — Swift composing a diagnosis, and false
+        // whenever `isSafe` declined for want of a sample rather than for
+        // a critical reading. These four assertions are what keep it out.
+        let safeLabel = FullCheckPolicy.controlLabel(isSafe: true)
+        let unsafeLabel = FullCheckPolicy.controlLabel(isSafe: false)
+        equal(safeLabel.contains("Full check"), true, "safe label names the full check")
+        equal(unsafeLabel.contains("Lighter check"), true, "unsafe label names the lighter check")
+
+        let unsafeHelp = FullCheckPolicy.controlHelp(isSafe: false)
+        equal(unsafeHelp.contains("is failing"), false, "unsafe help never claims the connection is failing")
+        equal(unsafeHelp.contains("speed test"), true, "unsafe help discloses the speed test is skipped too")
     }
 
     // MARK: - 2. Stage-card visual contract (offscreen render → PNG)
@@ -192,6 +234,10 @@ private enum VerifyHarness {
                 content(icon: "circle.dashed", tint: .accentColor,
                         title: "Checking…", tertiary: "pinging the gateway")
                     .background(Color.gray.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            case .checking:
+                content(icon: "hourglass", tint: .secondary,
+                        title: "Checking connection…", tertiary: "waiting for a live reading")
+                    .background(Color.gray.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             case .paused(let reason):
                 content(icon: "pause.circle.fill", tint: .secondary,
                         title: "Monitoring paused", tertiary: reason ?? "")
@@ -222,11 +268,13 @@ private enum VerifyHarness {
     /// Render a SwiftUI view to an NSImage offscreen via NSHostingView +
     /// `cacheDisplay`. Captures the layer without a window for static
     /// content; called after launch so NSApplication is already up.
-    private static func renderImage(_ view: some View, size: NSSize) -> NSImage {
+    private static func renderImage(_ view: some View, size: NSSize) -> NSImage? {
         let hosting = NSHostingView(rootView: view)
         hosting.frame = NSRect(origin: .zero, size: size)
         hosting.layoutSubtreeIfNeeded()
-        let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)!
+        guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            return nil
+        }
         hosting.cacheDisplay(in: hosting.bounds, to: rep)
         let image = NSImage(size: size)
         image.addRepresentation(rep)
@@ -248,10 +296,15 @@ private enum VerifyHarness {
             ("paused",            .paused("display sleeping"),               "Monitoring is off while the display sleeps."),
             ("skewed",            .skewed("netdiag CLI is too old"),         "The bundled netdiag is older than this app expects."),
             ("testing",           .testing,                                  "Running a full check…"),
+            ("checking",          .checking,                                 "Waiting for a live reading…"),
         ]
         for (name, stage, body) in cases {
-            let image = renderImage(StageCardSnapshot(stage: stage, bodyText: body),
-                                    size: NSSize(width: 340, height: 80))
+            guard let image = renderImage(StageCardSnapshot(stage: stage, bodyText: body),
+                                          size: NSSize(width: 340, height: 80)) else {
+                print("  \u{2718} \(name) — could not allocate bitmap representation")
+                failures.append("render-\(name)")
+                continue
+            }
             let url = URL(fileURLWithPath: "\(dir)/stage-\(name).png")
             do {
                 if let tiff = image.tiffRepresentation,

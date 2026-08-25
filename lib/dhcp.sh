@@ -29,7 +29,7 @@ dhcp_run() {
       if [ "$DHCP_TIME_REMAINING_S" -gt 0 ]; then
         remaining_hrs=$((DHCP_TIME_REMAINING_S / 3600))
         info "Time remaining: ~${remaining_hrs}h"
-        if [ "$DHCP_TIME_REMAINING_S" -lt 3600 ]; then
+        if [ "$DHCP_TIME_REMAINING_S" -lt "$THRESH_DHCP_LEASE_WARN_S" ]; then
           warn "Lease expires in $((DHCP_TIME_REMAINING_S / 60)) min — renewal failures could drop the link."
         fi
       fi

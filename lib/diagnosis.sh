@@ -35,6 +35,45 @@ diagnosis_run() {
     add_diag critical N1b "Your Mac has a router but nothing on the public internet responded. $_rerun for a full picture — it will tell you whether the problem is your router, your ISP, or DNS."
   fi
 
+  # W1/W2/WS-1 — WiFi conditions that are worth reporting even when they
+  # have not yet caused packet loss. These rules used to be documented and
+  # catalogued but never emitted, so a weak signal or crowded channel could
+  # appear in the measurements with no actionable diagnosis.
+  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_RSSI" ] \
+     && is_numeric "$WIFI_RSSI" \
+     && [ "$WIFI_RSSI" -lt "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then
+    add_diag warn W1 "Your WiFi signal is weak (${WIFI_RSSI} dBm), which can cause retransmissions, latency spikes, and dropouts. Move closer to the router, switch to a nearer access point, or try the other WiFi band."
+  fi
+  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_SNR" ] \
+     && is_numeric "$WIFI_SNR" \
+     && [ "$WIFI_SNR" -lt "$THRESH_WIFI_SNR_LOW_DB" ]; then
+    add_diag warn W2 "Your WiFi signal is being overwhelmed by interference (SNR ${WIFI_SNR} dB). Try a less crowded channel or move the router away from sources of radio interference."
+  fi
+  if [ "$IS_WIFI" -eq 1 ] && [ -n "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" ] \
+     && is_numeric "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" \
+     && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt "$THRESH_WIFI_CHANNEL_NEIGHBOURS" ]; then
+    add_diag warn WS-1 "Your WiFi channel is crowded (${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} neighbouring networks). If performance is inconsistent, choose a less busy channel or let the router select one automatically."
+  fi
+
+  # TCP-1 — TCP works, ICMP is filtered. Decided before G1/G2/G3 because it
+  # decides whether they fire at all, and mirrored exactly in
+  # lib/monitor.sh's _mon_rules (tests/test_monitor.bats holds the two to
+  # the same rule set for the same link).
+  #
+  # Both used to fire together, which put "reboot the router (unplug it for
+  # 30 seconds)" and "the network is up; don't worry about the ping numbers
+  # above" in one report, let the critical one own the headline, and exited
+  # 2 on every hotel and corporate network. TCP reaching 1.1.1.1:443 means
+  # packets are crossing the gateway, so the gateway is forwarding and
+  # merely declining to answer pings itself — and THRESH_ICMP_FILTERED_LOSS_PCT
+  # is deliberately set well above LOSS_CRIT_PCT so that inference is safe.
+  # No figure is lost: TCP-1's own prose quotes the gateway loss.
+  local _gw_icmp_filtered=0
+  if [ "$TCP_REACH_ANY_OK" -eq 1 ] && loss_at_least "$GW_LOSS" "$THRESH_ICMP_FILTERED_LOSS_PCT"; then
+    _gw_icmp_filtered=1
+    add_diag info TCP-1 "Actual connections work fine, only the \"ping\" tests fail (${GW_LOSS}% loss to the gateway) — something on the path is blocking pings but not real traffic. Common on hotel WiFi, corporate networks, and some ISPs. The network is up; don't worry about the ping numbers above."
+  fi
+
   # G1/G2/G3 — gateway loss. All three describe trouble on the connection
   # between the Mac and the router *inside the home* — never the ISP or the
   # wider internet — and say so in plain words, because a reader who
@@ -42,7 +81,9 @@ diagnosis_run() {
   # mention of packet loss as "my internet is down". Each names the most
   # likely cause too: Wi-Fi signal/interference, or on ethernet, the
   # cable/port — mirrored from the same branch G3 uses below.
-  if loss_at_least "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+  if [ "$_gw_icmp_filtered" -eq 1 ]; then
+    : # TCP-1 has already described this link.
+  elif loss_at_least "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ -n "$WIFI_RSSI" ] && is_numeric "$WIFI_RSSI" && [ "$WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
       add_diag critical G1 "Your Mac is losing ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not out on the wider internet. Your Wi-Fi signal here is weak (${WIFI_RSSI} dBm), which is almost certainly the cause. Try moving closer to the router, or switching to a closer access point if you have one."
     else
@@ -144,10 +185,8 @@ diagnosis_run() {
     add_diag info VPN-1 "A VPN is carrying your traffic right now (${VPN_NAME:-$VPN_TYPE}). Everything measured above — router, latency, traceroute, speed — describes the tunnel and the VPN's exit server, not your own network. If something looks slow here, the VPN is as likely a cause as your ISP. Disconnect it and run netdiag again to see the underlying connection."
   fi
 
-  # TCP-1 — TCP works, ICMP is filtered.
-  if [ "$TCP_REACH_ANY_OK" -eq 1 ] && [ -n "$GW_LOSS" ] && [ "${GW_LOSS%.*}" -ge "$THRESH_ICMP_FILTERED_LOSS_PCT" ]; then
-    add_diag info TCP-1 "Actual connections work fine, only the \"ping\" tests fail (${GW_LOSS}% loss to the gateway) — something on the path is blocking pings but not real traffic. Common on hotel WiFi, corporate networks, and some ISPs. The network is up; don't worry about the ping numbers above."
-  fi
+  # TCP-1 is decided above the gateway loss rules, because it decides
+  # whether they fire at all.
 
   # ── L1 / L2 — internet-side packet loss ────────────────────────────────
   # The gap these close: INET_LOSS was measured, written to JSON, and used

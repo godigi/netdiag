@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// The report card: one row per thing that was measured, then the CLI's own
 /// prose about what it means.
@@ -16,6 +17,10 @@ struct RunReportView: View {
     /// nil for a live run: a run has nothing to be compared against until
     /// it is in the store.
     var comparison: RunDetail.Comparison?
+    /// The CLI's own bytes for this run, when the caller has them. `nil`
+    /// for a snapshot decoded without them — the Copy control says so
+    /// rather than silently vanishing.
+    var rawJSON: String?
     /// Whether each diagnosis shows its rule id. Passed in rather than read
     /// from `Defaults` so the captions appear the instant the enclosing
     /// expert disclosure is opened, not on the next launch.
@@ -25,10 +30,60 @@ struct RunReportView: View {
     /// below, and the `RuleChip`s in the diagnosis captions.
     @Environment(NetdiagCoordinator.self) private var coordinator
 
+    @State private var shareError: String?
+    @State private var didCopy = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             card
+            copyRow
             diagnoses
+        }
+    }
+
+    // MARK: - Copy report
+
+    /// Copies the CLI's own redacted rendering, never a re-encode of this
+    /// app's partial model — the same reason `RunResult` keeps `rawJSON`
+    /// around at all.
+    @ViewBuilder
+    private var copyRow: some View {
+        HStack(spacing: 8) {
+            Button(didCopy ? "Copied" : "Copy report") {
+                copyShareableReport()
+            }
+            .controlSize(.small)
+            .disabled(didCopy || rawJSON == nil)
+            Text("Plain text, with your network name, IP addresses and location masked.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if let shareError {
+                Text(shareError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func copyShareableReport() {
+        guard let raw = rawJSON else {
+            shareError = "This report came from an older netdiag and can't be shared."
+            return
+        }
+        Task { @MainActor in
+            do {
+                let text = try await NetdiagRunner.share(rawJSON: raw)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                shareError = nil
+                didCopy = true
+                try? await Task.sleep(for: .seconds(2))
+                didCopy = false
+            } catch {
+                shareError = "Couldn't build a shareable report."
+            }
         }
     }
 
@@ -43,8 +98,8 @@ struct RunReportView: View {
         VStack(spacing: 0) {
             ForEach(rows) { row in
                 HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: row.health.symbol)
-                        .foregroundStyle(row.health.tint)
+                    Image(systemName: row.symbol)
+                        .foregroundStyle(row.symbolTint)
                         .frame(width: 18)
                     HStack(spacing: 4) {
                         Text(row.label)
@@ -52,9 +107,15 @@ struct RunReportView: View {
                     }
                     .frame(width: 156, alignment: .leading)
                     Text(row.value)
-                        .foregroundStyle(row.value == "not measured" ? .secondary : .primary)
+                        .foregroundStyle(row.value.hasPrefix("not measured") ? .secondary : .primary)
                         .lineLimit(1)
                         .frame(width: 128, alignment: .leading)
+                        // Safety net for any value long enough to
+                        // tail-truncate at this column's fixed width (the
+                        // Wi-Fi row's sudo-hint fallback is the current
+                        // longest) — the full string is always one hover
+                        // away instead of silently lost.
+                        .help(row.value)
                     medianColumn(row)
                         .frame(width: 96, alignment: .leading)
                     Spacer(minLength: 4)
@@ -89,6 +150,31 @@ struct RunReportView: View {
         /// re-derived so the two columns can never disagree about units.
         /// `nil` alongside a `nil` `metricKey`.
         let medianFormatter: ((Double) -> String)?
+
+        /// Did this run actually produce a number for the row? Derived from
+        /// the rendered value rather than carried separately, so it cannot
+        /// disagree with what the user reads in the next column.
+        var measured: Bool { !value.hasPrefix("not measured") }
+
+        /// A green dot is a claim — "checked, and fine". `health` alone
+        /// cannot make it, because it reports only whether a *rule* fired,
+        /// and no rule fires about a check that never ran. That put a green
+        /// dot beside "Under load: not measured", "Packet size (MTU): not
+        /// measured" and "Clock: not measured" in the same report whose
+        /// headline was a critical, which is the strongest possible way to
+        /// tell a user the app is not paying attention.
+        ///
+        /// Only the all-clear is downgraded. A row that is unmeasured
+        /// *because* something failed — the Internet row under N1, say —
+        /// keeps its warning or critical symbol: there the absence of a
+        /// number is the finding.
+        var symbol: String {
+            (health == .healthy && !measured) ? "minus.circle" : health.symbol
+        }
+
+        var symbolTint: Color {
+            (health == .healthy && !measured) ? .secondary : health.tint
+        }
     }
 
     /// Row → category mapping, derived mechanically from what the legacy
@@ -173,9 +259,15 @@ struct RunReportView: View {
                        metricKey: nil,
                        glossaryKey: "dns",
                        medianFormatter: nil))
-        if let wifi = s.wifi, let rssi = wifi.rssi {
+        // Unconditional on `wifi` alone, matching every other row's
+        // "not measured" fallback (see `format()` below) — only the
+        // presence of `rssi` inside it is optional, not the row. A wired
+        // run has no `wifi` object at all and correctly shows nothing;
+        // a Wi-Fi run without `sudo` now says why instead of the row just
+        // not being there.
+        if let wifi = s.wifi {
             out.append(Row(label: "Wi-Fi signal",
-                           value: "\(rssi) dBm",
+                           value: wifi.rssi.map { "\($0) dBm" } ?? "not measured (needs sudo)",
                            health: health(["WD-1"], ["wifi"]),
                            metricKey: "wifi_rssi_dbm",
                            glossaryKey: "wifi_signal",
@@ -217,8 +309,17 @@ struct RunReportView: View {
     /// "not measured" rather than a zero. The CLI's schema draws that line
     /// deliberately — treating an unmeasured value as zero is what produced
     /// false diagnoses in earlier versions — and the UI has to hold it too.
+    ///
+    /// Loss is read before the RTT is given up on, because total loss has no
+    /// average RTT *by definition*: every packet that would have contributed
+    /// one was dropped. Checking `value` first printed "not measured" on the
+    /// exact runs where loss was the whole story — a red ✗ beside "not
+    /// measured", directly under a headline quoting "100.0% of the packets".
     private func format(_ value: Double?, _ fmt: String, loss: Double?) -> String {
-        guard let value else { return "not measured" }
+        guard let value else {
+            guard let loss, loss > 0 else { return "not measured" }
+            return String(format: "%.0f%% loss, no reply", loss)
+        }
         var text = String(format: fmt, value)
         if let loss, loss > 0 { text += String(format: " · %.0f%% loss", loss) }
         return text

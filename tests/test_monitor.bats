@@ -36,9 +36,11 @@ setup() {
 reset_state() {
   # monitor side
   MON_LINK_UP=1 MON_IFACE_TYPE=wifi MON_GATEWAY=192.168.1.1
-  MON_GW_LOSS=0 MON_GW_RTT=3 MON_INET_LOSS="" MON_INET_RTT=""
+  MON_GW_LOSS=0 MON_GW_RTT=3 MON_INET_LOSS="" MON_INET_LOSS_ALT="" MON_INET_RTT=""
+  MON_GW_HIST="" MON_INET_HIST="" MON_INET_HIST_ALT=""
   MON_WIFI_RSSI="" MON_WIFI_SNR=""
   MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
+  MON_WEB_OK="" MON_MEASUREMENT_STATE="unknown"
   MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
   MON_GW_LOSS_STREAK=0 MON_INET_LOSS_STREAK=0
   # scanner side
@@ -102,13 +104,43 @@ scanner_rules() {
   [[ "$m" == *"G3"* ]]
 }
 
-@test "parity: on an ICMP-filtering network both name TCP-1 alongside the loss rule" {
+@test "parity: on an ICMP-filtering network both name TCP-1 and neither names G2" {
+  # Both rules used to fire, which put "reboot your router (unplug it for 30
+  # seconds)" and "the network is up; don't worry about the ping numbers
+  # above" in the same report, and let the critical one own the headline. A
+  # user cannot act on that. TCP reaching 1.1.1.1:443 means packets are
+  # crossing the gateway, so the gateway is forwarding and merely declining
+  # to answer pings itself — TCP-1's own prose still quotes the loss figure,
+  # so no number is lost by dropping the contradiction.
   reset_state; MON_GW_LOSS=100 GW_LOSS=100
   local m; m="$(monitor_rules)"; reset_state
   MON_GW_LOSS=100 GW_LOSS=100
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"TCP-1"* ]]
+  [[ "$m" != *"G1"* ]]
+  [[ "$m" != *"G2"* ]]
+  [[ "$m" != *"G3"* ]]
+}
+
+@test "parity: heavy gateway loss with TCP also failing still names G2 on both" {
+  # The other half of the suppression: without a working TCP path there is
+  # no evidence the gateway forwards anything, so the loss is a fault and
+  # must still be called one.
+  reset_state; MON_GW_LOSS=100 GW_LOSS=100 MON_TCP_OK=0 TCP_REACH_ANY_OK=0
+  local m; m="$(monitor_rules)"; reset_state
+  MON_GW_LOSS=100 GW_LOSS=100 MON_TCP_OK=0 TCP_REACH_ANY_OK=0
+  [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"G2"* ]]
+  [[ "$m" != *"TCP-1"* ]]
+}
+
+@test "an ICMP-filtering network is not a critical severity" {
+  # The exit-code consequence of the same conflation: every hotel and
+  # corporate network scored a critical, so `netdiag` exited 2 and the
+  # menu-bar card went red on a connection that works.
+  reset_state; MON_GW_LOSS=100
+  _mon_rules
+  [ "$MON_SEVERITY" != "critical" ]
 }
 
 @test "the icmp_filtered flag is set so the alert engine can suppress" {
@@ -156,11 +188,19 @@ scanner_rules() {
 }
 
 @test "parity: severe internet loss over a clean router is L1 on both" {
-  reset_state; MON_INET_LOSS=25 INET_LOSS=25 INET_LOSS_ALT=25
+  reset_state; MON_INET_LOSS=25 MON_INET_LOSS_ALT=25 INET_LOSS=25 INET_LOSS_ALT=25
   local m; m="$(monitor_rules)"; reset_state
-  MON_INET_LOSS=25 INET_LOSS=25 INET_LOSS_ALT=25
+  MON_INET_LOSS=25 MON_INET_LOSS_ALT=25 INET_LOSS=25 INET_LOSS_ALT=25
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"L1"* ]]
+}
+
+@test "monitor does not make L1 critical from one lossy internet target" {
+  reset_state; MON_INET_LOSS=25 MON_INET_LOSS_ALT=0
+  _mon_rules
+  _mon_rules
+  [[ "$(monitor_rules)" == *"L2"* ]]
+  [[ "$(monitor_rules)" != *"L1"* ]]
 }
 
 @test "parity: moderate internet loss is L2 on both" {
@@ -175,9 +215,9 @@ scanner_rules() {
 }
 
 @test "parity: total ping loss on a working link is ICMP-1 on both, not L1" {
-  reset_state; MON_INET_LOSS=100 INET_LOSS=100 INET_LOSS_ALT=100
+  reset_state; MON_INET_LOSS=100 MON_INET_LOSS_ALT=100 INET_LOSS=100 INET_LOSS_ALT=100
   local m; m="$(monitor_rules)"; reset_state
-  MON_INET_LOSS=100 INET_LOSS=100 INET_LOSS_ALT=100
+  MON_INET_LOSS=100 MON_INET_LOSS_ALT=100 INET_LOSS=100 INET_LOSS_ALT=100
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"ICMP-1"* ]]
   [[ "$m" != *"L1"* ]]
@@ -208,6 +248,31 @@ scanner_rules() {
   run grep -nE '(loss_at_least|loss_below) "\$[A-Z_]+" [0-9]+|-lt -?[1-9][0-9]* \]|-ge -?[1-9][0-9]* \]|-gt -?[1-9][0-9]* \]' \
     "$REPO/lib/monitor.sh"
   [ "$status" -ne 0 ] || { echo "inline cutoff in monitor.sh:"; echo "$output"; return 1; }
+}
+
+@test "SIGALRM requests a refresh without stopping the monitor" {
+  MON_STOP=0 MON_REFRESH_REQUESTED=0
+  _mon_on_refresh
+  [ "$MON_REFRESH_REQUESTED" -eq 1 ]
+  [ "$MON_STOP" -eq 0 ]
+}
+
+@test "monitor installs a harmless SIGALRM refresh trap" {
+  run grep -n 'trap _mon_on_refresh ALRM' "$REPO/lib/monitor.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "registered parent temp directories are cleaned up" {
+  netdiag_mktemp_dir test-registry
+  local d="$NETDIAG_TMP_DIR"
+  [ -d "$d" ]
+  [[ "$_NETDIAG_TMP_DIRS" == *"$d"* ]]
+  netdiag_tmp_forget "$d"
+  [ -z "$_NETDIAG_TMP_DIRS" ]
+  rm -rf "$d"
+  _netdiag_tmp_cleanup
+  [ ! -e "$d" ]
+  [ -z "$_NETDIAG_TMP_DIRS" ]
 }
 
 # ── Freshness on internet-side loss ──────────────────────────────────────
@@ -294,6 +359,88 @@ scanner_rules() {
   [[ "$MON_RULES" != *"G3"* ]]
 }
 
+# ── Internet-probe loss quantum ───────────────────────────────────────────
+# The regression behind the flashing red card: _mon_probe_internet sent
+# five packets, so one dropped packet read as exactly LOSS_CRIT_PCT and L1
+# — which never waits for confirmation — fired on routine resolver noise,
+# then cleared on the next cycle. Two fixes, both guarded here: the probe
+# sends MONITOR_INET_PING_COUNT packets from thresholds.sh, and the
+# reported figure accumulates over a rolling window of
+# MONITOR_LOSS_WINDOW_PROBES probes (_mon_loss_fold), so the percentage's
+# denominator is ~100 packets. The property to hold forever: one dropped
+# packet cannot reach any loss threshold, and the smallest nonzero reading
+# is a single point of the window.
+
+@test "the internet probe's packet count comes from thresholds.sh" {
+  run grep -cE 'ping -q -c "\$MONITOR_INET_PING_COUNT"' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 1 ]
+  run grep -cE 'MONITOR_INET_PING_COUNT=' "$REPO/lib/thresholds.sh"
+  [ "$output" -eq 1 ]
+  # And no inline burst size snuck back in: the only -c on this probe is
+  # the variable.
+  run grep -cE 'ping .*-c [0-9]' "$REPO/lib/monitor.sh"
+  [ "$output" -eq 0 ]
+}
+
+@test "the loss window size comes from thresholds.sh" {
+  run grep -cE '_mon_loss_summarize|_mon_loss_fold' "$REPO/lib/monitor.sh"
+  [ "$output" -ge 2 ]
+  run grep -cE 'MONITOR_LOSS_WINDOW_PROBES=' "$REPO/lib/thresholds.sh"
+  [ "$output" -eq 1 ]
+}
+
+@test "one dropped packet cannot reach critical loss on the monitor" {
+  local quantum=$((100 / (MONITOR_LOSS_WINDOW_PROBES * MONITOR_INET_PING_COUNT)))
+  [ "$quantum" -lt "$LOSS_WARN_PCT" ]
+  [ "$quantum" -lt "$LOSS_CRIT_PCT" ]
+  [ "$quantum" -lt "$THRESH_GW_LOSS_CRIT_PCT" ]
+}
+
+@test "the window trims to its cap and sums counts, not ratios" {
+  local summary
+  # Seven probes' worth: only the newest five may survive. Deliberately
+  # unequal counts so a ratio-averaging implementation fails this while an
+  # integer accumulation passes.
+  summary="$(_mon_loss_summarize "10:10 20:0 20:0 20:0 20:5 20:0 20:1")"
+  [ "${summary%%|*}" = "20:0 20:0 20:5 20:0 20:1" ]
+  local totals="${summary#*|}"
+  [ "${totals%%|*}" = "100" ]
+  [ "${totals##*|}" = "6" ]
+}
+
+@test "a full clean window reads zero, one drop reads one point" {
+  local hist="" summary i
+  for i in 1 2 3 4; do
+    summary="$(_mon_loss_fold "$hist" "$(ping_summary 20 20)" "$MONITOR_INET_PING_COUNT")"
+    hist="${summary%%|*}"
+  done
+  summary="$(_mon_loss_fold "$hist" "$(ping_summary 20 20)" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary##*|}" = "0" ]
+  summary="$(_mon_loss_fold "${summary%%|*}" "$(ping_summary 20 19)" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary##*|}" = "1" ]
+}
+
+@test "an unparseable probe clears the window instead of freezing it" {
+  local summary
+  summary="$(_mon_loss_fold "20:0 20:0 20:1" "" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary%%|*}" = "" ]
+  [ "${summary#*|}" = "" ]
+}
+
+@test "a truncated probe (fewer packets than asked) clears the window" {
+  # ping killed mid-run by with_timeout reports what it managed; counting
+  # that as a normal sample would dilute real loss with missing packets.
+  local summary
+  summary="$(_mon_loss_fold "20:0 20:0" "$(ping_summary 7 7)" "$MONITOR_INET_PING_COUNT")"
+  [ "${summary%%|*}" = "" ]
+}
+
+# A macOS `ping -q` summary with the given transmitted/received counts —
+# the only part of ping's output the fold reads.
+ping_summary() {
+  printf '%s packets transmitted, %s packets received, 0.0%% packet loss\n' "$1" "$2"
+}
+
 @test "a dead link is degraded and reports nothing it did not measure" {
   reset_state; MON_LINK_UP=0
   _mon_rules
@@ -312,6 +459,62 @@ scanner_rules() {
   [[ "$MON_RULES" != *"P1"* ]]
   [[ "$MON_RULES" != *"P2"* ]]
   [[ "$MON_RULES" != *"D1"* ]]
+}
+
+@test "a fast HTTPS failure is reported even when the slow public probe is stale" {
+  # The old monitor could carry a five-minute-old public success while the
+  # user's web traffic had already stopped. The fast canary is authoritative
+  # once it has produced a result.
+  reset_state; MON_WEB_OK=0 MON_PUBLIC_OK=1
+  _mon_rules
+  [[ "$MON_RULES" == *"P2"* ]]
+  [ "$MON_MEASUREMENT_STATE" = "measured" ]
+}
+
+@test "a current HTTPS success replaces a stale public failure" {
+  reset_state; MON_WEB_OK=1 MON_PUBLIC_OK=0
+  _mon_rules
+  [[ "$MON_RULES" != *"P1"* ]]
+  [[ "$MON_RULES" != *"P2"* ]]
+  [ "$MON_MEASUREMENT_STATE" = "measured" ]
+}
+
+@test "missing fast readings are marked unknown, not healthy" {
+  reset_state; MON_GW_LOSS="" MON_INET_LOSS="" MON_WEB_OK=""
+  MON_GW_RTT="" MON_INET_RTT=""
+  _mon_rules
+  [ "$MON_MEASUREMENT_STATE" = "unknown" ]
+}
+
+@test "a measured 100% loss counts as measured, not as missing data" {
+  # The state that produced the report: every probe failed, so nothing was
+  # measured, so no rule fired, so severity read "ok". Once the probe can
+  # actually report total loss it is evidence — and evidence that fires G2.
+  reset_state; MON_GW_LOSS=100 MON_GW_RTT="" MON_TCP_OK=0
+  _mon_rules
+  [ "$MON_MEASUREMENT_STATE" = "measured" ]
+  [[ "$MON_RULES" == *"G2"* ]]
+}
+
+@test "curl's 000 is not evidence that anything answered" {
+  # curl -w '%{http_code}' prints 000 when the connection never completed.
+  # Reading that as "a canary answered, just not with 204" turned a dead
+  # link into a captive-portal verdict AND satisfied the measured gate, so
+  # the app's own "checking" card could never appear on a real outage.
+  reset_state; MON_GW_LOSS="" MON_INET_LOSS="" MON_GW_RTT="" MON_INET_RTT=""
+  MON_WEB_OK="$(_mon_web_verdict 000 000)"
+  [ -z "$MON_WEB_OK" ]
+  _mon_rules
+  [ "$MON_MEASUREMENT_STATE" = "unknown" ]
+}
+
+@test "a real HTTP response that is not 204 is still a captive-portal signal" {
+  # The branch 000 was wrongly sharing. A redirect or a login page is a
+  # genuine answer and must keep reading as "reachable, but intercepted".
+  [ "$(_mon_web_verdict 302 000)" = "0" ]
+  [ "$(_mon_web_verdict 204 000)" = "1" ]
+  [ "$(_mon_web_verdict 000 204)" = "1" ]
+  [ -z "$(_mon_web_verdict '' '')" ]
 }
 
 @test "an unmeasured gateway loss does not fire a loss rule" {
@@ -430,6 +633,14 @@ assert s['icmp_filtered'] is True
 assert s['degraded'] is True
 assert s['cadence_s'] == 5
 "
+}
+
+@test "monitor_sample: measurement availability rides through to status" {
+  run emit NETDIAG_MON_MEASUREMENT_STATE=unknown
+  printf '%s' "$output" | python3 -c '
+import json,sys
+assert json.load(sys.stdin)["status"]["measurement"] == "unknown"
+'
 }
 
 @test "monitor_sample: TCP targets parse into structured entries" {

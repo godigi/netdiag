@@ -212,6 +212,13 @@ final class MonitorStream {
             // shutdown path depend on trap ordering for no benefit.
             kill(process.processIdentifier, SIGUSR2)
             process.terminate()
+            // `terminate()` only sends SIGTERM; without a wait the exited
+            // child remains unreaped, and a quick restart can briefly leave
+            // two monitors probing the same link. Reap off the main actor so
+            // an in-flight ping cannot freeze the menu bar while it exits.
+            Task.detached(priority: .utility) {
+                process.waitUntilExit()
+            }
         }
         process = nil
         isRunning = false

@@ -64,7 +64,6 @@ final class NetdiagCoordinator {
     private(set) var liveSSID: String?
     private(set) var isScanning = false
     private(set) var scanStartedAt: Date?
-    private(set) var scanKind: String = ""
     private(set) var lastRunError: String?
     /// The last `--speed-only` result, kept apart from `latestRun`. A speed
     /// test measures one thing and diagnoses nothing, so letting it become
@@ -302,12 +301,32 @@ final class NetdiagCoordinator {
         // history only learns about the network *from* this scan — reading
         // it here would fire the trigger a second time.
         guard Defaults.scanOnNewNetwork else { return }
+        guard !Defaults.seenNetworks.contains(id) else { return }
+        log.info("first sighting of \(id, privacy: .public) — scanning")
+        // The one automatic full check, and the reason there is no timed
+        // one: joining a network for the first time is exactly when a
+        // baseline of what it can do — throughput, bufferbloat, path MTU —
+        // is worth having, and the `seenNetworks` guard above bounds it to
+        // once per network for the life of the install. Monitoring covers
+        // the continuous question; this covers the one-off one.
+        //
+        // `seenNetworks` is written *after* `runFullCheck` reports the scan
+        // actually started, not before it is attempted (NET.3). `launch()`
+        // silently no-ops when a scan is already in flight — two networks
+        // joined back to back, or a manual scan the user happened to start
+        // — and marking a network seen ahead of that check burns its one
+        // automatic baseline on an attempt that never ran, permanently:
+        // nothing ever retries a network already in this set. Both calls
+        // run synchronously up to the point the scan's `Task` is handed to
+        // `scanTask`, so there is no `await` between "did it start?" and
+        // "mark it seen" for a second sample to race through.
+        guard runFullCheck(reason: "new network") else {
+            log.debug("first-sighting scan for \(id, privacy: .public) declined — a scan is already running; left unseen so the next sighting retries")
+            return
+        }
         var seen = Defaults.seenNetworks
-        guard !seen.contains(id) else { return }
         seen.insert(id)
         Defaults.seenNetworks = seen
-        log.info("first sighting of \(id, privacy: .public) — scanning")
-        runScan(depth: .quick, reason: "new network")
     }
 
     /// Auto-start a short, fast-cadence "investigation" burst the moment
@@ -356,30 +375,61 @@ final class NetdiagCoordinator {
 
     // MARK: - Scans
 
-    func runScan(depth: NetdiagRunner.Depth, reason: String, target: String? = nil) {
+    /// Returns whether the scan actually started, as opposed to being
+    /// silently declined because one was already in flight — see
+    /// `launch(depth:reason:target:adoptAsReport:)` for the guard, and the
+    /// first-sighting trigger in `handleSample` for the caller that has to
+    /// tell the two apart. Every other caller uses this as a plain
+    /// fire-and-forget action, which is why the result is
+    /// `@discardableResult`.
+    @discardableResult
+    func runScan(depth: NetdiagRunner.Depth, reason: String, target: String? = nil) -> Bool {
         launch(depth: depth, reason: reason, target: target, adoptAsReport: true)
     }
 
-    /// The dropdown's "Speed test": `--speed-only`, with the same live
-    /// progress a full scan shows.
-    ///
-    /// `adoptAsReport: false` is the whole difference. A speed-only run
-    /// carries a measurement and no diagnosis, so it neither replaces the
-    /// report card nor reaches the alert engine — a fast link is not
-    /// evidence that nothing is wrong.
-    func runSpeedTest() {
-        launch(depth: .speedOnly, reason: "speed test", target: nil, adoptAsReport: false)
+    /// Whether the "Full check" action should be offered as runnable right
+    /// now. Read by the views to disable the control and say why.
+    var fullCheckIsSafe: Bool {
+        FullCheckPolicy.isSafe(severity: monitor.latest?.status.severity ?? "")
     }
 
+    /// The full battery: bufferbloat, the MTU probe, per-hop loss and a
+    /// speed test — none of which any other depth produces, and all of
+    /// which the Report card, the Trends charts and the dropdown's
+    /// throughput cells are built to display.
+    ///
+    /// Refuses while the CLI's verdict is critical, and falls back to the
+    /// alert-triggered depth instead of doing nothing: someone who pressed
+    /// this button wants a check, and the lighter one is still worth
+    /// running. See `FullCheckPolicy` for why bufferbloat is the specific
+    /// hazard.
+    ///
+    /// Returns whether a scan actually started (full depth, or the
+    /// `alertTriggered` fallback) — see `runScan` for why this is a
+    /// `Bool` rather than `Void`.
+    @discardableResult
+    func runFullCheck(reason: String = "you asked for a full check") -> Bool {
+        guard fullCheckIsSafe else {
+            return runScan(depth: .alertTriggered, reason: reason)
+        }
+        return runScan(depth: .full, reason: reason)
+    }
+
+    /// Returns `true` once the scan has actually been handed to a `Task` —
+    /// `false` when the guard below declined it. That distinction is the
+    /// whole point of the return value: a caller that only finds out a scan
+    /// *would* run by checking `isScanning` beforehand has a race between
+    /// the check and this call, where the return value has none, since both
+    /// happen on the same synchronous call.
+    @discardableResult
     private func launch(depth: NetdiagRunner.Depth, reason: String,
-                        target: String?, adoptAsReport: Bool) {
+                        target: String?, adoptAsReport: Bool) -> Bool {
         guard !isScanning else {
             log.debug("scan already running, ignoring request: \(reason, privacy: .public)")
-            return
+            return false
         }
         isScanning = true
         scanStartedAt = Date()
-        scanKind = reason
         lastRunError = nil
         progress.reset()
 
@@ -433,6 +483,7 @@ final class NetdiagCoordinator {
                 self.log.error("scan failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+        return true
     }
 
     func cancelScan() {
@@ -441,22 +492,6 @@ final class NetdiagCoordinator {
     }
 
     // MARK: - Latency test
-
-    /// The dropdown's "Latency test". Deliberately not a check: it asks the
-    /// monitor already running to sample faster for a minute and shows the
-    /// result live. Spawning a second `netdiag --monitor` would put two
-    /// probers on the link one of them is trying to measure.
-    func startLatencyTest() {
-        requestedDestination = .live
-        guard Defaults.monitoringEnabled, monitor.isRunning else {
-            // The Live section explains the off state itself, which is why
-            // this still opens it rather than silently doing nothing.
-            log.debug("latency test asked for while monitoring is off")
-            return
-        }
-        monitor.beginBurst(interval: Defaults.latencyTestInterval,
-                           duration: Defaults.latencyTestDuration)
-    }
 
     func stopLatencyTest() { monitor.endBurst() }
 
@@ -532,26 +567,6 @@ final class NetdiagCoordinator {
                 // the monitor's own timers do not know that.
                 await self?.history.load()
             }
-        }
-    }
-
-    // MARK: - Sharing
-
-    /// `netdiag --redact --json` on the clipboard. Built for the case it
-    /// was written for: a non-technical user pasting into an ISP support
-    /// chat without handing over their public IP, SSID, gateway MAC or
-    /// city. Runs the CLI rather than re-encoding the snapshot on screen,
-    /// because redaction is defined once in helpers/emit_json.py and a
-    /// second implementation here is a second thing that can leak.
-    func copyShareableReport() async -> Bool {
-        do {
-            let report = try await NetdiagRunner.redactedReport(depth: .quick)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(report, forType: .string)
-            return true
-        } catch {
-            lastRunError = error.localizedDescription
-            return false
         }
     }
 
@@ -658,9 +673,10 @@ final class NetdiagCoordinator {
     }
 
     var currentHealth: Health {
+        if Defaults.monitoringEnabled && !monitor.isRunning { return .warning }
         if let sample = monitor.latest { return sample.health }
         if let run = latestRun { return run.snapshot.worstSeverity }
-        return .healthy
+        return .warning
     }
 
     /// The one sentence the dropdown leads with.
@@ -674,8 +690,14 @@ final class NetdiagCoordinator {
         if let alert = alerts.activeSorted.first {
             return alert.body.isEmpty ? alert.title : alert.body
         }
+        if !monitor.isRunning && monitor.lastError == nil {
+            return "Reconnecting to the connection monitor…"
+        }
         if let sample = monitor.latest, !sample.link.up {
             return "Your Mac has no network connection at all."
+        }
+        if let sample = monitor.latest, sample.status.measurement != "measured" {
+            return "Checking your connection — a live internet reading is not available yet."
         }
         if let sample = monitor.latest, sample.status.severity == "critical" || sample.status.severity == "warn" {
             for ruleID in sample.status.rules {

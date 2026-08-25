@@ -31,6 +31,9 @@ headline_run() {
     case "$FOCUS:$1" in
       mtu:Network|mtu:Internet|mtu:"Packet size")        return 0 ;;
       wifi:Network|wifi:"WiFi channel")                  return 0 ;;
+      dns:Network|dns:DNS)                                return 0 ;;
+      bufferbloat:Network|bufferbloat:Router|bufferbloat:Internet|bufferbloat:Bufferbloat) return 0 ;;
+      ping:Network|ping:Router|ping:Internet|ping:Latency|ping:"Packet loss") return 0 ;;
       # Router earns its place in a speed-only run: gateway_run is what
       # refreshes the ARP entry the record's network identity comes from,
       # so it really was measured and hiding it would be the lie.
@@ -71,11 +74,16 @@ headline_run() {
       [ -n "$WIFI_SCAN_CURRENT_BAND" ]    && netline="$netline ${WIFI_SCAN_CURRENT_BAND}"
       [ -n "$WIFI_SCAN_CURRENT_CHANNEL" ] && netline="$netline ch${WIFI_SCAN_CURRENT_CHANNEL}"
       if [ -n "$WIFI_RSSI" ]; then
-        local quality="excellent"
-        [ "$WIFI_RSSI" -lt -55 ] && quality="good"
-        [ "$WIFI_RSSI" -lt -65 ] && quality="fair"
-        [ "$WIFI_RSSI" -lt -72 ] && quality="weak"
-        [ "$WIFI_RSSI" -lt -80 ] && quality="very weak"
+        local quality
+        if [ "$WIFI_RSSI" -ge "$THRESH_WIFI_RSSI_EXCELLENT_DBM" ]; then
+          quality="excellent"
+        elif [ "$WIFI_RSSI" -ge "$THRESH_WIFI_RSSI_G1_DBM" ]; then
+          quality="good"
+        elif [ "$WIFI_RSSI" -ge "$THRESH_WIFI_RSSI_WEAK_DBM" ]; then
+          quality="fair"
+        else
+          quality="weak"
+        fi
         netline="$netline · ${WIFI_RSSI} dBm ($quality)"
       fi
     elif [ "${WIFI_CHECKED:-0}" -eq 1 ]; then
@@ -131,7 +139,7 @@ headline_run() {
     loss_at_least "$INET_LOSS"     "$LOSS_CRIT_PCT" \
       && loss_at_least "$INET_LOSS_ALT" "$LOSS_CRIT_PCT" && sev=bad
     # High jitter (> 30 ms stddev) marks an unstable connection even at low loss.
-    if [ -n "$INET_RTT_JITTER" ] && awk -v j="$INET_RTT_JITTER" 'BEGIN{exit !(j > 30)}'; then
+    if [ -n "$INET_RTT_JITTER" ] && awk -v j="$INET_RTT_JITTER" -v t="$THRESH_LATENCY_JITTER_WARN_MS" 'BEGIN{exit !(j > t)}'; then
       [ "$sev" = ok ] && sev=warn
     fi
     local iline
@@ -177,7 +185,7 @@ headline_run() {
     local v6_ok=1
     [ "$IPV6_AAAA_OK" -eq 0 ] && v6_ok=0
     [ "$IPV6_TCP_OK" -eq 0 ]  && v6_ok=0
-    [ -n "$IPV6_PING_LOSS" ] && [ "${IPV6_PING_LOSS%.*}" -ge 20 ] && v6_ok=0
+    [ -n "$IPV6_PING_LOSS" ] && [ "${IPV6_PING_LOSS%.*}" -ge "$THRESH_IPV6_LOSS_PCT" ] && v6_ok=0
     if [ "$v6_ok" -eq 1 ]; then
       _row ok "IPv6" "working"
     else
@@ -226,9 +234,9 @@ headline_run() {
   # ── MTU (packet size) ────────────────────────────────────────────────
   if [ -n "$MTU_EFFECTIVE" ]; then
     local mtu_sev=ok mtu_note="standard"
-    if [ "$MTU_EFFECTIVE" -lt 1400 ]; then
+    if [ "$MTU_EFFECTIVE" -lt "$THRESH_MTU_STANDARD" ]; then
       mtu_sev=bad; mtu_note="severely clamped · many sites broken"
-    elif [ "$MTU_EFFECTIVE" -lt 1500 ]; then
+    elif [ "$MTU_EFFECTIVE" -lt "$THRESH_MTU_ETHERNET" ]; then
       mtu_sev=warn; mtu_note="below standard · some sites may hang"
     fi
     _row "$mtu_sev" "Packet size" "$MTU_EFFECTIVE bytes · $mtu_note"
@@ -252,7 +260,7 @@ headline_run() {
   esac
 
   # ── WiFi congestion (only when crowded) ──────────────────────────────
-  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt 3 ]; then
+  if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS" -gt "$THRESH_WIFI_CHANNEL_NEIGHBOURS" ]; then
     _row warn "WiFi channel" "crowded · ${WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS} neighbouring networks"
   fi
 
@@ -260,9 +268,9 @@ headline_run() {
   if [ -n "$NTP_DRIFT_S" ]; then
     local drift_abs
     drift_abs="$(awk -v d="$NTP_DRIFT_S" 'BEGIN{print (d<0)?-d:d}')"
-    if awk -v d="$drift_abs" 'BEGIN{exit !(d > 30)}'; then
+    if awk -v d="$drift_abs" -v t="$THRESH_NTP_DRIFT_CRIT_S" 'BEGIN{exit !(d > t)}'; then
       _row bad "Clock" "off by ${NTP_DRIFT_S} s"
-    elif awk -v d="$drift_abs" 'BEGIN{exit !(d > 1)}'; then
+    elif awk -v d="$drift_abs" -v t="$THRESH_NTP_DRIFT_WARN_S" 'BEGIN{exit !(d > t)}'; then
       _row warn "Clock" "off by ${NTP_DRIFT_S} s"
     fi
   fi

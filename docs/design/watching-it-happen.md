@@ -117,7 +117,7 @@ are indistinguishable in history, which is why "1,913 checks" on a network
 overstates what was actually measured. Records gain:
 
 ```json
-"run_mode": "full" | "quick" | "speed-only" | "mtu-only" | "wifi-only"
+"run_mode": "full" | "quick" | "<section>-only"
 ```
 
 `helpers/history.py` counts full and quick runs as checks; partial modes
@@ -150,8 +150,8 @@ running monitor for a faster cadence for a bounded window and opens the
 Live tab, then restores the cadence. Starting a second monitor to measure
 latency would contend with the first for the link it is measuring.
 
-`--speed-only` joins `--mtu-only` and `--wifi-only` on the existing
-`FOCUS` mechanism, and its result is appended to history as a
+`--speed-only` joins the other focused modes on the existing `FOCUS`
+mechanism, and its result is appended to history as a
 `speed-only` record — the cheapest way to fix the sparsest metric in the
 store, which currently has 7 samples across 1,986 runs.
 

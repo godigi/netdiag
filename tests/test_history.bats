@@ -119,6 +119,57 @@ netid_group() {
   done
 }
 
+@test "an SSID outranks the gateway IP, as it does in history.py" {
+  # The gap the test above could not see. Its `netid_group` helper only
+  # sets GATEWAY when the id string carries a `gw=` part, so the
+  # `wifi:ssid=Cafe` case ran with GATEWAY empty and fell through to the
+  # SSID by accident rather than by precedence.
+  #
+  # A real run always has a gateway. On Wi-Fi with a visible SSID but no
+  # gateway MAC — ARP not yet resolved, or a captive network — netid_run
+  # used to emit `gw:192.168.1.1` while history.py derived `ssid:Cafe`
+  # from the very id netid_run had just written, so the join this key
+  # exists to enable silently failed.
+  . "$REPO/lib/netid.sh"
+  local IS_WIFI=1 WIFI_SSID="Cafe" GW_MAC="" GATEWAY="192.168.1.1"
+  local NETWORK_ID="" NETWORK_LABEL="" NETWORK_GROUP=""
+  netid_run >/dev/null 2>&1
+  [ "$NETWORK_GROUP" = "ssid:Cafe" ] || {
+    echo "expected ssid:Cafe, got '$NETWORK_GROUP'"
+    return 1
+  }
+  # And history.py must derive the same key from the id netid_run wrote.
+  local py
+  py="$(python3 -c "
+import sys; sys.path.insert(0, '$REPO/helpers')
+import history
+print(history.group_key({'network': {'id': '$NETWORK_ID'}})[0])")"
+  [ "$py" = "$NETWORK_GROUP" ] || {
+    echo "netid_run says '$NETWORK_GROUP' but history.py says '$py' for id '$NETWORK_ID'"
+    return 1
+  }
+}
+
+@test "the group key survives macOS's system bash, not just Homebrew's" {
+  # lib/netid.sh used ${GW_MAC,,} to lowercase the MAC. That expansion is
+  # bash 4+, and under macOS's system bash 3.2 it is a fatal runtime
+  # "bad substitution" that kills the surrounding subshell — which is
+  # what made the test above fail with "netid_group failed" rather than
+  # with a value mismatch, and why the real disagreement underneath went
+  # unnoticed. CLAUDE.md requires bash 5, but a construct that detonates
+  # on the shell every Mac ships is a landmine regardless.
+  [ -x /bin/bash ] || skip "no system bash to test against"
+  run /bin/bash -c ". '$REPO/lib/netid.sh'
+    IS_WIFI=1 WIFI_SSID='' GW_MAC='AA:BB:CC:DD:EE:FF' GATEWAY='192.168.1.1'
+    netid_run >/dev/null 2>&1
+    printf '%s' \"\$NETWORK_GROUP\""
+  [ "$status" -eq 0 ] || { echo "netid_run failed under bash 3.2: $output"; return 1; }
+  [ "$output" = "mac:aa:bb:cc:dd:ee:ff" ] || {
+    echo "expected a lowercased MAC key, got '$output'"
+    return 1
+  }
+}
+
 @test "runs before and after an SSID becomes visible stay one network" {
   rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff","label":"WiFi (SSID hidden by macOS)"}'
   rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:ssid=Home,mac=aa:bb:cc:dd:ee:ff","label":"Home"}'

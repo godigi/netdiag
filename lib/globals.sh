@@ -139,7 +139,6 @@ HOPS=()
 TRACE_LINES=""           # one "n|ip|rtt_ms" per line (1.1.1.1 traceroute)
 TARGET_TRACE_LINES=""    # same shape, for the optional TARGET traceroute
 PER_HOP_LINES=""         # one "n|ip|loss_pct|avg_ms" per line
-NEXTHOP_LOSS=""
 MTR_FIRST_LOSSY_HOP=""
 
 # DHCP (lib/dhcp.sh)

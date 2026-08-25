@@ -250,6 +250,17 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
   [ -z "$MTR_FIRST_LOSSY_HOP" ]
 }
 
+@test "parse_mtr_tsv: missing loss stays unknown instead of becoming 100%" {
+ MTR_FIRST_LOSSY_HOP=""
+ parse_mtr_tsv <<'TSV'
+1	192.168.1.1
+2	10.0.0.1
+3	1.1.1.1	0.0	18.0
+TSV
+  [ -z "$MTR_FIRST_LOSSY_HOP" ]
+  [[ "$PER_HOP_LINES" == *"1|192.168.1.1||"* ]]
+}
+
 # ── ARP duplicate detection (inline awk, no library function yet) ────────
 
 @test "ARP parser: arp_dup fixture surfaces 192.168.50.10 as a duplicate" {

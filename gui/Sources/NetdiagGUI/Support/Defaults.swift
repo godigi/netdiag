@@ -64,6 +64,7 @@ enum Defaults {
         static let disabledAlerts     = "disabledAlerts"
         static let autoCheckUpdates   = "autoCheckUpdates"
         static let lastUpdateCheck    = "lastUpdateCheck"
+        static let locationBannerDismissed = "locationBannerDismissed"
     }
 
     // MARK: - Updates
@@ -163,6 +164,16 @@ enum Defaults {
     static var hasOnboarded: Bool {
         get { d.bool(forKey: Key.hasOnboarded) }
         set { d.set(newValue, forKey: Key.hasOnboarded) }
+    }
+
+    /// Declining Location Services is a settled choice, not a per-visit
+    /// question — see `HomeView.locationWarningBanner`. Settings → Alerts
+    /// → Permissions keeps its own always-visible "Allow" row as the
+    /// durable way back in, so this only silences the repeated ask on
+    /// Home, never the feature itself.
+    static var locationBannerDismissed: Bool {
+        get { d.bool(forKey: Key.locationBannerDismissed) }
+        set { d.set(newValue, forKey: Key.locationBannerDismissed) }
     }
 
     static var binaryPath: String {

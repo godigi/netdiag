@@ -41,19 +41,25 @@ struct SettingsView: View {
                 // never disagree about it.
                 LabeledContent("Check the router every") {
                     HStack {
-                        Slider(value: intervalBinding(\.fastInterval), in: 2...60, step: 1)
+                        Slider(value: intervalBinding(\.fastInterval), in: 2...60, step: 1) { editing in
+                            if !editing { coordinator.applyCadenceSettings() }
+                        }
                         Text("\(appSettings.fastInterval)s").monospacedDigit().frame(width: 38)
                     }
                 }
                 LabeledContent("Check DNS and Wi-Fi every") {
                     HStack {
-                        Slider(value: intervalBinding(\.mediumInterval), in: 15...600, step: 5)
+                        Slider(value: intervalBinding(\.mediumInterval), in: 15...600, step: 5) { editing in
+                            if !editing { coordinator.applyCadenceSettings() }
+                        }
                         Text("\(appSettings.mediumInterval)s").monospacedDigit().frame(width: 44)
                     }
                 }
                 LabeledContent("Check your public IP every") {
                     HStack {
-                        Slider(value: intervalBinding(\.slowInterval), in: 60...1800, step: 30)
+                        Slider(value: intervalBinding(\.slowInterval), in: 60...1800, step: 30) { editing in
+                            if !editing { coordinator.applyCadenceSettings() }
+                        }
                         Text("\(appSettings.slowInterval)s").monospacedDigit().frame(width: 48)
                     }
                 }
@@ -121,10 +127,15 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        // The monitor restarts once, when the window closes, rather than
-        // once per slider tick: each restart respawns the process, and
-        // the intervals are command-line arguments it has no way to be
-        // told about mid-run.
+        // Each slider now applies on its own release (onEditingChanged
+        // above) — a restart respawns the monitor process, and the
+        // intervals are command-line arguments it has no way to be told
+        // about mid-run, so applying per-tick during a drag would be
+        // wasteful. This onDisappear stays as a safety net for the one
+        // path that doesn't fire onEditingChanged: a keyboard-driven
+        // arrow-key adjustment after clicking into a slider. Occasionally
+        // redundant with a release that just fired seconds earlier — a
+        // harmless extra restart, not worth guarding against.
         .onDisappear { coordinator.applyCadenceSettings() }
     }
 
@@ -192,21 +203,36 @@ struct SettingsView: View {
 
             Section("Automation") {
                 Toggle("Run a check automatically when something breaks", isOn: $appSettings.scanOnAlert)
-                Toggle("Run a check the first time I join a network", isOn: $appSettings.scanOnNewNetwork)
                 Text("An automatic check skips the speed test, so it won't slow down a connection that is already struggling.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle("Run a check the first time I join a network", isOn: $appSettings.scanOnNewNetwork)
+                // The cost is disclosed at the switch that causes it. This
+                // is the only automatic full check netdiag runs — there is
+                // no timed one — so it is the only place a speed test
+                // happens without someone pressing a button.
+                Text("This first check is a full one: it includes a speed test and takes about a minute. It runs once per network, ever.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Tell me about") {
                 ForEach(AlertDefinition.all) { def in
-                    Toggle(def.title, isOn: Binding(
-                        get: { !appSettings.disabledAlerts.contains(def.id) },
-                        set: { on in
-                            var set = appSettings.disabledAlerts
-                            if on { set.remove(def.id) } else { set.insert(def.id) }
-                            appSettings.disabledAlerts = set
-                        }))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Toggle(def.title, isOn: Binding(
+                            get: { !appSettings.disabledAlerts.contains(def.id) },
+                            set: { on in
+                                var set = appSettings.disabledAlerts
+                                if on { set.remove(def.id) } else { set.insert(def.id) }
+                                appSettings.disabledAlerts = set
+                            }))
+                        Text(def.caption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 2)
                 }
             }
 

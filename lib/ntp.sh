@@ -40,9 +40,9 @@ ntp_run() {
       # condition users can act on. The diagnosis rule (NT-1) escalates
       # the > 30 s case to critical in its own section.
       drift_abs="$(awk -v d="$NTP_DRIFT_S" 'BEGIN{print (d<0)?-d:d}')"
-      if awk -v d="$drift_abs" 'BEGIN{exit !(d > 30)}'; then
+      if awk -v d="$drift_abs" -v t="$THRESH_NTP_DRIFT_CRIT_S" 'BEGIN{exit !(d > t)}'; then
         bad "Clock is off by ${NTP_DRIFT_S}s — TLS handshakes will fail. Re-enable network time / NTP."
-      elif awk -v d="$drift_abs" 'BEGIN{exit !(d > 1)}'; then
+      elif awk -v d="$drift_abs" -v t="$THRESH_NTP_DRIFT_WARN_S" 'BEGIN{exit !(d > t)}'; then
         warn "Clock is off by ${NTP_DRIFT_S}s — some apps and TLS validations may misbehave."
       else
         ok "Clock is synced."

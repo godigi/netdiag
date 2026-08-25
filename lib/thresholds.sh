@@ -64,6 +64,22 @@ THRESH_GW_LOSS_CRIT_PCT=20
 LOSS_PROBE_COUNT=20
 LOSS_PROBE_INTERVAL=0.2
 
+# How long ping waits for a reply, in milliseconds (-W). Without it macOS
+# ping waits ~10 s after the last packet before printing its statistics
+# line, so a probe against a dead path costs 10 s more than it sends:
+# measured, `ping -q -c 5 -i 0.2` to a black-holed address took 11.0 s, and
+# 2.0 s with this flag. That tail is what every `with_timeout` wrapper in
+# this repo was sized against, and the monitor's 6 s / 8 s wrappers lost the
+# race — SIGTERM arrived before the summary, so a total outage reported
+# "could not measure" instead of 100% loss and no rule could fire. The
+# statistics line is the measurement; it must always be printed.
+#
+# 2000, not 1000: a reply slower than two seconds is already past every
+# latency threshold here, while a network showing a 1.6 s spike is one this
+# tool has actually seen. Counting such a reply as lost would trade a
+# false "unmeasured" for a false "lossy".
+PING_REPLY_WAIT_MS=2000
+
 # The monitor's per-cycle gateway probe. Ten packets, not the three or five
 # a "quick liveness check" suggests, and the reason is quantisation rather
 # than accuracy: at 3 packets the only reportable losses are 0/33/67/100%,
@@ -74,6 +90,28 @@ LOSS_PROBE_INTERVAL=0.2
 # 10 s cycle, averaging one packet per second.
 MONITOR_PING_COUNT=10
 MONITOR_PING_INTERVAL=0.2
+
+# The monitor's per-cycle internet-side probe (lib/monitor.sh's
+# _mon_probe_internet). Twenty packets, matching LOSS_PROBE_COUNT rather
+# than the gateway probe's ten, and the reason is the bug this replaces:
+# that probe sent five packets, where one dropped packet reads as exactly
+# LOSS_CRIT_PCT — so a single routine ICMP drop at a rate-limiting resolver
+# fired L1 as an immediate critical, flashed the app's red card for one
+# cycle, and cleared on the next. Cost is ~4 s of a 10 s cycle; the
+# gateway probe's 2 s runs alongside it, and the loop sleeps only the
+# remainder.
+MONITOR_INET_PING_COUNT=20
+
+# How many recent probes each loss figure accumulates over (both legs).
+# Per-probe percentages move by their quantum no matter how large the
+# burst is — 20 packets still makes one drop read 5% and then back to 0%,
+# which is movement of the probe, not of the network. The monitor
+# therefore reports lost×100÷sent over a rolling window of the last N
+# probes, refreshed every fast cycle. Five × twenty packets is a
+# 100-packet denominator: one dropped packet moves the reported figure one
+# point, real loss ramps smoothly toward the thresholds, and routine noise
+# contributes a fraction of a percent that decays out within ~a minute.
+MONITOR_LOSS_WINDOW_PROBES=5
 
 # A single cycle's loss is a blip, not a condition: at MONITOR_PING_COUNT=10
 # one dropped packet reads as 10%, exactly LOSS_WARN_PCT. Requiring the same
@@ -118,6 +156,9 @@ THRESH_WIFI_CHANNEL_NEIGHBOURS=3
 # counts as flapping.
 THRESH_WIFI_DISCONNECTS=3
 
+# Presentation cutoffs shared by the report card and section output.
+THRESH_LATENCY_JITTER_WARN_MS=30
+
 # ── IPv6 ─────────────────────────────────────────────────────────────────
 # V6-1 — ping6 loss above this counts as broken IPv6 (given IPv4 works).
 THRESH_IPV6_LOSS_PCT=20
@@ -128,6 +169,12 @@ THRESH_IPV6_LOSS_PCT=20
 # because at that point ordinary HTTPS responses stop fitting.
 THRESH_MTU_STANDARD=1400
 THRESH_MTU_CRIT=1280
+THRESH_MTU_FULL_PATH=1480
+THRESH_MTU_ETHERNET=1500
+
+# Quick gateway probes use a smaller sample to stay within the quick-run
+# budget. Keep the probe geometry centralized with the other shared values.
+THRESH_GATEWAY_QUICK_PING_COUNT=10
 
 # ── Clock ────────────────────────────────────────────────────────────────
 # NT-1 — drift in seconds. Past the critical floor, certificate validity
@@ -198,3 +245,8 @@ THRESH_BUFFERBLOAT_A_MS=5
 THRESH_BUFFERBLOAT_B_MS=30
 THRESH_BUFFERBLOAT_C_MS=60
 THRESH_BUFFERBLOAT_D_MS=200
+
+# MTR — per-hop loss above this is interesting enough to display as loss.
+# A middle hop above this with a clean destination is classified as ICMP
+# rate limiting; the same boundary must be used by both branches.
+THRESH_MTR_HOP_LOSS_PCT=2

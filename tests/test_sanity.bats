@@ -39,10 +39,34 @@ setup() {
   [[ "$output" == *"expects a path"* ]]
 }
 
+@test "--watch rejects a non-numeric interval before starting a loop" {
+  run "$NETDIAG" --watch=abc
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"--watch expects"* ]]
+}
+
+@test "--watch rejects a zero interval before starting a loop" {
+  run "$NETDIAG" --watch=0
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"--watch expects"* ]]
+}
+
+@test "--summary rejects a non-numeric window with the script-error status" {
+  run env HOME="$BATS_TEST_TMPDIR" "$NETDIAG" --summary=abc
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"--summary expects"* ]]
+}
+
 @test "--mtu-only with --quick is rejected as a conflict" {
   run "$NETDIAG" --mtu-only --quick
   [ "$status" -eq 3 ]
   [[ "$output" == *"conflict"* ]]
+}
+
+@test "stacking two --*-only flags is rejected as mutually exclusive" {
+  run "$NETDIAG" --wifi-only --dns-only
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"mutually exclusive"* ]]
 }
 
 # ── CLI surface matches the documented contract ──────────────────────────
@@ -57,4 +81,39 @@ setup() {
       return 1
     }
   done
+}
+
+@test "--help is organised into labelled sections" {
+  # A 110-line wall of flags in no particular order made a user scroll
+  # past --progress's file-descriptor protocol to reach --wifi-only.
+  # The sections are the navigation; this asserts they exist and stay.
+  run "$NETDIAG" --help
+  [ "$status" -eq 0 ]
+  for section in "Common:" "Sharing and output:" "Just one check:" \
+                 "Modes" "Advanced:"; do
+    [[ "$output" == *"$section"* ]] || {
+      echo "missing section from --help: $section"
+      return 1
+    }
+  done
+}
+
+@test "--quick's own description admits it skips the MTU probe" {
+  # lib/mtu.sh:13 returns early under --quick, but --help listed the
+  # skips as "bufferbloat, per-hop loss, speed test, internet
+  # packet-loss probe, WiFi scan" and never said so. A user reading
+  # only --help would expect an MTU number and get "not measured".
+  run "$NETDIAG" --help
+  [ "$status" -eq 0 ]
+  local quick_block
+  quick_block="$(printf '%s\n' "$output" | awk '
+      /^  --quick( |$)/ { inblock = 1; print; next }
+      inblock && /^  --/ { exit }
+      inblock           { print }
+  ')"
+  [[ "$quick_block" == *"MTU"* ]] || {
+    echo "--quick's help text does not mention MTU:"
+    echo "$quick_block"
+    return 1
+  }
 }

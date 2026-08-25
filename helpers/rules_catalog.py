@@ -130,6 +130,45 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#n1b--router-present-nothing-public-responds",
     },
     {
+        "id": "W1",
+        "title": "Weak WiFi signal",
+        "category": "wifi",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Your wireless signal is weak enough to cause retransmissions, "
+            "latency spikes, and dropouts. Moving closer to the router or "
+            "switching to a nearer access point or band usually helps."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#w1--weak-wifi-signal",
+    },
+    {
+        "id": "W2",
+        "title": "Low WiFi signal-to-noise ratio",
+        "category": "wifi",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Interference is competing with your wireless signal. A less "
+            "crowded channel or moving the router away from other radio "
+            "sources can improve it."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#w2--low-wifi-snr",
+    },
+    {
+        "id": "WS-1",
+        "title": "WiFi channel is congested",
+        "category": "wifi",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Several neighbouring networks share your current channel. "
+            "That contention can make an otherwise strong connection "
+            "inconsistent; a less busy channel may help."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#ws-1--wifi-channel-is-congested",
+    },
+    {
         "id": "G1",
         "title": "Gateway packet loss with weak Wi-Fi",
         "category": "wifi",

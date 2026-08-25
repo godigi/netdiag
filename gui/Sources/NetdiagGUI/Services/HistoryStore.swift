@@ -251,27 +251,8 @@ final class HistoryStore {
             .sorted { $0.0 < $1.0 }
     }
 
-    /// How many runs in this window actually carry the metric. Rendered
-    /// next to every chart, and the reason a metric with zero samples gets
-    /// an explicit "no data" state rather than an empty axis: sparse series
-    /// are the normal case in this store, not an edge case.
-    func sampleCount(metric: String, networkID: String?, window: HistoryWindow) -> Int {
-        runs(networkID: networkID, window: window).reduce(0) {
-            $0 + ($1.metrics[metric] != nil ? 1 : 0)
-        }
-    }
-
     func metric(_ key: String) -> HistoryDocument.MetricDescriptor? {
         document.metrics.first { $0.key == key }
-    }
-
-    /// True the first time this network appears in the store. Drives the
-    /// "scan a network you've never been on" trigger — and it is a question
-    /// about *history*, so it is answered from history rather than from a
-    /// separate list the app would have to keep in sync.
-    func isFirstTimeSeen(_ networkID: String) -> Bool {
-        let key = canonicalID(networkID)
-        return !document.networks.contains { canonicalID($0.id) == key }
     }
 
     /// Returns the most recent speed test measurement from history.

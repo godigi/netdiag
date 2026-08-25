@@ -95,8 +95,11 @@ struct HistoryView: View {
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(descriptor?.label ?? metricKey).font(.headline)
-                Text(sampleLabel(count, unit: descriptor?.unit ?? ""))
+                // The unit belongs on the metric's name — "Gateway RTT
+                // (ms) · 2027 samples" — not on the sample count, where
+                // "(ms)" reads as the unit of "samples".
+                Text(chartTitle).font(.headline)
+                Text(sampleLabel(count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -137,7 +140,7 @@ struct HistoryView: View {
             if let descriptor {
                 Text(descriptor.samples == 0
                      ? "No run in your history has ever recorded \(descriptor.label.lowercased()). \(hint(for: descriptor.key))"
-                     : "\(descriptor.samples) run(s) elsewhere in your history recorded it — try a longer window or a different network.")
+                     : "\(descriptor.samples) run\(descriptor.samples == 1 ? "" : "s") elsewhere in your history recorded it — try a longer window or a different network.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -149,27 +152,38 @@ struct HistoryView: View {
     }
 
     /// Why a metric is empty is usually a fact about how netdiag is being
-    /// run, and saying so turns a dead chart into an instruction.
+    /// run, and saying so turns a dead chart into an instruction. Since a
+    /// full check became reachable from Home and the menu bar, the
+    /// instruction is a button rather than a terminal — except for RSSI,
+    /// which still genuinely needs a privileged run.
     private func hint(for key: String) -> String {
         switch key {
         case "speed_down_mbps", "speed_up_mbps":
-            return "Speed tests only run in a full check, not in --quick — and the launchd watcher uses --quick."
+            return "Speed is only measured by a full check. Press \"Full check\" on Home, or join a new network — netdiag runs one automatically the first time."
         case "wifi_rssi_dbm", "wifi_snr_db":
             return "Signal strength needs sudo: run `sudo netdiag` in a terminal to record it."
         case "bufferbloat_gw_ms", "bufferbloat_inet_ms":
-            return "Bufferbloat is skipped by --quick and by --no-bufferbloat."
+            return "Latency under load is only measured by a full check, and is skipped entirely while a connection is already failing."
+        case "mtu_effective":
+            return "Path MTU is only measured by a full check — the quick check and the background watcher both skip it."
         case "inet_rtt_ms", "inet_loss_pct":
-            return "The internet loss probe is skipped by --quick."
+            return "The internet loss probe is skipped by the quick check that the background watcher runs."
         default:
             return "It may be skipped by the check mode you normally run."
         }
     }
 
-    private func sampleLabel(_ count: Int, unit: String) -> String {
+    private var chartTitle: String {
+        let label = store.metric(metricKey)?.label ?? metricKey
+        guard let unit = store.metric(metricKey)?.unit, !unit.isEmpty else { return label }
+        return "\(label) (\(unit))"
+    }
+
+    private func sampleLabel(_ count: Int) -> String {
         switch count {
         case 0:  return "no samples"
-        case 1:  return "1 sample\(unit.isEmpty ? "" : " (\(unit))")"
-        default: return "\(count) samples\(unit.isEmpty ? "" : " (\(unit))")"
+        case 1:  return "1 sample"
+        default: return "\(count) samples"
         }
     }
 
@@ -185,7 +199,7 @@ struct HistoryView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Checks and problems found").font(.headline)
-                Text(sampleLabel(runs.count, unit: "")).font(.caption).foregroundStyle(.secondary)
+                Text(sampleLabel(runs.count)).font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             if buckets.isEmpty {
@@ -205,6 +219,10 @@ struct HistoryView: View {
                 .chartForegroundStyleScale([
                     "critical": Color.red, "warn": Color.yellow, "ok": Color.green,
                 ])
+                // Leading, matching the metric chart above — one chart
+                // reading from the left and the next from the right reads
+                // as two different apps stacked.
+                .chartYAxis { AxisMarks(position: .leading) }
                 .frame(height: 160)
             }
         }
@@ -252,15 +270,15 @@ struct HistoryView: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("\(counts.runs) runs across \(counts.networks) network(s), read from ~/net-diag/baseline.jsonl and its archive.")
+            Text("\(counts.runs) run\(counts.runs == 1 ? "" : "s") across \(counts.networks) network\(counts.networks == 1 ? "" : "s"), read from ~/net-diag/baseline.jsonl and its archive.")
                 .font(.caption).foregroundStyle(.secondary)
             if counts.redactedDropped > 0 {
-                Text("\(counts.redactedDropped) run(s) were skipped: they were recorded with --redact, so their network identity was masked and they can't be attributed to any network.")
+                Text("\(counts.redactedDropped) run\(counts.redactedDropped == 1 ? " was" : "s were") skipped: they were recorded with --redact, so their network identity was masked and they can't be attributed to any network.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if counts.duplicatesDropped > 0 {
-                Text("\(counts.duplicatesDropped) duplicate record(s) were merged.")
+                Text("\(counts.duplicatesDropped) duplicate record\(counts.duplicatesDropped == 1 ? " was" : "s were") merged.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !coordinator.watcher.isInstalled {
