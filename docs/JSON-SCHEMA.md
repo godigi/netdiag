@@ -376,7 +376,8 @@ it would accumulate forever.
   "public":  {"ok": true, "ip": "…", "isp": "…", "asn": "AS10429",
               "city": "…", "country": "Brazil", "country_iso": "BR",
               "captive_portal": false},
-  "status":  {"severity": "ok", "rules": [], "icmp_filtered": false,
+  "status":  {"severity": "ok", "rules": [], "measurement": "measured",
+              "icmp_filtered": false,
               "degraded": false, "paused": false, "cadence_s": 10},
   "changes": [                    // schema 2+; ABSENT when nothing changed
     {"id": "vpn-disconnected", "field": "vpn.active",
@@ -422,11 +423,22 @@ it would accumulate forever.
   full run name the **same** rule IDs; the bats suite asserts that parity
   over eleven conditions. Consumers render this list. They must not
   re-derive it, or the app can contradict the report it links to.
+- **`status.measurement`** is separate from health severity. `measured`
+  means a fast gateway, internet-loss, or HTTPS reachability probe produced
+  a result; `unknown` means the link may still be associated but traffic was
+  not successfully tested; `link-down` means there was no default route.
+  `unknown` must never be rendered as an all-clear.
 - **`status.icmp_filtered`** is TCP-1 holding: real connections work,
   only ping is being dropped. Common on hotel and corporate networks.
-  The loss rules still fire — withholding them would break parity with a
-  scan — so this flag is what an alert engine reads to suppress a loss
-  notification that would always be wrong.
+  The gateway loss rules (`G1`, `G2`, `G3`) do **not** fire alongside it —
+  TCP-1 is evaluated first and suppresses them in `lib/diagnosis.sh` and
+  `lib/monitor.sh` alike, so the two engines still name the same rules for
+  the same link. (Until v0.10.1 both fired, which put "reboot the router"
+  and "the network is up; don't worry" in one report.) The flag remains what
+  an alert engine reads to suppress a loss notification, and it is also the
+  signal a UI should use to stop presenting `gateway.loss_pct` and the
+  latency figures as meaningful: on such a network they are an artefact of
+  the probe, not a property of the link.
 - **`status.paused`** means `SIGUSR1` suspended probing. Every measurement
   in such a sample is stale by definition; do not plot or alert on it.
 - **`changes`** (schema 2+) lists field-level differences from the
@@ -950,13 +962,13 @@ probing, no log file, no `~/net-diag` writes, sudo-free.
   "schema": 1,
   "bands": [
     {"min_dbm": -55, "label": "Excellent", "tone": "good",
-     "blurb": "Your Wi-Fi signal is as strong as it gets — you're right next to the router or access point, and the wireless link is never going to be the bottleneck."},
+     "blurb": "Your Mac has a strong radio signal to the access point. That does not test whether the router or internet path is delivering traffic."},
     {"min_dbm": -70, "label": "Good", "tone": "ok",
-     "blurb": "Your Wi-Fi signal is solid. Streaming, video calls, and downloads should all work smoothly from here."},
+     "blurb": "Your Mac has a solid radio signal to the access point. Signal strength alone cannot confirm that websites will load."},
     {"min_dbm": -75, "label": "Fair", "tone": "warn",
-     "blurb": "Your Wi-Fi signal is on the weaker side. You might notice occasional slowdowns or a video call stutter, especially the further you get from the router."},
+     "blurb": "Your radio signal is on the weaker side, but this reading still does not identify whether an internet problem is local Wi-Fi, the router, or the provider."},
     {"min_dbm": null, "label": "Weak", "tone": "bad",
-     "blurb": "Your Mac is far from the router or something is blocking the signal — expect stalls and dropped calls."}
+     "blurb": "Your radio signal is weak or obstructed. Confirm the router and internet path with a reachability check before assuming signal strength is the cause."}
   ]
 }
 ```

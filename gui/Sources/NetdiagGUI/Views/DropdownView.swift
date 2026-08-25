@@ -85,7 +85,8 @@ struct DropdownView: View {
                                             raisedAt: $0.raisedAt, rules: $0.rules)
             },
             severity: coordinator.monitor.latest?.status.severity ?? "ok",
-            linkUp: coordinator.monitor.latest?.link.up ?? true
+            linkUp: coordinator.monitor.latest?.link.up ?? true,
+            measurementState: coordinator.monitor.latest?.status.measurement ?? "unknown"
         ))
     }
 
@@ -95,6 +96,7 @@ struct DropdownView: View {
         case .healthy: healthyStage
         case .watching(let sev): watchingStage(sev)
         case .alerted(let alert): alertStage(alert)
+        case .checking: checkingStage
         case .testing: testingStage
         case .paused(let reason): pausedStage(reason)
         case .skewed(let message): skewedStage(message)
@@ -122,6 +124,25 @@ struct DropdownView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Theme.Spacing.sm)
+        .cardStyle()
+    }
+
+    private var checkingStage: some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking connection…")
+                    .font(.callout).fontWeight(.semibold)
+            }
+            Text("Waiting for a live router and internet reading")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Wi‑Fi signal bars alone cannot verify internet access")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Theme.Spacing.sm)
@@ -325,7 +346,7 @@ struct DropdownView: View {
                 InstrumentCell(label: "Router",
                                value: routerInfo?.ping ?? "—",
                                tint: routerTint)
-                InstrumentCell(label: "Wi-Fi", value: wifiCell.value,
+                InstrumentCell(label: "Wi-Fi signal", value: wifiCell.value,
                                unit: wifiCell.unit, tint: wifiCell.tint)
                 InstrumentCell(label: "VPN",
                                value: vpnActive ? (vpnName ?? "on") : "off",
@@ -351,7 +372,18 @@ struct DropdownView: View {
     }
 
     private var internetValue: (text: String, tint: Color) {
+        guard !coordinator.monitor.isPaused, !coordinator.isScanning else {
+            return ("—", .primary)
+        }
+        if icmpFiltered { return ("n/a", .secondary) }
         guard let rtt = coordinator.monitor.latest?.internet.rttAvgMs else {
+            // Total loss has no average RTT — every packet that would have
+            // contributed one was dropped — so an em dash here reads as "we
+            // did not look" on precisely the cycle we looked hardest. The
+            // loss figure beside it is the measurement; say so.
+            if let loss = coordinator.monitor.latest?.internet.lossPct, loss >= 100 {
+                return ("no reply", .red)
+            }
             return ("—", .primary)
         }
         return ("\(Int(rtt.rounded())) ms",
@@ -363,14 +395,35 @@ struct DropdownView: View {
     /// once the catalog has loaded — without it there is no way to tell
     /// "no rule fired" from "the catalog to check against never arrived",
     /// so the safer read is no tint at all rather than a false all-clear.
+    /// The CLI's own statement that ping is being dropped by policy on this
+    /// network, so its loss and latency numbers describe the probe rather
+    /// than the link. `statusDetail` already prints the sentence ("This
+    /// network blocks ping — real connections are fine"); these cells stop
+    /// printing figures that contradict it. Read from the sample, never
+    /// inferred here — see CLAUDE.md on where diagnosis lives.
+    private var icmpFiltered: Bool {
+        !coordinator.monitor.isPaused && !coordinator.isScanning
+            && coordinator.monitor.latest?.status.icmpFiltered == true
+    }
+
     private var lossValue: (text: String, tint: Color) {
+        guard !coordinator.monitor.isPaused, !coordinator.isScanning else {
+            return ("—", .primary)
+        }
+        if icmpFiltered { return ("n/a", .secondary) }
         guard let loss = coordinator.monitor.latest?.internet.lossPct else {
             return ("—", .primary)
         }
         let text = String(format: "%.1f%%", loss)
         if firedCategories.contains("internet") { return (text, .red) }
         guard coordinator.rulesCatalog.catalog != nil else { return (text, .primary) }
-        return (text, coordinator.monitor.latest?.status.severity == "ok" ? .green : .primary)
+        // Severity `ok` is necessary but not sufficient for green. On an
+        // ICMP-filtering network the CLI is right that nothing is wrong, and
+        // "100.0%" painted green is still the wrong sentence to put in front
+        // of someone. `loss == 0` is not a threshold — it is the absence of
+        // loss — so this stays a rendering rule, not a second opinion.
+        let allClear = coordinator.monitor.latest?.status.severity == "ok" && loss == 0
+        return (text, allClear ? .green : .primary)
     }
 
     private var routerTint: Color {
@@ -406,7 +459,12 @@ struct DropdownView: View {
             return ("wired", nil, .secondary)
         }
         let content = SignalScale.cellContent(rssi: resolvedRSSI, scale: coordinator.signalScale.scale)
-        guard firedCategories.contains("wifi") else { return content }
+        guard firedCategories.contains("wifi") else {
+            // Signal quality is a radio measurement, not a connection
+            // verdict. Keep it neutral so "Good" cannot be mistaken for
+            // "the internet is working" when the router/path is failing.
+            return (content.value, content.unit, .primary)
+        }
         return (content.value, content.unit, .red)
     }
 
@@ -519,7 +577,11 @@ struct DropdownView: View {
 
     private var checkButton: some View {
         Button {
-            coordinator.runScan(depth: .full, reason: "you asked")
+            // This is the status button, not a throughput benchmark. The
+            // quick profile checks the gateway, DNS, TCP and public HTTPS
+            // path without traceroute, bufferbloat or a speed test, so the
+            // answer arrives while the problem is still happening.
+            coordinator.runScan(depth: .quick, reason: "you asked")
         } label: {
             HStack {
                 Image(systemName: "stethoscope")
@@ -671,21 +733,23 @@ struct DropdownView: View {
     }
 
     private var routerInfo: (ping: String, ip: String?)? {
-        let ip = coordinator.monitor.latest?.link.gateway
-            ?? coordinator.latestRun?.snapshot.gateway.ip
-            ?? coordinator.hydratedReport?.run.gateway.ip
-        let rtt = coordinator.monitor.latest?.gateway.rttAvgMs
-            ?? coordinator.latestRun?.snapshot.gateway.rttAvgMs
-            ?? coordinator.hydratedReport?.run.gateway.rttAvgMs
-        let loss = coordinator.monitor.latest?.gateway.lossPct
-            ?? coordinator.latestRun?.snapshot.gateway.lossPct
-            ?? coordinator.hydratedReport?.run.gateway.lossPct
+        // The monitor is paused during a scan, and its last sample is then a
+        // stale pre-scan reading. A stored run is useful history but must not
+        // be presented as the router's current latency.
+        guard !coordinator.monitor.isPaused, !coordinator.isScanning,
+              let sample = coordinator.monitor.latest else { return nil }
+        let ip = sample.link.gateway
+        let rtt = sample.gateway.rttAvgMs
+        let loss = sample.gateway.lossPct
 
         guard let current = rtt else {
-            if let ip {
-                return ("—", ip)
-            }
-            return nil
+            guard let ip else { return nil }
+            // Ping blocked by policy, total loss, or simply not measured
+            // yet — three different statements, and an em dash for all
+            // three is how a dead router came to look like an idle one.
+            if icmpFiltered { return ("n/a", ip) }
+            if let loss, loss >= 100 { return ("no reply", ip) }
+            return ("—", ip)
         }
         let pingStr: String
         if let loss, loss > 0 {
@@ -708,10 +772,21 @@ struct DropdownView: View {
             ?? coordinator.hydratedReport?.run.vpn.name
     }
 
+    /// The badge says where the report came from, never why the scan ran.
+    /// `coordinator.scanKind` is the `reason` string passed to `launch`, and
+    /// for an alert-triggered scan that string is "checking <alert title>" —
+    /// so the card rendered "Last check 36m ago · checking internet
+    /// connection degraded" over a green all-clear, naming an alert that was
+    /// already listed, with its own timestamp, in the activity list directly
+    /// below. Two places showing the same event, one of them stale and
+    /// phrased in the present tense.
+    ///
+    /// The stage card states the present condition; the activity list holds
+    /// the history. A scan's motive belongs to the alert that caused it.
     private var lastCheckLine: (relative: String, badge: String?)? {
         switch coordinator.reportSource {
         case .live(let run):
-            return (RelativeTime.string(from: run.finishedAt), coordinator.scanKind.isEmpty ? nil : coordinator.scanKind)
+            return (RelativeTime.string(from: run.finishedAt), nil)
         case .stored(let detail):
             return (RelativeTime.string(from: detail.run.date), "from history")
         case .none:

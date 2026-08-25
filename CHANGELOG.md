@@ -6,6 +6,81 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The monitor could not measure an outage, so an outage looked healthy.**
+  macOS `ping` waits ~10 s after its last packet before printing the
+  statistics line, and that line *is* the measurement — it carries the
+  transmitted/received counts `_mon_loss_fold` parses. Measured here, `ping
+  -q -c 5 -i 0.2` against a black-holed address took 11.0 s. The monitor
+  wraps its gateway probe in `with_timeout 6` and its internet probe in
+  `with_timeout 8`, so on a dead path both were killed *before* the summary
+  appeared. Loss and RTT came back empty; `loss_at_least` and `loss_below`
+  both (correctly) refuse to fire on an unmeasured value, so no rule fired;
+  `MON_SEVERITY` stayed `ok`. The menu bar showed a green check and "All
+  good — watching" over a connection with no internet, with every instrument
+  cell reading `—`. Every ping that parses a summary now passes `-W
+  PING_REPLY_WAIT_MS` (2000 ms, a new constant in `lib/thresholds.sh`),
+  which bounds the wait for each reply: the same probe now completes in
+  2.0 s and reports `100.0% packet loss`. 2000 ms rather than 1000 because
+  this tool has seen a real 1.6 s reply, and counting one of those as lost
+  would trade a false "unmeasured" for a false "lossy".
+- **`lib/bufferbloat.sh`'s loaded-latency probe was over its own budget for
+  the same reason** — 45 packets at 0.2 s is 9 s of sending, plus the ~10 s
+  tail, against `with_timeout 12`. A link that went dark mid-test produced
+  no loaded reading at all. `lib/gateway.sh` and `lib/internet_ping.sh`
+  cleared their 15 s wrappers by about one second and now have real margin.
+- **`curl`'s `000` was being read as a reply.** `_mon_probe_web` uses `-w
+  '%{http_code}'`, which prints `000` when the request never completed
+  (DNS failure, refused connection, timeout). The non-204 branch treated
+  that as "a canary answered, just not as expected" — a captive-portal
+  verdict — and its non-empty value satisfied `status.measurement ==
+  "measured"`, so the app's own "Checking connection…" card could never
+  appear on the outage it was written for. `000` is now the absence of an
+  answer; a redirect or a login page still reads as interception.
+- **A green dot sat beside "not measured" on the dashboard.** The Report
+  card set each row's health from whether a *rule* fired, and no rule fires
+  about a check that never ran — so "Under load", "Packet size (MTU)" and
+  "Clock" all showed the same green dot as a passing check, in a report
+  whose headline was a critical. Unmeasured rows now render a neutral grey
+  `minus.circle`. Only the all-clear is downgraded: a row that is unmeasured
+  *because* something failed keeps its warning or critical symbol, since
+  there the missing number is the finding.
+- **Total packet loss was displayed as "not measured".** The Report card's
+  formatter gave up on a `nil` RTT before it looked at the loss figure — but
+  100% loss has no average RTT by definition, every packet that would have
+  contributed one having been dropped. So the Router and Internet rows read
+  "not measured" directly under a headline quoting "100.0% of the packets".
+  They now read "100% loss, no reply", and the dropdown's Internet cell
+  shows "no reply" in red rather than a neutral em dash. The dropdown's Loss
+  cell no longer tints green unless loss is actually zero.
+
+### Changed
+
+- **`TCP-1` now suppresses `G1`, `G2` and `G3` instead of firing alongside
+  them.** On any ICMP-filtering network — hotel, corporate, many ISPs — both
+  fired, so the report carried "Try rebooting the router (unplug it for 30
+  seconds…)" immediately above "The network is up; don't worry about the
+  ping numbers above", let the critical one own the headline, and exited
+  `2`. TCP reaching 1.1.1.1:443 means packets *are* crossing the gateway, so
+  the gateway is forwarding and merely declining to answer pings itself;
+  `THRESH_ICMP_FILTERED_LOSS_PCT` is already set well above `LOSS_CRIT_PCT`
+  precisely so that inference is safe. No figure is lost — TCP-1's own text
+  quotes the gateway loss. Changed in `lib/diagnosis.sh` and
+  `lib/monitor.sh` in lockstep, because the invariant that matters is that
+  the two engines name the same rules for the same link, not that G2 always
+  fires; `status.icmp_filtered` and the alert engine's suppression are
+  untouched, as they solve notification rather than what the report says.
+  When TCP is *not* reaching anything, there is no evidence the gateway
+  forwards at all, TCP-1 stays quiet, and G1/G2/G3 call the loss what it is.
+- **The dropdown's "Last check" line no longer carries the scan's motive.**
+  It rendered `coordinator.scanKind`, the `reason` string passed to
+  `launch`, which for an alert-triggered scan is "checking <alert title>" —
+  producing "Last check 36m ago · checking internet connection degraded"
+  under a green all-clear, naming an alert that was already listed, with its
+  own timestamp, in the activity list directly below. The stage card now
+  states the present condition and the activity list holds the history.
+
 ## [0.10.0] - 2026-08-20
 
 ### Added

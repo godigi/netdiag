@@ -204,6 +204,11 @@ struct MonitorSample: Decodable, Sendable {
 
     struct Status: Decodable, Sendable {
         var severity: String = "ok"
+        /// `measured` means at least one fast reachability probe produced a
+        /// result. `unknown` is not healthy: the link may be associated while
+        /// traffic could not be tested. `link-down` is the explicit no-route
+        /// state.
+        var measurement: String = "unknown"
         /// Rule IDs from docs/DIAGNOSIS-RULES.md. The app maps these to
         /// alerts and renders them in the expert layer. It never decides
         /// whether one should have fired.
@@ -219,7 +224,7 @@ struct MonitorSample: Decodable, Sendable {
         var cadenceS: Int?
 
         enum CodingKeys: String, CodingKey {
-            case severity, rules, degraded, paused
+            case severity, rules, measurement, degraded, paused
             case icmpFiltered = "icmp_filtered"
             case cadenceS = "cadence_s"
         }
@@ -229,6 +234,10 @@ struct MonitorSample: Decodable, Sendable {
 
     var health: Health {
         guard link.up else { return .critical }
+        // No rule firing is not the same as a successful check. Keep the
+        // menu-bar indicator out of the green state until a router, internet,
+        // or HTTPS reachability probe has actually produced evidence.
+        guard status.measurement == "measured" else { return .warning }
         switch status.severity {
         case "critical": return .critical
         case "warn":     return .warning
@@ -380,6 +389,7 @@ extension MonitorSample.Status {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         severity = c.lenient(.severity, "ok")
+        measurement = c.lenient(.measurement, "unknown")
         rules = c.lenient(.rules, [])
         icmpFiltered = c.lenient(.icmpFiltered, false)
         degraded = c.lenient(.degraded, false)

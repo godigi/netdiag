@@ -64,7 +64,6 @@ final class NetdiagCoordinator {
     private(set) var liveSSID: String?
     private(set) var isScanning = false
     private(set) var scanStartedAt: Date?
-    private(set) var scanKind: String = ""
     private(set) var lastRunError: String?
     /// The last `--speed-only` result, kept apart from `latestRun`. A speed
     /// test measures one thing and diagnoses nothing, so letting it become
@@ -368,7 +367,6 @@ final class NetdiagCoordinator {
         }
         isScanning = true
         scanStartedAt = Date()
-        scanKind = reason
         lastRunError = nil
         progress.reset()
 
@@ -611,9 +609,10 @@ final class NetdiagCoordinator {
     }
 
     var currentHealth: Health {
+        if Defaults.monitoringEnabled && !monitor.isRunning { return .warning }
         if let sample = monitor.latest { return sample.health }
         if let run = latestRun { return run.snapshot.worstSeverity }
-        return .healthy
+        return .warning
     }
 
     /// The one sentence the dropdown leads with.
@@ -627,8 +626,14 @@ final class NetdiagCoordinator {
         if let alert = alerts.activeSorted.first {
             return alert.body.isEmpty ? alert.title : alert.body
         }
+        if !monitor.isRunning && monitor.lastError == nil {
+            return "Reconnecting to the connection monitor…"
+        }
         if let sample = monitor.latest, !sample.link.up {
             return "Your Mac has no network connection at all."
+        }
+        if let sample = monitor.latest, sample.status.measurement != "measured" {
+            return "Checking your connection — a live internet reading is not available yet."
         }
         if let sample = monitor.latest, sample.status.severity == "critical" || sample.status.severity == "warn" {
             for ruleID in sample.status.rules {

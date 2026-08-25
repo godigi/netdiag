@@ -28,8 +28,10 @@ bufferbloat_run() {
   local bb_idle_inet_out
   # macOS ping's -t is a deadline for the whole run, not a per-reply
   # timeout. with_timeout supplies the outer bound without truncating a
-  # healthy eight-packet baseline.
-  bb_idle_inet_out="$(with_timeout 12 ping -c 8 -i 0.2 1.1.1.1 2>/dev/null || true)"
+  # healthy eight-packet baseline; -W bounds the per-reply wait so the
+  # statistics line is printed inside it (see PING_REPLY_WAIT_MS).
+  bb_idle_inet_out="$(with_timeout 12 ping -c 8 -i 0.2 \
+    -W "$PING_REPLY_WAIT_MS" 1.1.1.1 2>/dev/null || true)"
   BUFFERBLOAT_IDLE_INET_RTT="$(ping_parse_summary "$bb_idle_inet_out" | cut -d'|' -f2)"
   BUFFERBLOAT_IDLE_GW_RTT="${GW_LATENCY:-}"
 
@@ -52,9 +54,16 @@ bufferbloat_run() {
 
   # Brief settle so the TCP slow-start ramps before we start sampling.
   sleep 0.5
-  with_timeout 12 ping -c 45 -i 0.2 "$GATEWAY" > "$bb_tmp/gw.ping" 2>/dev/null &
+  # 45 packets at 0.2 s is 9 s of sending. Without -W, macOS ping's ~10 s
+  # tail wait put the statistics line at ~19 s — past with_timeout 12 — so
+  # a link that went dark mid-test silently produced no loaded reading at
+  # all, and bufferbloat reported "idle baseline failed" instead of the
+  # congestion it was measuring.
+  with_timeout 12 ping -c 45 -i 0.2 -W "$PING_REPLY_WAIT_MS" "$GATEWAY" \
+    > "$bb_tmp/gw.ping" 2>/dev/null &
   bb_pg_pid=$!
-  with_timeout 12 ping -c 45 -i 0.2 1.1.1.1   > "$bb_tmp/inet.ping" 2>/dev/null &
+  with_timeout 12 ping -c 45 -i 0.2 -W "$PING_REPLY_WAIT_MS" 1.1.1.1 \
+    > "$bb_tmp/inet.ping" 2>/dev/null &
   bb_pi_pid=$!
   wait "$bb_pg_pid" "$bb_pi_pid"
   # Reap the download (--max-time should have already ended it).

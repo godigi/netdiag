@@ -91,7 +91,8 @@ private enum VerifyHarness {
                                isPausedForAnyReason: Bool = false,
                                pauseReason: String? = nil,
                                lastError: String? = nil,
-                               monitorRunning: Bool = true) -> StageResolver.Inputs {
+                               monitorRunning: Bool = true,
+                               measurementState: String = "measured") -> StageResolver.Inputs {
         StageResolver.Inputs(
             isScanning: isScanning,
             monitoringEnabled: monitoringEnabled,
@@ -101,7 +102,8 @@ private enum VerifyHarness {
             monitorRunning: monitorRunning,
             activeAlert: activeAlert,
             severity: severity,
-            linkUp: linkUp
+            linkUp: linkUp,
+            measurementState: measurementState
         )
     }
 
@@ -121,6 +123,7 @@ private enum VerifyHarness {
         // read .healthy for 15–25 s while the timeline already showed the drop.
         equal(StageResolver.resolve(inputs(severity: "warn")), .watching(severity: .warn), "warn → watching (amber, before dwell)")
         equal(StageResolver.resolve(inputs(severity: "critical")), .watching(severity: .critical), "critical → watching (red, before dwell)")
+        equal(StageResolver.resolve(inputs(measurementState: "unknown")), .checking, "unknown measurement → checking, not healthy")
 
         // An active alert wins over watching — once the dwell elapses the
         // card carries the alert's prose, which a scan may have enriched.
@@ -151,9 +154,10 @@ private enum VerifyHarness {
         equal(StageResolver.resolve(inputs(severity: "warn", activeAlert: nil)),
               .watching(severity: .warn), "no alert + warn → watching (alert gate is what kept it healthy before)")
 
-        // No verdict yet (monitor just started) reads healthy, not watching —
-        // a yellow card with no evidence would cry wolf.
-        equal(StageResolver.resolve(inputs(severity: "ok", linkUp: true)), .healthy, "first-sample ok → healthy")
+        // No measurement yet is explicitly neutral, never an all-clear.
+        equal(StageResolver.resolve(inputs(severity: "ok", linkUp: true,
+                                            measurementState: "unknown")),
+              .checking, "first-sample unknown → checking")
     }
 
     // MARK: - 2. Stage-card visual contract (offscreen render → PNG)
@@ -191,6 +195,10 @@ private enum VerifyHarness {
             case .testing:
                 content(icon: "circle.dashed", tint: .accentColor,
                         title: "Checking…", tertiary: "pinging the gateway")
+                    .background(Color.gray.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            case .checking:
+                content(icon: "hourglass", tint: .secondary,
+                        title: "Checking connection…", tertiary: "waiting for a live reading")
                     .background(Color.gray.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             case .paused(let reason):
                 content(icon: "pause.circle.fill", tint: .secondary,
@@ -250,6 +258,7 @@ private enum VerifyHarness {
             ("paused",            .paused("display sleeping"),               "Monitoring is off while the display sleeps."),
             ("skewed",            .skewed("netdiag CLI is too old"),         "The bundled netdiag is older than this app expects."),
             ("testing",           .testing,                                  "Running a full check…"),
+            ("checking",          .checking,                                 "Waiting for a live reading…"),
         ]
         for (name, stage, body) in cases {
             guard let image = renderImage(StageCardSnapshot(stage: stage, bodyText: body),

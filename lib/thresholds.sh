@@ -64,6 +64,22 @@ THRESH_GW_LOSS_CRIT_PCT=20
 LOSS_PROBE_COUNT=20
 LOSS_PROBE_INTERVAL=0.2
 
+# How long ping waits for a reply, in milliseconds (-W). Without it macOS
+# ping waits ~10 s after the last packet before printing its statistics
+# line, so a probe against a dead path costs 10 s more than it sends:
+# measured, `ping -q -c 5 -i 0.2` to a black-holed address took 11.0 s, and
+# 2.0 s with this flag. That tail is what every `with_timeout` wrapper in
+# this repo was sized against, and the monitor's 6 s / 8 s wrappers lost the
+# race — SIGTERM arrived before the summary, so a total outage reported
+# "could not measure" instead of 100% loss and no rule could fire. The
+# statistics line is the measurement; it must always be printed.
+#
+# 2000, not 1000: a reply slower than two seconds is already past every
+# latency threshold here, while a network showing a 1.6 s spike is one this
+# tool has actually seen. Counting such a reply as lost would trade a
+# false "unmeasured" for a false "lossy".
+PING_REPLY_WAIT_MS=2000
+
 # The monitor's per-cycle gateway probe. Ten packets, not the three or five
 # a "quick liveness check" suggests, and the reason is quantisation rather
 # than accuracy: at 3 packets the only reportable losses are 0/33/67/100%,

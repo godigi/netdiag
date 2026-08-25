@@ -283,6 +283,11 @@ def main() -> None:
         "status": {
             "severity": _env("SEVERITY") or "ok",
             "rules": rules,
+            # Health severity and measurement availability are separate. A
+            # sample can have no diagnosis rule while its router/internet
+            # probes failed to produce a reading; consumers must not render
+            # that as an all-clear.
+            "measurement": _env("MEASUREMENT_STATE") or "unknown",
             # TCP-1 holding is the global suppressor for every loss alert.
             # Surfaced as its own boolean so a consumer doesn't have to
             # string-match the rules array to find it.

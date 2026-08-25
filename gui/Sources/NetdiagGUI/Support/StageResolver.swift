@@ -23,6 +23,10 @@ enum StageResolver {
         case testing
         case paused(String?)
         case alerted(AlertSnapshot)
+        /// The monitor is alive or reconnecting, but no current router/web
+        /// probe has produced a result yet. This is intentionally neutral:
+        /// Wi-Fi association alone is not an all-clear.
+        case checking
         /// The CLI sees a problem but no alert has crossed its dwell yet.
         /// `critical` reads red, `warn` reads amber; the card carries the
         /// CLI's own blurb for the worst firing rule (the same source
@@ -66,10 +70,12 @@ enum StageResolver {
         /// problem and reads healthy.
         let severity: String
         let linkUp: Bool
+        let measurementState: String
         init(isScanning: Bool, monitoringEnabled: Bool,
              isPausedForAnyReason: Bool, pauseReason: String?,
              lastError: String?, monitorRunning: Bool,
-             activeAlert: AlertSnapshot?, severity: String, linkUp: Bool) {
+             activeAlert: AlertSnapshot?, severity: String, linkUp: Bool,
+             measurementState: String = "unknown") {
             self.isScanning = isScanning
             self.monitoringEnabled = monitoringEnabled
             self.isPausedForAnyReason = isPausedForAnyReason
@@ -79,14 +85,16 @@ enum StageResolver {
             self.activeAlert = activeAlert
             self.severity = severity
             self.linkUp = linkUp
+            self.measurementState = measurementState
         }
     }
 
     /// The order of the guards is load-bearing and matches the precedence
     /// the dropdown has always had: a scan in progress, then a user pause,
-    /// then a skewed CLI, then an already-active alert. Only after all four
-    /// fall through does severity decide between `.watching` and `.healthy`
-    /// — the step that closes the green-card-over-red-timeline gap.
+    /// then a skewed CLI, then an already-active alert. Only after a live
+    /// sample has actually measured traffic does severity decide between
+    /// `.watching` and `.healthy` — association and RSSI alone never earn a
+    /// green all-clear.
     static func resolve(_ i: Inputs) -> Stage {
         if i.isScanning { return .testing }
         if !i.monitoringEnabled { return .paused(nil) }
@@ -94,6 +102,9 @@ enum StageResolver {
         if let error = i.lastError, !i.monitorRunning { return .skewed(error) }
         if let alert = i.activeAlert { return .alerted(alert) }
         if !i.linkUp { return .watching(severity: .critical) }
+        if !i.monitorRunning || i.measurementState != "measured" {
+            return .checking
+        }
         switch i.severity {
         case "critical": return .watching(severity: .critical)
         case "warn":     return .watching(severity: .warn)

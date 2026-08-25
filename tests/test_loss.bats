@@ -151,6 +151,67 @@ sev_of() {
   [ "$status" -ne 0 ]
 }
 
+@test "every loss-measuring ping bounds its reply wait with -W" {
+  # The complement of the -t rule above. macOS ping waits ~10 s after the
+  # last packet before printing statistics, and that line *is* the
+  # measurement: without it _mon_loss_fold has no transmitted/received pair
+  # and reports "not measured". The monitor's 6 s and 8 s with_timeout
+  # wrappers lost that race, so a total outage produced null loss, no rule
+  # fired, severity stayed "ok", and the menu bar showed a green check over
+  # a dead connection. -W caps the wait; see PING_REPLY_WAIT_MS.
+  # Backslash continuations are unfolded first: every one of these calls
+  # spans two lines, so a line-at-a-time grep would report a flag that is
+  # sitting one line below as missing — or, worse, miss a call site that
+  # genuinely lacks it. Comments are dropped after the fold so a `#` inside
+  # the joined text cannot hide a real invocation.
+  local f found=0 line
+  for f in monitor.sh internet_ping.sh gateway.sh bufferbloat.sh; do
+    while IFS= read -r line; do
+      # `ping -`, not `ping `: every real invocation here passes flags,
+      # while lib/internet_ping.sh's warn() text mentions "ping to …".
+      # Folded comment lines still begin with # and are skipped outright,
+      # which is what keeps that file's worked example of `-t` out.
+      case "$line" in \#*) continue ;; esac
+      case "$line" in *"ping -"*) ;; *) continue ;; esac
+      found=$((found + 1))
+      [[ "$line" == *'-W "$PING_REPLY_WAIT_MS"'* ]] \
+        || { echo "unbounded ping in lib/$f: $line"; return 1; }
+    done < <(awk '
+      { cur = $0; sub(/^[ \t]+/, "", cur)
+        buf = (buf == "" ? cur : buf " " cur)
+        if (buf ~ /\\$/) { sub(/[ \t]*\\$/, "", buf); next }
+        print buf; buf = "" }
+      END { if (buf != "") print buf }
+    ' "$REPO/lib/$f" | grep -E '(^|[^_[:alnum:]])ping -')
+  done
+  # Guard the guard: if the fold or the filter ever stops matching, the
+  # loop above passes vacuously.
+  [ "$found" -ge 6 ] || { echo "only found $found ping call sites"; return 1; }
+}
+
+@test "a black-holed probe still reports 100% loss inside the monitor's budget" {
+  # The regression itself, end to end: TEST-NET-1 (RFC 5737) is guaranteed
+  # unroutable, so this cannot accidentally succeed. Before -W the summary
+  # never printed within with_timeout 6 and the loss window came back empty.
+  run with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" \
+    -W "$PING_REPLY_WAIT_MS" 192.0.2.1
+  [[ "$output" == *"$MONITOR_PING_COUNT packets transmitted"* ]]
+  [[ "$output" == *"100.0% packet loss"* ]]
+}
+
+@test "a probe that reports 100% loss folds to 100, not to unmeasured" {
+  # _mon_loss_fold clears the window on an unparseable summary — correct,
+  # because a frozen window is worse — but that made "the link is dead"
+  # indistinguishable from "the probe was killed". A complete summary
+  # showing total loss is a measurement and must survive as one.
+  . "$REPO/lib/monitor.sh"
+  local out summary
+  out="$(printf '%s\n' "--- 192.0.2.1 ping statistics ---" \
+    "$MONITOR_PING_COUNT packets transmitted, 0 packets received, 100.0% packet loss")"
+  summary="$(_mon_loss_fold "" "$out" "$MONITOR_PING_COUNT")"
+  [ "${summary#*|}" = "100" ]
+}
+
 @test "a real 20-packet probe transmits 20 packets and reports no loss" {
   # End-to-end guard on the flag set actually used, against loopback so it
   # needs no network and cannot be flaky. If -t ever comes back, or the

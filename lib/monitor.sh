@@ -132,6 +132,11 @@ MON_DNS_RESOLVER=""
 MON_DNS_MS=""
 MON_TCP_OK=""
 MON_TCP_LINES=""
+# A small HTTPS reachability probe runs with the fast tier. It answers the
+# question users actually care about — whether ordinary internet traffic can
+# leave the Mac — rather than treating Wi-Fi association or ICMP replies as
+# proof that websites will load.
+MON_WEB_OK=""
 MON_PUB_IP=""
 MON_PUB_ISP=""
 MON_PUB_ASN=""
@@ -142,6 +147,10 @@ MON_PUBLIC_OK=""
 MON_CAPTIVE=""
 MON_RULES=""
 MON_SEVERITY="ok"
+# `ok` severity means no diagnosis rule fired. It does not mean the probes
+# succeeded; keep measurement availability separate so the GUI can avoid a
+# green "all good" card when the link could not be tested.
+MON_MEASUREMENT_STATE="unknown"
 MON_ICMP_FILTERED=0
 MON_DEGRADED=0
 MON_REFRESHED=""
@@ -344,7 +353,14 @@ _mon_probe_gateway() {
   # over the rolling window (_mon_loss_fold) — but a wider burst still
   # fills the window faster and costs little at 0.2 s spacing. Cost is 2 s
   # of a 10 s cycle, at one packet per second average.
-  out="$(with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" "$MON_GATEWAY" 2>/dev/null || true)"
+  #
+  # -W bounds the wait for the last reply; without it macOS ping sits ~10 s
+  # past the final packet before printing statistics, and with_timeout 6
+  # killed it first. The statistics line is the measurement, so losing it
+  # meant a dead gateway reported "not measured" rather than 100% loss.
+  # See PING_REPLY_WAIT_MS in lib/thresholds.sh.
+  out="$(with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" \
+    -W "$PING_REPLY_WAIT_MS" "$MON_GATEWAY" 2>/dev/null || true)"
   summary="$(_mon_loss_fold "$MON_GW_HIST" "$out" "$MONITOR_PING_COUNT")"
   MON_GW_HIST="${summary%%|*}"
   MON_GW_LOSS="${summary#*|}"
@@ -408,11 +424,14 @@ _mon_probe_internet() {
   # only when both windows agree.
   netdiag_mktemp_dir monitor-inet || return 0
   tmp_dir="$NETDIAG_TMP_DIR"
+  # -W for the same reason as the gateway probe above: 20 packets at 0.2 s
+  # is 4 s of sending, and macOS ping's ~10 s tail wait put the statistics
+  # line outside with_timeout 8 on exactly the dead paths it describes.
   with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" \
-    "$target" >"$tmp_dir/primary" 2>/dev/null &
+    -W "$PING_REPLY_WAIT_MS" "$target" >"$tmp_dir/primary" 2>/dev/null &
   local pid_a=$!
   with_timeout 8 ping -q -c "$MONITOR_INET_PING_COUNT" -i "$LOSS_PROBE_INTERVAL" \
-    "$target_alt" >"$tmp_dir/alternate" 2>/dev/null &
+    -W "$PING_REPLY_WAIT_MS" "$target_alt" >"$tmp_dir/alternate" 2>/dev/null &
   local pid_b=$!
   wait "$pid_a" 2>/dev/null || true
   wait "$pid_b" 2>/dev/null || true
@@ -428,6 +447,60 @@ _mon_probe_internet() {
   MON_INET_LOSS_ALT="${summary_alt#*|}"
   MON_INET_RTT="$(ping_parse_summary "$out" | cut -d'|' -f2)"
   is_numeric "$MON_INET_RTT"  || MON_INET_RTT=""
+}
+
+# Probe normal HTTPS traffic, not just Wi-Fi association or ICMP. A Mac can
+# remain associated at full RSSI while a wall/interference makes data traffic
+# unusable. Two independent 204 canaries keep one blocked endpoint from
+# becoming an ISP verdict; a captive portal normally returns a redirect or a
+# 200 page instead of the expected 204 and is therefore not counted as web
+# reachability.
+_mon_probe_web() {
+  MON_WEB_OK=""
+  [ "$MON_LINK_UP" -eq 1 ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+
+  local tmp_dir code_a code_b
+  netdiag_mktemp_dir monitor-web || return 0
+  tmp_dir="$NETDIAG_TMP_DIR"
+  curl -4 -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 1 --max-time 2 \
+    https://cp.cloudflare.com/generate_204 >"$tmp_dir/cloudflare" 2>/dev/null &
+  local pid_a=$!
+  curl -4 -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 1 --max-time 2 \
+    https://www.gstatic.com/generate_204 >"$tmp_dir/google" 2>/dev/null &
+  local pid_b=$!
+  wait "$pid_a" 2>/dev/null || true
+  wait "$pid_b" 2>/dev/null || true
+
+  code_a="$(cat "$tmp_dir/cloudflare" 2>/dev/null || true)"
+  code_b="$(cat "$tmp_dir/google" 2>/dev/null || true)"
+  rm -rf "$tmp_dir"
+  netdiag_tmp_forget "$tmp_dir"
+
+  MON_WEB_OK="$(_mon_web_verdict "$code_a" "$code_b")"
+}
+
+# Turn two canary status codes into a reachability verdict: "1" reachable,
+# "0" answered but intercepted, "" nothing answered. Pure, so the three-way
+# distinction is testable without a network.
+#
+# 000 is curl's code for a request that never completed — DNS failure,
+# refused connection, timeout. It is the *absence* of an answer, and reading
+# it as one is what let a dead link report as a captive portal and, worse,
+# satisfy the "measurement" gate: the app's own "checking" card then could
+# not appear on the outage it was written for. A real portal answers with a
+# redirect or a login page, which is a genuine response and still reads 0.
+_mon_web_verdict() {
+  local a="$1" b="$2"
+  [ "$a" = "000" ] && a=""
+  [ "$b" = "000" ] && b=""
+  if [ "$a" = "204" ] || [ "$b" = "204" ]; then
+    printf '1'
+  elif [ -n "$a" ] || [ -n "$b" ]; then
+    printf '0'
+  fi
 }
 
 _mon_probe_wifi_signal() {
@@ -507,10 +580,13 @@ _mon_rules() {
   MON_RULES=""
   MON_SEVERITY="ok"
   MON_ICMP_FILTERED=0
+  MON_MEASUREMENT_STATE="unknown"
 
   if [ "$MON_LINK_UP" -eq 0 ]; then
     _mon_add_rule critical N1
     MON_DEGRADED=1
+    MON_MEASUREMENT_STATE="link-down"
+    MON_WEB_OK=""
     # No link means neither leg was probed this cycle — a streak the link
     # drop interrupted is not a streak that held.
     MON_GW_LOSS_STREAK=0
@@ -518,17 +594,49 @@ _mon_rules() {
     return 0
   fi
 
-  # G1/G2/G3, evaluated exactly as lib/diagnosis.sh evaluates them —
-  # including when ICMP turns out to be filtered.
+  # This is data availability, not a health verdict. A healthy RSSI is not
+  # evidence that traffic is usable, and an empty ping summary is not
+  # evidence of zero loss. The state is emitted separately from severity so
+  # the GUI can say "checking" instead of claiming that everything is good.
   #
-  # It is tempting to suppress these when TCP-1 holds, and wrong. The
-  # constraint this project is built on is that the CLI owns every verdict
-  # and the GUI owns only alert policy. A monitor that quietly withheld G2
-  # on a hotel network would name a different rule set than a scan taken
-  # one second later on the same link, and the app would show a green dot
-  # over a red report. So the rule fires, `status.icmp_filtered` says the
-  # ping numbers are not to be trusted, and the alert engine — whose job
-  # this is — declines to notify. Same facts, one place to decide.
+  # A loss figure is non-empty only when _mon_loss_fold parsed a complete
+  # transmitted/received pair, so 100 counts here exactly as 0 does: both
+  # are answers. What does not count is a probe that produced nothing —
+  # including MON_WEB_OK, which is now empty rather than 0 when curl's
+  # request never completed (see _mon_web_verdict).
+  if [ -n "$MON_GW_LOSS" ] || [ -n "$MON_INET_LOSS" ] || [ -n "$MON_WEB_OK" ]; then
+    MON_MEASUREMENT_STATE="measured"
+  fi
+
+  # Prefer the fast HTTPS reachability result when it has run. Fall back to
+  # the slower public probe for compatibility with the first sample and with
+  # older test/CLI inputs that do not provide MON_WEB_OK.
+  local _mon_public_ok="${MON_WEB_OK:-$MON_PUBLIC_OK}"
+
+  # Is the gateway's ping loss filtering rather than fault? Decided before
+  # the loss rules below because it decides whether they run at all, and
+  # evaluated identically in lib/diagnosis.sh — the two engines must name
+  # the same rules for the same link (tests/test_monitor.bats's parity
+  # block) or the app shows a green dot over a red report.
+  #
+  # An earlier version of this block let G1/G2/G3 fire anyway and left the
+  # alert engine to decline the notification. That kept the user from being
+  # *pinged*, but the report still printed "reboot your router (unplug it
+  # for 30 seconds)" directly above "the network is up; don't worry about
+  # the ping numbers above", let the critical one own the headline, and
+  # exited 2 on every hotel and corporate network. TCP reaching 1.1.1.1:443
+  # means packets are crossing the gateway, so the gateway is forwarding and
+  # merely declining to answer pings itself; TCP-1's own prose still quotes
+  # the loss figure, so suppressing the contradiction loses no number.
+  local _mon_gw_filtered=0
+  if [ "${MON_TCP_OK:-0}" = "1" ] \
+     && loss_at_least "$MON_GW_LOSS" "$THRESH_ICMP_FILTERED_LOSS_PCT"; then
+    _mon_gw_filtered=1
+    MON_ICMP_FILTERED=1
+    _mon_add_rule info TCP-1
+  fi
+
+  # G1/G2/G3, evaluated exactly as lib/diagnosis.sh evaluates them.
   # G3 is confirmed rather than immediate: a single cycle's loss is a blip
   # (see THRESH_MON_LOSS_CONFIRM_CYCLES), so the warn band only fires once
   # it has held for THRESH_MON_LOSS_CONFIRM_CYCLES consecutive cycles.
@@ -536,7 +644,11 @@ _mon_rules() {
   # window — and any cycle that is not in the warn band (clean, or escalated
   # to critical) resets the streak, so a one-off blip followed by a clean
   # cycle can never quietly accumulate toward firing later.
-  if loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+  if [ "$_mon_gw_filtered" -eq 1 ]; then
+    # TCP-1 already described this link. Reset both streaks: filtered cycles
+    # are not evidence toward a confirmed G3.
+    MON_GW_LOSS_STREAK=0
+  elif loss_at_least "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     MON_GW_LOSS_STREAK=0
     if [ -n "$MON_WIFI_RSSI" ] && is_numeric "$MON_WIFI_RSSI" && [ "$MON_WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
       _mon_add_rule critical G1
@@ -552,10 +664,12 @@ _mon_rules() {
     MON_GW_LOSS_STREAK=0
   fi
 
-  # P1/P2 need the slow tier to have run at least once. An unmeasured
-  # public reach is "" and must not read as an outage — the same
-  # distinction that JSON-SCHEMA.md draws between null and 0.
-  if [ "${MON_PUBLIC_OK:-}" = "0" ] && loss_below "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+  # P1/P2 need a current public reach result. The fast HTTPS canary is
+  # authoritative once it has run; the slower public-IP probe remains the
+  # compatibility fallback. An unmeasured value is "" and must not read as
+  # an outage — the same distinction that JSON-SCHEMA.md draws between null
+  # and 0.
+  if [ "$_mon_public_ok" = "0" ] && loss_below "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ "${MON_DNS_OK:-}" = "0" ]; then
       _mon_add_rule critical P1
     else
@@ -564,7 +678,7 @@ _mon_rules() {
   fi
 
   # D1 — resolution failing while the internet itself is reachable.
-  if [ "${MON_DNS_OK:-}" = "0" ] && [ "${MON_PUBLIC_OK:-}" = "1" ]; then
+  if [ "${MON_DNS_OK:-}" = "0" ] && [ "$_mon_public_ok" = "1" ]; then
     _mon_add_rule warn D1
   fi
 
@@ -576,17 +690,12 @@ _mon_rules() {
     _mon_add_rule info VPN-1
   fi
 
-  # TCP-1 matching lib/diagnosis.sh's logic. Real connections work, only
-  # ping is being dropped — common on hotel and corporate WiFi.
-  if [ "${MON_TCP_OK:-0}" = "1" ] \
-     && loss_at_least "$MON_GW_LOSS" "$THRESH_ICMP_FILTERED_LOSS_PCT"; then
-    MON_ICMP_FILTERED=1
-    _mon_add_rule info TCP-1
-  fi
+  # TCP-1 is decided above the gateway loss rules, because it decides
+  # whether they fire at all.
 
   # ── L1 / L2 — internet-side packet loss ────────────────────────────────
   local _mon_icmp_filtered=0
-  if [ "${MON_PUBLIC_OK:-0}" = "1" ] && [ "${MON_TCP_OK:-0}" = "1" ] \
+  if [ "$_mon_public_ok" = "1" ] && [ "${MON_TCP_OK:-0}" = "1" ] \
      && loss_at_least "$MON_INET_LOSS" "$THRESH_ICMP_TOTAL_LOSS_PCT" \
      && loss_at_least "$MON_INET_LOSS_ALT" "$THRESH_ICMP_TOTAL_LOSS_PCT"; then
     _mon_icmp_filtered=1
@@ -692,6 +801,7 @@ _mon_emit() {
   NETDIAG_MON_DNS_MS="$MON_DNS_MS" \
   NETDIAG_MON_TCP_OK="$MON_TCP_OK" \
   NETDIAG_MON_TCP_LINES="$MON_TCP_LINES" \
+  NETDIAG_MON_WEB_OK="$MON_WEB_OK" \
   NETDIAG_MON_PUBLIC_OK="$MON_PUBLIC_OK" \
   NETDIAG_MON_PUB_IP="$MON_PUB_IP" \
   NETDIAG_MON_PUB_ISP="$MON_PUB_ISP" \
@@ -702,6 +812,7 @@ _mon_emit() {
   NETDIAG_MON_CAPTIVE="$MON_CAPTIVE" \
   NETDIAG_MON_RULES="$MON_RULES" \
   NETDIAG_MON_SEVERITY="$MON_SEVERITY" \
+  NETDIAG_MON_MEASUREMENT_STATE="$MON_MEASUREMENT_STATE" \
   NETDIAG_MON_ICMP_FILTERED="$MON_ICMP_FILTERED" \
   NETDIAG_MON_DEGRADED="$MON_DEGRADED" \
   NETDIAG_MON_PAUSED="$MON_PAUSED" \
@@ -811,6 +922,7 @@ monitor_run() {
       if [ "$MON_LINK_UP" -eq 1 ]; then
         _mon_probe_gateway
         _mon_probe_internet
+        _mon_probe_web
       else
         # No link, no valid window: every packet in it predates the drop.
         _mon_loss_reset

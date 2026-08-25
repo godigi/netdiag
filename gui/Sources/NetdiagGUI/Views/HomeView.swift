@@ -106,7 +106,9 @@ struct HomeView: View {
             let cell = SignalScale.cellContent(rssi: resolvedRSSI, scale: coordinator.signalScale.scale)
             HStack(spacing: 10) {
                 Image(systemName: "wifi")
-                    .foregroundStyle(cell.tint)
+                    // RSSI describes the radio leg only; it is not the
+                    // connection verdict, so keep the icon neutral.
+                    .foregroundStyle(.secondary)
                     .frame(width: 18)
                 if let name = coordinator.wifiDisplayName {
                     Text(name).fontWeight(.medium)
@@ -116,7 +118,7 @@ struct HomeView: View {
                 Spacer()
                 Text(cell.value)
                     .fontWeight(.medium)
-                    .foregroundStyle(cell.tint)
+                    .foregroundStyle(.primary)
                 if let unit = cell.unit {
                     Text(unit)
                         .font(.caption)
@@ -246,7 +248,7 @@ struct HomeView: View {
                 }
             } else {
                 Button("Run a check") {
-                    coordinator.runScan(depth: .full, reason: "you asked")
+                    coordinator.runScan(depth: .quick, reason: "you asked")
                 }
                 .keyboardShortcut("r")
             }

@@ -73,11 +73,18 @@ internet_ping_run() {
   # per-packet TTL — see the header comment. with_timeout provides the
   # outer bound instead, generously, so it only ever fires on a genuinely
   # stuck probe rather than truncating a healthy one.
+  #
+  # -W is the *per-reply* wait, which is safe and necessary: without it a
+  # fully black-holed target costs 4 s of sending plus a ~10 s tail wait
+  # before the statistics line appears, leaving one second of margin under
+  # with_timeout 15. Losing that race loses the measurement entirely — the
+  # monitor's tighter wrappers already did, and reported a dead link as
+  # "not measured" rather than 100% loss. See PING_REPLY_WAIT_MS.
   with_timeout 15 ping -c "$LOSS_PROBE_COUNT" -i "$LOSS_PROBE_INTERVAL" \
-    "$INET_TARGET"     >"$tmp_a" 2>/dev/null &
+    -W "$PING_REPLY_WAIT_MS" "$INET_TARGET"     >"$tmp_a" 2>/dev/null &
   local pid_a=$!
   with_timeout 15 ping -c "$LOSS_PROBE_COUNT" -i "$LOSS_PROBE_INTERVAL" \
-    "$INET_TARGET_ALT" >"$tmp_b" 2>/dev/null &
+    -W "$PING_REPLY_WAIT_MS" "$INET_TARGET_ALT" >"$tmp_b" 2>/dev/null &
   local pid_b=$!
   wait "$pid_a" 2>/dev/null || true
   wait "$pid_b" 2>/dev/null || true

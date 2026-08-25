@@ -43,8 +43,8 @@ struct RunReportView: View {
         VStack(spacing: 0) {
             ForEach(rows) { row in
                 HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: row.health.symbol)
-                        .foregroundStyle(row.health.tint)
+                    Image(systemName: row.symbol)
+                        .foregroundStyle(row.symbolTint)
                         .frame(width: 18)
                     HStack(spacing: 4) {
                         Text(row.label)
@@ -95,6 +95,31 @@ struct RunReportView: View {
         /// re-derived so the two columns can never disagree about units.
         /// `nil` alongside a `nil` `metricKey`.
         let medianFormatter: ((Double) -> String)?
+
+        /// Did this run actually produce a number for the row? Derived from
+        /// the rendered value rather than carried separately, so it cannot
+        /// disagree with what the user reads in the next column.
+        var measured: Bool { !value.hasPrefix("not measured") }
+
+        /// A green dot is a claim — "checked, and fine". `health` alone
+        /// cannot make it, because it reports only whether a *rule* fired,
+        /// and no rule fires about a check that never ran. That put a green
+        /// dot beside "Under load: not measured", "Packet size (MTU): not
+        /// measured" and "Clock: not measured" in the same report whose
+        /// headline was a critical, which is the strongest possible way to
+        /// tell a user the app is not paying attention.
+        ///
+        /// Only the all-clear is downgraded. A row that is unmeasured
+        /// *because* something failed — the Internet row under N1, say —
+        /// keeps its warning or critical symbol: there the absence of a
+        /// number is the finding.
+        var symbol: String {
+            (health == .healthy && !measured) ? "minus.circle" : health.symbol
+        }
+
+        var symbolTint: Color {
+            (health == .healthy && !measured) ? .secondary : health.tint
+        }
     }
 
     /// Row → category mapping, derived mechanically from what the legacy
@@ -229,8 +254,17 @@ struct RunReportView: View {
     /// "not measured" rather than a zero. The CLI's schema draws that line
     /// deliberately — treating an unmeasured value as zero is what produced
     /// false diagnoses in earlier versions — and the UI has to hold it too.
+    ///
+    /// Loss is read before the RTT is given up on, because total loss has no
+    /// average RTT *by definition*: every packet that would have contributed
+    /// one was dropped. Checking `value` first printed "not measured" on the
+    /// exact runs where loss was the whole story — a red ✗ beside "not
+    /// measured", directly under a headline quoting "100.0% of the packets".
     private func format(_ value: Double?, _ fmt: String, loss: Double?) -> String {
-        guard let value else { return "not measured" }
+        guard let value else {
+            guard let loss, loss > 0 else { return "not measured" }
+            return String(format: "%.0f%% loss, no reply", loss)
+        }
         var text = String(format: fmt, value)
         if let loss, loss > 0 { text += String(format: " · %.0f%% loss", loss) }
         return text

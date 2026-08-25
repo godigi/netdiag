@@ -40,6 +40,7 @@ reset_state() {
   MON_GW_HIST="" MON_INET_HIST="" MON_INET_HIST_ALT=""
   MON_WIFI_RSSI="" MON_WIFI_SNR=""
   MON_DNS_OK=1 MON_TCP_OK=1 MON_PUBLIC_OK=1 MON_CAPTIVE=0
+  MON_WEB_OK="" MON_MEASUREMENT_STATE="unknown"
   MON_VPN_ACTIVE=0 MON_ICMP_FILTERED=0 MON_DEGRADED=0
   MON_GW_LOSS_STREAK=0 MON_INET_LOSS_STREAK=0
   # scanner side
@@ -103,13 +104,43 @@ scanner_rules() {
   [[ "$m" == *"G3"* ]]
 }
 
-@test "parity: on an ICMP-filtering network both name TCP-1 alongside the loss rule" {
+@test "parity: on an ICMP-filtering network both name TCP-1 and neither names G2" {
+  # Both rules used to fire, which put "reboot your router (unplug it for 30
+  # seconds)" and "the network is up; don't worry about the ping numbers
+  # above" in the same report, and let the critical one own the headline. A
+  # user cannot act on that. TCP reaching 1.1.1.1:443 means packets are
+  # crossing the gateway, so the gateway is forwarding and merely declining
+  # to answer pings itself — TCP-1's own prose still quotes the loss figure,
+  # so no number is lost by dropping the contradiction.
   reset_state; MON_GW_LOSS=100 GW_LOSS=100
   local m; m="$(monitor_rules)"; reset_state
   MON_GW_LOSS=100 GW_LOSS=100
   [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"TCP-1"* ]]
+  [[ "$m" != *"G1"* ]]
+  [[ "$m" != *"G2"* ]]
+  [[ "$m" != *"G3"* ]]
+}
+
+@test "parity: heavy gateway loss with TCP also failing still names G2 on both" {
+  # The other half of the suppression: without a working TCP path there is
+  # no evidence the gateway forwards anything, so the loss is a fault and
+  # must still be called one.
+  reset_state; MON_GW_LOSS=100 GW_LOSS=100 MON_TCP_OK=0 TCP_REACH_ANY_OK=0
+  local m; m="$(monitor_rules)"; reset_state
+  MON_GW_LOSS=100 GW_LOSS=100 MON_TCP_OK=0 TCP_REACH_ANY_OK=0
+  [ "$m" = "$(scanner_rules)" ]
   [[ "$m" == *"G2"* ]]
+  [[ "$m" != *"TCP-1"* ]]
+}
+
+@test "an ICMP-filtering network is not a critical severity" {
+  # The exit-code consequence of the same conflation: every hotel and
+  # corporate network scored a critical, so `netdiag` exited 2 and the
+  # menu-bar card went red on a connection that works.
+  reset_state; MON_GW_LOSS=100
+  _mon_rules
+  [ "$MON_SEVERITY" != "critical" ]
 }
 
 @test "the icmp_filtered flag is set so the alert engine can suppress" {
@@ -430,6 +461,62 @@ ping_summary() {
   [[ "$MON_RULES" != *"D1"* ]]
 }
 
+@test "a fast HTTPS failure is reported even when the slow public probe is stale" {
+  # The old monitor could carry a five-minute-old public success while the
+  # user's web traffic had already stopped. The fast canary is authoritative
+  # once it has produced a result.
+  reset_state; MON_WEB_OK=0 MON_PUBLIC_OK=1
+  _mon_rules
+  [[ "$MON_RULES" == *"P2"* ]]
+  [ "$MON_MEASUREMENT_STATE" = "measured" ]
+}
+
+@test "a current HTTPS success replaces a stale public failure" {
+  reset_state; MON_WEB_OK=1 MON_PUBLIC_OK=0
+  _mon_rules
+  [[ "$MON_RULES" != *"P1"* ]]
+  [[ "$MON_RULES" != *"P2"* ]]
+  [ "$MON_MEASUREMENT_STATE" = "measured" ]
+}
+
+@test "missing fast readings are marked unknown, not healthy" {
+  reset_state; MON_GW_LOSS="" MON_INET_LOSS="" MON_WEB_OK=""
+  MON_GW_RTT="" MON_INET_RTT=""
+  _mon_rules
+  [ "$MON_MEASUREMENT_STATE" = "unknown" ]
+}
+
+@test "a measured 100% loss counts as measured, not as missing data" {
+  # The state that produced the report: every probe failed, so nothing was
+  # measured, so no rule fired, so severity read "ok". Once the probe can
+  # actually report total loss it is evidence — and evidence that fires G2.
+  reset_state; MON_GW_LOSS=100 MON_GW_RTT="" MON_TCP_OK=0
+  _mon_rules
+  [ "$MON_MEASUREMENT_STATE" = "measured" ]
+  [[ "$MON_RULES" == *"G2"* ]]
+}
+
+@test "curl's 000 is not evidence that anything answered" {
+  # curl -w '%{http_code}' prints 000 when the connection never completed.
+  # Reading that as "a canary answered, just not with 204" turned a dead
+  # link into a captive-portal verdict AND satisfied the measured gate, so
+  # the app's own "checking" card could never appear on a real outage.
+  reset_state; MON_GW_LOSS="" MON_INET_LOSS="" MON_GW_RTT="" MON_INET_RTT=""
+  MON_WEB_OK="$(_mon_web_verdict 000 000)"
+  [ -z "$MON_WEB_OK" ]
+  _mon_rules
+  [ "$MON_MEASUREMENT_STATE" = "unknown" ]
+}
+
+@test "a real HTTP response that is not 204 is still a captive-portal signal" {
+  # The branch 000 was wrongly sharing. A redirect or a login page is a
+  # genuine answer and must keep reading as "reachable, but intercepted".
+  [ "$(_mon_web_verdict 302 000)" = "0" ]
+  [ "$(_mon_web_verdict 204 000)" = "1" ]
+  [ "$(_mon_web_verdict 000 204)" = "1" ]
+  [ -z "$(_mon_web_verdict '' '')" ]
+}
+
 @test "an unmeasured gateway loss does not fire a loss rule" {
   reset_state; MON_GW_LOSS=""
   _mon_rules
@@ -546,6 +633,14 @@ assert s['icmp_filtered'] is True
 assert s['degraded'] is True
 assert s['cadence_s'] == 5
 "
+}
+
+@test "monitor_sample: measurement availability rides through to status" {
+  run emit NETDIAG_MON_MEASUREMENT_STATE=unknown
+  printf '%s' "$output" | python3 -c '
+import json,sys
+assert json.load(sys.stdin)["status"]["measurement"] == "unknown"
+'
 }
 
 @test "monitor_sample: TCP targets parse into structured entries" {

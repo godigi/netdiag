@@ -26,7 +26,11 @@ gateway_run() {
   # over that truncated count. See lib/internet_ping.sh for the numbers.
   local ping_out parsed count="$LOSS_PROBE_COUNT"
   [ "$QUICK" -eq 1 ] && count="$THRESH_GATEWAY_QUICK_PING_COUNT"
-  ping_out="$(with_timeout 15 ping -c "$count" -i "$LOSS_PROBE_INTERVAL" "$GATEWAY" 2>&1)"
+  # -W bounds the wait for each reply. macOS ping otherwise sits ~10 s past
+  # the last packet before printing statistics, and that line is the whole
+  # measurement — see PING_REPLY_WAIT_MS.
+  ping_out="$(with_timeout 15 ping -c "$count" -i "$LOSS_PROBE_INTERVAL" \
+    -W "$PING_REPLY_WAIT_MS" "$GATEWAY" 2>&1)"
   printf '%s\n' "$ping_out" >> "$LOG"
   parsed="$(ping_parse_summary "$ping_out")"
   IFS='|' read -r GW_LOSS GW_LATENCY GW_JITTER <<<"$parsed"
