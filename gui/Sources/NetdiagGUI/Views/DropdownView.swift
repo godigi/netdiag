@@ -576,21 +576,35 @@ struct DropdownView: View {
     // MARK: - The one CTA
 
     private var checkButton: some View {
-        Button {
-            // This is the status button, not a throughput benchmark. The
-            // quick profile checks the gateway, DNS, TCP and public HTTPS
-            // path without traceroute, bufferbloat or a speed test, so the
-            // answer arrives while the problem is still happening.
-            coordinator.runScan(depth: .quick, reason: "you asked")
-        } label: {
-            HStack {
-                Image(systemName: "stethoscope")
-                Text("Check My Connection")
+        VStack(spacing: 4) {
+            Button {
+                // This is the status button, not a throughput benchmark. The
+                // quick profile checks the gateway, DNS, TCP and public HTTPS
+                // path without traceroute, bufferbloat or a speed test, so the
+                // answer arrives while the problem is still happening.
+                coordinator.runScan(depth: .quick, reason: "you asked")
+            } label: {
+                HStack {
+                    Image(systemName: "stethoscope")
+                    Text("Check My Connection")
+                }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(.borderedProminent)
+            .disabled(coordinator.isScanning)
+
+            // The throughput benchmark the button above deliberately is
+            // not. Kept visually quieter and stating its cost, because a
+            // menu-bar click that saturates the link for a minute should
+            // never be the one you hit by accident.
+            Button("Full check · \(NetdiagRunner.Depth.full.estimate)") {
+                coordinator.runFullCheck()
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .disabled(coordinator.isScanning)
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(coordinator.isScanning)
     }
 
     // MARK: - System Controls & Footer
