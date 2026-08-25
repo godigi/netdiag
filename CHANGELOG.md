@@ -164,6 +164,24 @@ All notable changes to `netdiag` are recorded here. Format follows
   in every rule the CLI writes, so a reader got the numbers but not the
   fix. Advice now wraps instead of truncating. Also: `(1 samples)` now
   reads `(1 sample)`.
+- **`--summary` listed one recurring fault once per wording.** The CLI
+  interpolates its measurements into diagnosis prose, so the same fault
+  reads differently every time it is seen — "40.0% to 8.8.8.8" and "20.0%
+  to 8.8.8.8" are one problem twice — and `Counter` over the exact
+  sentences listed them separately. The 80-character truncation above had
+  hidden this; wrapping the prose in full made it unmissable, and on this
+  machine one repeated fault filled sixteen lines and pushed the metric
+  table off the screen. So the readability fix had, on its own, made the
+  section less readable. Recurrence is now keyed on the rule id where the
+  record carries one — that is exactly this concept, and it survives a
+  rewording of the prose. Most of the store predates rule ids (2,058
+  records on this machine have none), so the fallback blanks every number
+  out of the sentence: the digits are precisely what differs between two
+  sightings of one fault, and what remains is the fault. The newest
+  phrasing is the one shown, because someone acting on it now wants the
+  latest figures, not the first. On the live store this turned two
+  near-duplicate entries into five distinct faults with honest counts,
+  with the metric table back on screen.
 
 ### Changed
 
