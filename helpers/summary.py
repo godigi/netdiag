@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
 import textwrap
@@ -109,6 +110,23 @@ def fmt_val(v: Any) -> str:
     return str(v)
 
 
+def _recurrence_key(diagnosis: dict) -> str:
+    """What makes two diagnoses "the same problem seen twice".
+
+    The rule id when the record carries one — it is exactly this concept,
+    and it is stable across rewordings of the prose. Most of the store
+    predates rule ids, though (2,058 of the records on this machine have
+    none), so the fallback has to work on the sentence alone: blank every
+    number out of it. The CLI interpolates its measurements into the text,
+    so the digits are precisely the part that differs between two sightings
+    of one fault, and everything else is the fault itself.
+    """
+    rule = diagnosis.get("rule")
+    if isinstance(rule, str) and rule:
+        return f"rule:{rule}"
+    return "text:" + re.sub(r"\d+(?:\.\d+)?", "#", diagnosis.get("summary", ""))
+
+
 def plural(n: int, noun: str) -> str:
     """'1 sample' / '2 samples'. The GUI's Trends counts were corrected
     for exactly this in 3e5ca0b; the CLI's were missed."""
@@ -180,14 +198,34 @@ def report_network(label: str, records: list[dict]) -> None:
     incidents = [r for r in records if r.get("diagnosis")]
     print(f"  incidents (any diagnosis):  {len(incidents)} / {len(records)} runs")
     if incidents:
-        # Top recurring diagnosis summaries, wrapped rather than cut. The
-        # CLI writes the fix into the back half of each sentence — "…the
-        # box that…", advice following — so an 80-character truncation
-        # reliably threw away the only actionable part.
-        from collections import Counter
-        all_summaries = [d.get("summary", "") for r in incidents for d in r.get("diagnosis", [])]
-        for summary, n in Counter(all_summaries).most_common(5):
-            lines = textwrap.wrap(summary, width=DIAGNOSIS_WRAP_COLS) or [""]
+        # Top recurring diagnoses, wrapped rather than cut. The CLI writes
+        # the fix into the back half of each sentence — "…the box that…",
+        # advice following — so an 80-character truncation reliably threw
+        # away the only actionable part.
+        #
+        # Grouped on `_recurrence_key`, not on the sentence itself. The CLI
+        # interpolates measurements into its prose, so one recurring problem
+        # produces a different string every time it is seen: "40.0% to
+        # 8.8.8.8" and "20.0% to 8.8.8.8" are the same fault twice. Counting
+        # exact strings listed them separately, which the old truncation hid
+        # and full wrapping made unmissable — one problem filling sixteen
+        # lines and pushing the metrics off the screen.
+        counts: dict[str, int] = {}
+        newest: dict[str, str] = {}
+        for r in incidents:
+            for d in r.get("diagnosis") or []:
+                summary = d.get("summary", "")
+                if not summary:
+                    continue
+                key = _recurrence_key(d)
+                counts[key] = counts.get(key, 0) + 1
+                # The most recent phrasing wins: `records` is in
+                # chronological order, so the figures quoted are the ones
+                # from the latest time this fault was seen rather than the
+                # first, which is what someone acting on it now wants.
+                newest[key] = summary
+        for key, n in sorted(counts.items(), key=lambda kv: -kv[1])[:5]:
+            lines = textwrap.wrap(newest[key], width=DIAGNOSIS_WRAP_COLS) or [""]
             print(f"     × {n:3d}  {lines[0]}")
             for continuation in lines[1:]:
                 print(f"            {continuation}")

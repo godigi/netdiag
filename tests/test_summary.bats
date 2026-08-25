@@ -250,3 +250,62 @@ summarise_judged() {
   run "$REPO/bin/netdiag" --summary=1
   [ "$status" -eq 0 ]
 }
+
+@test "one recurring fault is counted once, not once per wording" {
+  # The CLI interpolates its measurements into diagnosis prose, so the
+  # same fault produces a different string every time it is seen. Counting
+  # exact strings listed them separately — which the old 80-char
+  # truncation hid and full wrapping made unmissable, one problem filling
+  # sixteen lines and pushing the metrics off screen.
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","summary":"Losing traffic to the internet (40.0% to 8.8.8.8) though the router is clean."}]'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","summary":"Losing traffic to the internet (20.0% to 8.8.8.8) though the router is clean."}]'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  local hits
+  hits="$(printf '%s\n' "$output" | grep -c 'Losing traffic to the internet')"
+  [ "$hits" = "1" ] || {
+    echo "expected one grouped entry, got $hits:"; echo "$output"; return 1
+  }
+  # And it must say it happened twice.
+  [[ "$output" == *"2  Losing traffic"* ]] || { echo "$output"; return 1; }
+}
+
+@test "the newest wording is the one shown" {
+  # Chronological order: the figures quoted should be from the latest
+  # sighting, which is what someone acting on it now wants.
+  rec "2020-01-01T00:00:00Z" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","summary":"Losing traffic (11.0% to 8.8.8.8) though the router is clean."}]'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","summary":"Losing traffic (99.0% to 8.8.8.8) though the router is clean."}]'
+  run summarise_judged 999999
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"99.0%"* ]] || { echo "did not show the newest figures"; echo "$output"; return 1; }
+  [[ "$output" != *"11.0%"* ]] || { echo "showed a stale wording too"; echo "$output"; return 1; }
+}
+
+@test "two genuinely different faults stay separate" {
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","summary":"Your WiFi channel is crowded."}]'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","summary":"Your clock is drifting."}]'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WiFi channel is crowded"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"clock is drifting"* ]] || { echo "$output"; return 1; }
+}
+
+@test "a rule id groups two differently-worded sightings of one rule" {
+  # When the record carries a rule id it is exactly this concept, and it
+  # survives a rewording of the prose that the number-blanking fallback
+  # would miss.
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","rule":"L2","summary":"Old wording for this fault."}]'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" \
+    '"diagnosis":[{"severity":"warn","rule":"L2","summary":"Completely rewritten wording."}]'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2  Completely rewritten wording."* ]] || { echo "$output"; return 1; }
+  [[ "$output" != *"Old wording"* ]] || { echo "$output"; return 1; }
+}
