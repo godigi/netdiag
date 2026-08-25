@@ -192,6 +192,13 @@ HISTORY_LIMIT=0
 # whether their network is behaving.
 SHOW=0
 SHOW_ID=""
+# --share renders one stored run — or one fed in on stdin — as plain
+# text with identifying values masked, for pasting into a support chat.
+# Distinct from --redact, which masks a run as it happens: the store
+# deliberately keeps full detail (see lib/output.sh's REDACT save/restore),
+# so sharing a *past* run has to redact at read time.
+SHARE=0
+SHARE_ID=""
 # --monitor: the machine-readable sibling of --watch. Streams one compact
 # JSON object per line until stopped. Three cadence tiers, each overridable
 # so the GUI's Settings sliders have something to drive.
@@ -275,6 +282,8 @@ while [ "$#" -gt 0 ]; do
     --history=*)      HISTORY=1; HISTORY_LIMIT="${1#--history=}" ;;
     --show)           SHOW=1; _take_show=1 ;;
     --show=*)         SHOW=1; SHOW_ID="${1#--show=}" ;;
+    --share)          SHARE=1 ;;
+    --share=*)        SHARE=1; SHARE_ID="${1#--share=}" ;;
     --monitor)        MONITOR=1 ;;
     --monitor-fast-interval)      _take_monitor=FAST ;;
     --monitor-fast-interval=*)    MONITOR_FAST_INTERVAL="${1#*=}" ;;
@@ -355,7 +364,7 @@ monitoring at the end.
 Usage: netdiag [TARGET] [--quick] [--gping] [--no-bufferbloat] [--speed]
                [--json] [--quiet] [--expert] [--progress] [--log PATH]
                [--mtu-only | --wifi-only | --speed-only | --dns-only |
-                --bufferbloat-only | --ping-only]
+                --bufferbloat-only | --ping-only] [--share[=ID]]
 
 Positional:
   TARGET            hostname/IP to add to ping, DNS, TCP reach, and a second
@@ -380,6 +389,11 @@ Common:
                     compact output (--expert is ignored).
 
 Sharing and output:
+  --share[=ID|-]    print one run as plain text, no colours, identifying
+                    values masked — the paste-ready form of a report.
+                    Bare: the most recent stored run. =ID: that stored run
+                    (ids come from --history). =-: read one run's JSON on
+                    stdin.
   --json            emit one JSON object on stdout; no human-readable output
                     unless --log PATH is also passed
   --quiet           print only the diagnoses; suppress the Report card too
@@ -629,6 +643,68 @@ if [ "$SHOW" -eq 1 ]; then
   python3 "$HELPERS_DIR/history.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --show "$SHOW_ID" || exit 3
+  exit 0
+fi
+if [ "$SHARE" -eq 1 ]; then
+  # stdin: the app's path. It already holds the run's JSON and needs no
+  # store lookup, so a run that finished two seconds ago shares exactly
+  # like one from last week.
+  if [ "$SHARE_ID" = "-" ]; then
+    python3 "$HELPERS_DIR/share.py" || exit 3
+    exit 0
+  fi
+  # Sourced before the id lookup, not after: history.py refuses to start
+  # without THRESH_COMPARE_*, including for a plain --history listing,
+  # because every network row carries metric_stats.
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL NETDIAG_VERSION
+  _share_id="$SHARE_ID"
+  if [ -z "$_share_id" ]; then
+    # Bare --share: the newest run in the store. --history's `runs` is a
+    # flat top-level array, each row keyed `id` and `ts` — not nested
+    # under networks[], and not run_id/timestamp.
+    _share_id="$(python3 "$HELPERS_DIR/history.py" \
+        --history "$LOG_DIR/baseline.jsonl" 2>/dev/null \
+      | python3 -c 'import json, sys
+try:
+    runs = json.load(sys.stdin).get("runs") or []
+except Exception:
+    runs = []
+runs.sort(key=lambda r: r.get("ts") or "")
+print(runs[-1].get("id", "") if runs else "")' 2>/dev/null)"
+    if [ -z "$_share_id" ]; then
+      printf 'netdiag: no stored run to share yet — run a check first\n' >&2
+      exit 3
+    fi
+  fi
+  # --show returns {schema, version, id, run, context, comparison}; `run`
+  # is the complete record as it was written.
+  #
+  # This is a 3-stage pipeline, and bin/netdiag does not set `pipefail`
+  # (deliberately — see the header comment on the EXIT trap): in
+  # `a | b | c`, `$?` is `c`'s status alone, so a mid-pipeline failure
+  # (a bogus id makes history.py's --show exit 3 with nothing on stdout)
+  # can be masked if a later stage happens to exit 0 anyway. Scoping
+  # `set -o pipefail` to a subshell around just this pipeline makes the
+  # subshell's own exit status the *worst* of the three, without changing
+  # pipefail behavior anywhere else in the script.
+  if ! (
+    set -o pipefail
+    python3 "$HELPERS_DIR/history.py" \
+        --history "$LOG_DIR/baseline.jsonl" \
+        --show "$_share_id" 2>/dev/null \
+      | python3 -c 'import json, sys
+doc = json.load(sys.stdin)
+json.dump(doc["run"], sys.stdout)' 2>/dev/null \
+      | python3 "$HELPERS_DIR/share.py" 2>/dev/null
+  ); then
+    # share.py's own "not valid JSON" message would otherwise also print
+    # here, on empty input cascading down from the failed lookup above —
+    # true, but confusing next to the reason actually printed below.
+    printf 'netdiag: no stored run to share (id: %s)\n' "$_share_id" >&2
+    exit 3
+  fi
   exit 0
 fi
 if [ "$WATCH" -eq 1 ]; then

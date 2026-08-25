@@ -37,6 +37,7 @@ netdiag [TARGET] [--quick] [--quiet] [--json] [--expert] [--redact]
         [--progress]
         [--baseline] [--no-baseline] [--log PATH] [-h|--help]
 netdiag --watch[=SEC] | --summary[=HOURS] | --history[=N] | --show=ID
+        | --share[=ID|-]
 netdiag --version | --capabilities | --rules-catalog
 netdiag --monitor [--monitor-fast-interval SEC] [--monitor-degraded-interval SEC]
                   [--monitor-medium-interval SEC] [--monitor-slow-interval SEC]
@@ -54,6 +55,15 @@ each metric against every other run on the same network. The judging is why
 below — it decides whether a number is good, so its cutoffs live in
 `lib/thresholds.sh` like every other cutoff, reaching Python through the
 environment.
+
+`--share` is the pasteable form of a report: one run as plain text, no
+colours, identifying values masked. It exists rather than being a flag on
+`--redact` because `lib/output.sh` deliberately stores every run
+*unredacted* and `helpers/history.py` drops `--redact` runs from the store
+entirely — so there is no redacted stored copy to read, and sharing a past
+run has to redact at read time. `--share=-` reads one run's JSON on stdin,
+which is how netdiag.app shares the report already on screen without
+re-running anything.
 
 `--monitor` is the machine-readable sibling of `--watch`, not a duplicate
 of it: `--watch` re-runs `--quick` and prints prose for a person, while
