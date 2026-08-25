@@ -34,7 +34,9 @@ object read from stdin or a file.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
+import re
 import sys
 import textwrap
 
@@ -75,6 +77,31 @@ def get_nested(d, path: str):
     return cur
 
 
+# Strings that occupy an identity field without being an identity. Taken
+# from helpers/history.py's own PLACEHOLDERS, plus the label netid.sh
+# writes when macOS withholds the SSID. Masking one of these would turn a
+# generic word into a secret and blank it wherever it appeared.
+_LABEL_PLACEHOLDERS = frozenset({
+    "<redacted>", "[redacted]", "unknown", "unknown network", "",
+    "WiFi (SSID hidden by macOS)",
+})
+
+
+def _ssid_from_network_id(record: dict) -> str | None:
+    """The `ssid=` component of `network.id`, if it carries one.
+
+    `network.id` is a readable composite like
+    `wifi:ssid=Home,mac=aa:bb:...`. The SSID inside it is the same secret
+    as `wifi.ssid` — and on a run where `wifi.ssid` went missing but the
+    id was written earlier, it is the *only* copy the record still holds.
+    """
+    nid = get_nested(record, "network.id")
+    if not isinstance(nid, str) or "ssid=" not in nid:
+        return None
+    ssid = nid.split("ssid=", 1)[1].split(",", 1)[0]
+    return ssid or None
+
+
 def secrets_in(record: dict) -> list[str]:
     """The identifying substrings to scrub out of `record`, longest first.
 
@@ -87,12 +114,31 @@ def secrets_in(record: dict) -> list[str]:
     Values shorter than 3 characters are dropped rather than scrubbed —
     replacing a 1- or 2-character string would corrupt unrelated text
     (English prose is full of 2-letter words) rather than protect anything.
+
+    Beyond `_REDACT_PATHS`, two further sources, because read-time
+    redaction can only mask what the record actually carries and the
+    network's name is written in more than one place: `network.label`
+    (which *is* the SSID when one is known) and the `ssid=` component of
+    `network.id`. A run whose `wifi.ssid` came back null or `<redacted>`
+    can still carry the real name in either of those, and the CLI
+    interpolates the name into diagnosis prose — so without these, a
+    record could name the network in a sentence with nothing in
+    `wifi.ssid` to scrub it by.
     """
     found: set[str] = set()
     for path in _REDACT_PATHS:
         v = get_nested(record, path)
         if isinstance(v, str) and len(v) >= 3:
             found.add(v)
+
+    label = get_nested(record, "network.label")
+    if isinstance(label, str) and label not in _LABEL_PLACEHOLDERS and len(label) >= 3:
+        found.add(label)
+
+    ssid = _ssid_from_network_id(record)
+    if ssid and ssid not in _LABEL_PLACEHOLDERS and len(ssid) >= 3:
+        found.add(ssid)
+
     return sorted(found, key=len, reverse=True)
 
 
@@ -117,6 +163,75 @@ def scrub(node, secrets: list[str]):
 
 def redact(record: dict) -> dict:
     return scrub(record, secrets_in(record))
+
+
+# The addresses netdiag deliberately probes. They are targets, not
+# identity — every netdiag run on earth contacts them, so masking them
+# would delete the reader's only clue about which leg was measured while
+# protecting nobody. Sourced from lib/globals.sh's INET_TARGET and
+# INET_TARGET_ALT.
+_PROBE_TARGETS = frozenset({"1.1.1.1", "8.8.8.8"})
+
+# The address blocks worth keeping, named explicitly rather than derived
+# from `ipaddress`'s own predicates — because this has to fail *closed*.
+#
+# The obvious rule, "mask it unless `is_global`", fails open on a range
+# nobody thinks about: Python reports 203.0.113.0/24 (TEST-NET-3) as
+# `is_private=True`, so a documentation address sails straight through,
+# and so do several reserved blocks. A redactor that keeps anything it
+# does not recognise is the wrong shape. This list is what is *safe and
+# useful* to show; everything else goes.
+#
+# Each block earns its place: RFC1918 and CGNAT because they identify
+# nobody and the router/double-NAT rows are built on them, loopback and
+# link-local because they are the machine talking to itself.
+_KEEP_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",  # RFC1918
+    "100.64.0.0/10",                                   # CGNAT — double-NAT rows need it
+    "127.0.0.0/8", "169.254.0.0/16",                   # loopback, link-local
+    "::1/128", "fe80::/10", "fc00::/7",                # IPv6 equivalents
+))
+
+_IP_RE = re.compile(
+    r"\b\d{1,3}(?:\.\d{1,3}){3}\b"          # IPv4
+    r"|\b(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b"  # IPv6-ish
+)
+
+
+def sweep_public_addresses(text: str) -> str:
+    """Mask any globally-routable address still standing in the output.
+
+    Defence in depth, deliberately after the field-sourced scrub rather
+    than instead of it. The scrub can only mask values the record happens
+    to store in a path this file knows about, and the record stores the
+    public IP in more than one place — `wan.load_balancing.distinct_ips`
+    carries its own copy, and traceroute hops carry the ISP's segment.
+    Today those are caught only because `public.ip` holds an identical
+    string; a record where it did not would leak, and the renderer
+    growing one new row is all it would take.
+
+    Keeps only what `_KEEP_NETWORKS` names plus the probe targets, and
+    masks everything else — see that list for why the rule is an
+    allow-list rather than `if addr.is_global`.
+    """
+    def mask(match: re.Match) -> str:
+        raw = match.group(0)
+        if raw in _PROBE_TARGETS:
+            return raw
+        try:
+            addr = ipaddress.ip_address(raw)
+        except ValueError:
+            # Not an address after all — a version string, a duration, a
+            # colon-separated fragment caught by a deliberately loose
+            # regex. Leave it exactly as it was; `ip_address` is what
+            # decides, not the pattern.
+            return raw
+        if any(addr in net for net in _KEEP_NETWORKS
+               if net.version == addr.version):
+            return raw
+        return REDACTED
+
+    return _IP_RE.sub(mask, text)
 
 
 _NOT_MEASURED = "not measured"
@@ -318,7 +433,10 @@ def main() -> None:
               file=sys.stderr)
         sys.exit(1)
 
-    print(render(redact(record)))
+    # Two passes, deliberately: the field-sourced scrub first, then a
+    # sweep for any globally-routable address it could not have known
+    # about. See sweep_public_addresses for why belt and braces.
+    print(sweep_public_addresses(render(redact(record))))
 
 
 if __name__ == "__main__":

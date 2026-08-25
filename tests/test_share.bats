@@ -171,3 +171,82 @@ share() { python3 "$REPO/helpers/share.py" < "$RUN"; }
   [ "$status" -eq 3 ]
   [ -n "$output" ] || { echo "empty output on a bogus id"; return 1; }
 }
+
+@test "a network name in prose is masked even when wifi.ssid is empty" {
+  # Read-time redaction can only mask values the record carries. The name
+  # lives in more than one place — network.label and the ssid= component
+  # of network.id — and a run whose wifi.ssid came back null can still
+  # carry the real name in either, with the CLI having interpolated it
+  # into the prose.
+  cat > "$RUN" <<'JSON'
+{"timestamp":"2026-08-25T12:00:00Z",
+ "wifi":{"ssid":null,"bssid":null},
+ "network":{"id":"wifi:ssid=SecretHouse,mac=aa:bb:cc:dd:ee:ff","label":"SecretHouse"},
+ "diagnosis":[{"severity":"warn","summary":"Channel crowded on SecretHouse."}]}
+JSON
+  run share
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"SecretHouse"* ]] || { echo "leaked the network name:"; echo "$output"; return 1; }
+}
+
+@test "the hidden-SSID placeholder is not treated as a secret" {
+  # netid.sh writes this label when macOS withholds the name. Masking it
+  # would turn a generic phrase into a secret and blank it everywhere.
+  cat > "$RUN" <<'JSON'
+{"timestamp":"2026-08-25T12:00:00Z",
+ "network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff","label":"WiFi (SSID hidden by macOS)"},
+ "diagnosis":[]}
+JSON
+  run share
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"[redacted] ([redacted]"* ]] || { echo "placeholder was scrubbed:"; echo "$output"; return 1; }
+}
+
+@test "a public address the path list never knew about is still masked" {
+  # Defence in depth. wan.load_balancing.distinct_ips carries its own copy
+  # of the public IP, and traceroute hops carry the ISP's segment. Today
+  # those are caught only because public.ip holds an identical string; a
+  # record where it does not must not leak.
+  cat > "$RUN" <<'JSON'
+{"timestamp":"2026-08-25T12:00:00Z",
+ "gateway":{"ip":"192.168.1.1","rtt_avg_ms":5.0},
+ "diagnosis":[{"severity":"warn","summary":"Upstream hop 203.0.113.99 is slow."}]}
+JSON
+  run share
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"203.0.113.99"* ]] || { echo "public address survived:"; echo "$output"; return 1; }
+}
+
+@test "the sweep keeps RFC1918 and the probe targets" {
+  # An RFC1918 gateway identifies nobody and blanking it would gut the
+  # router rows; 1.1.1.1/8.8.8.8 are what netdiag probes, so masking them
+  # deletes the reader's only clue about which leg was measured.
+  cat > "$RUN" <<'JSON'
+{"timestamp":"2026-08-25T12:00:00Z",
+ "gateway":{"ip":"192.168.1.1","rtt_avg_ms":5.0},
+ "diagnosis":[{"severity":"warn","summary":"Losing 40.0% to 8.8.8.8 but 0.0% to 1.1.1.1; router 10.0.0.1 clean."}]}
+JSON
+  run share
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"8.8.8.8"* ]]  || { echo "probe target masked"; echo "$output"; return 1; }
+  [[ "$output" == *"1.1.1.1"* ]]  || { echo "probe target masked"; echo "$output"; return 1; }
+  [[ "$output" == *"10.0.0.1"* ]] || { echo "RFC1918 masked"; echo "$output"; return 1; }
+}
+
+@test "the sweep does not mangle version strings or times" {
+  # The IP regex is deliberately loose; ipaddress.ip_address is what
+  # decides. A version like 0.10.0 or a time must survive untouched.
+  cat > "$RUN" <<'JSON'
+{"timestamp":"2026-08-25T12:00:00Z","version":"0.10.0",
+ "ntp":{"drift_seconds":0.12},
+ "gateway":{"rtt_avg_ms":26.417},
+ "diagnosis":[]}
+JSON
+  run share
+  [ "$status" -eq 0 ]
+  # The renderer does not print the version, so assert on the numbers it
+  # does print: a dotted measurement is exactly the shape the loose IPv4
+  # pattern could swallow.
+  [[ "$output" == *"26.417"* ]] || { echo "a measurement was mangled"; echo "$output"; return 1; }
+  [[ "$output" == *"0.12"* ]]   || { echo "the clock drift was mangled"; echo "$output"; return 1; }
+}
