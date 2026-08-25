@@ -6,6 +6,72 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`Depth.full` — the app's "run every check" depth — had zero call
+  sites.** Grepping `gui/` for it found only its own two `case` arms in
+  `NetdiagRunner.swift`; every scan the app could actually launch used
+  `.quick` or the alert profile, and both skip the speed test
+  (`lib/speedtest.sh:57`), bufferbloat (`lib/bufferbloat.sh:20`) **and**
+  the MTU probe (`lib/mtu.sh:13` — a gap `--help` itself never disclosed
+  until this branch's `--help` rewrite, below). Consequence: the Report
+  card's "Under load", "Packet size (MTU)" and "Speed" rows read "not
+  measured" on every check the app ever ran, rules B1/B2/M1/BL-1 could
+  never fire, four Trends charts had no data to plot, and the dropdown's
+  throughput cells carried a fallback chain for data the app never
+  generated. `Depth.full` now has exactly two callers, both event-driven
+  and **never scheduled**: an explicit "Full check" action on Home and in
+  the dropdown, and the first join to a network, bounded once per network
+  by the existing `seenNetworks` guard. A daily background full check was
+  proposed and rejected — a daily speed test spends ~50–100 MB and
+  saturates the link for ~60 s to fill a chart nobody asked for; monitoring
+  is the always-on cheap thing, a full check is for a diagnosis moment.
+  Guarded by a new `FullCheckPolicy` (`gui/.../Support/FullCheckPolicy.swift`),
+  an allow-list over `ok`/`info`/`warn` so an empty or unrecognised
+  severity declines too; a decline runs the lighter `.alertTriggered`
+  depth instead of nothing. Also dropped the watcher plist's redundant
+  `--no-bufferbloat` (`--quick` already skips it) and rewrote the Trends
+  empty-state hints to name the new button rather than instruct opening a
+  terminal. **Verified on this machine 2026-08-25:** the exact arguments
+  `Depth.full` passes (`--json --no-gping`) produced `run_mode: full`,
+  bufferbloat grade A (-5.6 ms), MTU 1500, and 15.7 Mbps down / 13.7 Mbps
+  up — the three previously-blank rows, filled.
+- **`netdiag --share[=ID|-]` prints one stored run as a pasteable,
+  redacted report, and the app's "Copy report" button now uses it.** The
+  app's only copy affordance, `ExpertPanel`'s `Button("Copy")`, copied a
+  run's raw JSON **unredacted**: public IPv4 and IPv6 addresses, SSID,
+  BSSID, gateway MAC and city all rode along, and `RunSnapshot.swift:502`
+  had documented a "Copy shareable report" feature in a doc comment that
+  did not exist. `--redact` could not be reused against a past run:
+  `lib/output.sh:160-163` deliberately saves `REDACT`, forces it to `0`
+  while building the record appended to history, then restores it — every
+  stored run holds full detail regardless of how it was invoked — and
+  `helpers/history.py:355` drops `--redact` runs from the store entirely,
+  because a masked record's `network.id` is the literal
+  `wifi:mac=[redacted]`, shared with every other redacted run on every
+  other network. New `helpers/share.py` redacts at read time instead,
+  mirroring `emit_json.py`'s `_REDACT_ENV` substring scrub field for
+  field, with its exclusions intact: ISP and ASN kept (they name a
+  provider, which is what makes the report worth reading), country kept
+  (two letters can't be substring-replaced safely), RFC1918 addresses kept
+  (identify nobody, and blanking them would gut the router rows).
+  `--share` (bare) takes the newest stored run, `=ID` a specific one
+  (ids come from `--history`), `=-` reads a run's JSON on stdin. An empty
+  store exits 3, not 2 — 2 is reserved for a real diagnosis. Fixed a
+  `pipefail` bug found while wiring the `--show` → `share.py` pipeline:
+  without it, a bogus id fell through to a nonzero exit only by accident,
+  and leaked the helper's own stderr alongside netdiag's own error
+  message. The app's "Copy report" button now pipes the run's own bytes
+  through `--share=-`, so the redaction and every word of the pasted text
+  are the CLI's; `ExpertPanel`'s original button is relabelled "Copy raw
+  JSON (unredacted)". `NetdiagRunner.execute` gained an optional stdin,
+  written off-thread after the child starts — a report larger than the
+  64 KB pipe buffer would otherwise deadlock against our own unread
+  stdout. **Verified independently against a real stored record:** the
+  run's public IP, city, local IP and gateway MAC are all present in the
+  stored record and none reach the shared text; the ISP name survives;
+  no ANSI.
+
 ### Fixed
 
 - **The monitor could not measure an outage, so an outage looked healthy.**
@@ -54,6 +120,50 @@ All notable changes to `netdiag` are recorded here. Format follows
   They now read "100% loss, no reply", and the dropdown's Internet cell
   shows "no reply" in red rather than a neutral em dash. The dropdown's Loss
   cell no longer tints green unless loss is actually zero.
+- **The full-check button asserted a verdict Swift has no business
+  authoring, and undersold its own runtime.** Its tooltip claimed the
+  connection was failing *at that instant* — a verdict authored in Swift,
+  which `CLAUDE.md` reserves for the CLI — and it was false whenever
+  `FullCheckPolicy` declined for want of a sample rather than for a
+  critical reading. Separately, the button read "Full check · about a
+  minute" while running, but a decline actually runs the lighter
+  `.alertTriggered` depth (~30 s), a fact disclosed only in a hover
+  tooltip nobody had reason to open mid-run. Label and tooltip are now
+  state-aware and read straight from `FullCheckPolicy`, so Home and the
+  dropdown cannot drift apart from each other or from what actually runs;
+  the app's `--verify` harness now asserts the unsafe copy never claims a
+  failure again.
+- **`--summary` ignored network identity, blending every network it had
+  ever seen into one distribution.** Every other surface in this tool is
+  scoped per-network; `--summary` averaged, say, home and a café together
+  into a distribution describing neither. It now emits one block per
+  network, grouped by `helpers/history.py`'s own `group_key` — the same
+  function `--history`/`--show` already use, so the two views can never
+  disagree — and excludes `--redact` runs from the store for the same
+  reason `history.py` already does.
+- **`--summary` invented a disconnect count.** `wifi_disconnects.count`
+  covers a rolling 1-hour window (`WIFI_DISCONNECT_WINDOW_HOURS=1`,
+  `lib/globals.sh:42`) recomputed fresh on every run; summing that count
+  across a 24-hour window counted the same overlapping disconnects once
+  per run that observed them, and reported **173 disconnects** on this
+  machine for a window that did not see 173 disconnects. `--summary` now
+  reports the single busiest window instead of a sum, and says "no data"
+  rather than a bare `0` when nothing was recorded.
+- **`--summary` printed figures with no judgement attached** — the only
+  user-facing surface in this tool that showed numbers without saying
+  whether they were good. Each metric line now carries a `✓`/`⚠`/`×` glyph
+  judged against `lib/thresholds.sh`, making `helpers/summary.py` a
+  **fourth** file bound by the thresholds rule (`lib/diagnosis.sh`,
+  `lib/monitor.sh`, `helpers/history.py` were already the other three) —
+  the helper now refuses to start without the cutoffs rather than
+  carrying a Python-side default. The glyph judges the **median**; a worse
+  max is named on the same line rather than promoted to the glyph, so one
+  bad minute in a month does not read as a broken network. An unmeasured
+  metric takes no glyph, matching the Report card's grey `minus.circle`.
+- **`--summary` truncated its own advice at 80 characters** — mid-sentence
+  in every rule the CLI writes, so a reader got the numbers but not the
+  fix. Advice now wraps instead of truncating. Also: `(1 samples)` now
+  reads `(1 sample)`.
 
 ### Changed
 
@@ -80,6 +190,21 @@ All notable changes to `netdiag` are recorded here. Format follows
   under a green all-clear, naming an alert that was already listed, with its
   own timestamp, in the activity list directly below. The stage card now
   states the present condition and the activity list holds the history.
+- **`--help` was one 110-line wall.** Reorganized into five sections —
+  Common / Sharing and output / Just one check / Modes / Advanced — with
+  the everyday flags first instead of alphabetical-by-accident order.
+  Kept as one `--help` rather than split into a `--help`/`--help-all`
+  pair: seven test files assert flags appear in `--help`, two of them
+  enforcing that it documents every flag in `CLAUDE.md`'s CLI surface and
+  that every advertised capability maps to a real one — a split would
+  relocate that contract rather than honour it. `--quick`'s description
+  now admits it also skips the MTU probe, which it always did but `--help`
+  never said; `--redact`'s notes that the ISP name is deliberately kept.
+- **Test position: 502 tests before this branch, 524 after** — 22 added
+  across the `--summary` fixes, `--share`, and the `FullCheckPolicy`
+  follow-up, and still exactly one failure: the pre-existing
+  `tests/test_history.bats:116` (tracker NET.2), which fails on `main` and
+  is not fixed here.
 
 ## [0.10.0] - 2026-08-20
 

@@ -785,6 +785,77 @@ wrapper can keep telling a mistyped id apart from a broken network.
 
 ---
 
+# `netdiag --share[=ID|-]` schema
+
+`netdiag --share` is the **one mode in this document that emits plain
+text, not JSON** — a pasteable report, not a machine-readable object.
+
+It exists because there is no redacted copy sitting in the store to read
+back. `lib/output.sh:160-163` saves `REDACT`, forces it to `0` while
+building the record appended to history, then restores it, so every
+stored run holds full detail regardless of the flags it was invoked
+with — and `helpers/history.py:355` drops any record that *was* written
+under `--redact` from the store entirely, because a masked record's
+`network.id` is the literal string `wifi:mac=[redacted]`, shared with
+every other redacted run on every other network. So redacting a *past*
+run has to happen at read time, against whatever JSON `--show` would
+return for it. `helpers/share.py` does exactly that.
+
+Three input forms:
+
+| form | source |
+|---|---|
+| `--share` (bare) | the newest run in the store |
+| `--share=ID` | that stored run — ids come from `--history` |
+| `--share=-` | one run's JSON read from stdin, no store lookup — the app's own in-memory result shares identically to a run from last week |
+
+The output is never colored, so it pastes cleanly into a support chat, a
+forum post, or an email.
+
+## Masked vs. kept
+
+`helpers/share.py` mirrors `helpers/emit_json.py`'s `_REDACT_ENV` field
+for field (`helpers/emit_json.py:275-276`), substring-scrubbing the same
+values out of the record itself rather than the environment — there is
+no live run here to source `NETDIAG_*` vars from, only a JSON object read
+from stdin or the store.
+
+| field | masked? | why |
+|---|---|---|
+| `public.ip` | masked | identifies the household |
+| `public.city` | masked | identifies the household |
+| `interface.ip` | masked | identifies the household |
+| `interface.gateway_mac` | masked | identifies the router |
+| `wifi.ssid` | masked | identifies the household |
+| `wifi.bssid` | masked | identifies the router |
+| `ipv6.global_addr` | masked | identifies the household |
+| `ipv6.gateway` | masked | EUI-64-derived from the router's MAC, so leaving it in republishes `interface.gateway_mac` sitting right next to it |
+| `public.isp` | kept, deliberately | names a provider, not a person — needed to reason about the fault |
+| `public.asn` | kept, deliberately | same reason as `isp` |
+| `public.country` / `public.country_iso` | kept, deliberately | two characters is too short to substring-replace safely without corrupting unrelated text |
+| RFC1918 addresses (e.g. `gateway.ip`) | kept, deliberately | identify nobody, and blanking them would gut the router/NAT rows |
+| `network.id` / `network.label` | kept, deliberately | composites of values already masked above (`wifi:ssid=[redacted],mac=[redacted]`) — the parts that identify anything are already gone |
+
+Longest-secret-first ordering and a 3-character minimum are part of the
+algorithm, not incidental: a longer secret is masked before a shorter one
+that happens to sit inside it (an SSID containing a street number that
+also appears alone elsewhere), or the shorter replacement would run first
+and leave a fragment of the longer secret exposed; a 1–2 character
+replacement would corrupt ordinary prose (English is full of 2-letter
+words) rather than protect anything.
+
+## Errors
+
+| case | behaviour |
+|---|---|
+| empty store, bare `--share` | exit `3` — "no stored run to share yet — run a check first" |
+| `--share=ID` naming a run not in the store | exit `3` — "no stored run to share (id: ID)" |
+| `--share=-` given input that is not valid JSON | exit `3` |
+
+Exit `2` is never used here either: it is reserved for a real diagnosis.
+
+---
+
 # `netdiag --version`
 
 Prints `netdiag <VERSION>` to stdout and exits 0. No log file, no

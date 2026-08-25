@@ -111,6 +111,7 @@ netdiag --monitor                # streaming JSONL, one sample per line
 netdiag --summary[=HOURS]        # aggregate ~/net-diag/baseline.jsonl
 netdiag --history[=N]            # whole run store as network-grouped JSON
 netdiag --show=ID                # one stored run, judged against its network
+netdiag --share[=ID|-]           # one run as a pasteable, redacted report
 netdiag --install-watcher        # launchd plist, every 15 min, background
 netdiag --uninstall-watcher
 netdiag --version                # print the version and exit
@@ -151,6 +152,9 @@ netdiag --rules-catalog          # JSON catalog: every rule ID, title, blurb
 | `--history[=N]`      | emit the whole run store as one grouped JSON object    |
 | `--show=ID`          | one stored run in full, plus how each of its metrics   |
 |                      | compares to every other run on the same network        |
+| `--share[=ID\|-]`     | one run as plain text, no colours, identifying values  |
+|                      | masked — the paste-ready form of a report. Bare: the   |
+|                      | newest stored run. `=-`: read a run's JSON on stdin.   |
 | `--version`          | print `netdiag VERSION` and exit                       |
 | `--capabilities`     | one JSON object describing this install: per-mode      |
 |                      | schema numbers, a feature list, and which optional     |
@@ -174,6 +178,7 @@ netdiag --redact             # before pasting output into a forum thread
 netdiag --monitor | jq -c .status    # watch the rules a program would see
 netdiag --history | jq .networks     # which networks have I been on?
 netdiag --speed-only         # "how fast is it *right now*?"
+netdiag --share              # paste the most recent run into a support chat
 sudo netdiag                 # unlocks RSSI/noise/channel + mtr per-hop
 ```
 
@@ -235,6 +240,20 @@ The log file written to `~/net-diag/` always keeps full detail. It lives on
 your machine; only what you share gets masked. `--redact` implies compact
 output, because section bodies stream out before every value that needs
 masking has been discovered.
+
+`--redact` only covers the run in progress. To share a run that's already
+in the store — including the app's own last check — use `--share`, which
+redacts at read time instead:
+
+```sh
+netdiag --share               # newest stored run, as pasteable plain text
+netdiag --share=2026-08-12T00:15:37Z.a4f81c02   # a specific run (see --history)
+```
+
+Same masked fields as `--redact` (ISP and country kept, for the same
+reasons); see [`docs/JSON-SCHEMA.md`](./docs/JSON-SCHEMA.md) for the full
+kept/masked table. A real capture is at
+[`examples/sample-share.txt`](./examples/sample-share.txt).
 
 ### Retention
 
@@ -477,7 +496,11 @@ baselines and `--redact` (v0.5.0), a one-line installer (v0.6.0),
 packet-loss diagnosis (v0.6.0), `--monitor` / `--history` and the
 menu-bar app (v0.7.0), `--show` and run browsing (v0.8.0), `--progress`,
 `--speed-only` and the Live tab (v0.9.0), in-app update checks and the
-`D3`/`D4`/`V6-2` DNS and IPv6 rules (v0.9.1).
+`D3`/`D4`/`V6-2` DNS and IPv6 rules (v0.9.1), a full check reachable from
+the app — a "Full check" action on Home and in the dropdown, plus an
+automatic one on first joining a network — (unreleased), and a pasteable
+redacted report via `--share` and the app's "Copy report" button
+(unreleased).
 
 Next:
 
