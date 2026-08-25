@@ -306,7 +306,13 @@ final class NetdiagCoordinator {
         seen.insert(id)
         Defaults.seenNetworks = seen
         log.info("first sighting of \(id, privacy: .public) — scanning")
-        runScan(depth: .quick, reason: "new network")
+        // The one automatic full check, and the reason there is no timed
+        // one: joining a network for the first time is exactly when a
+        // baseline of what it can do — throughput, bufferbloat, path MTU —
+        // is worth having, and the `seenNetworks` guard above bounds it to
+        // once per network for the life of the install. Monitoring covers
+        // the continuous question; this covers the one-off one.
+        runFullCheck(reason: "new network")
     }
 
     /// Auto-start a short, fast-cadence "investigation" burst the moment
@@ -357,6 +363,30 @@ final class NetdiagCoordinator {
 
     func runScan(depth: NetdiagRunner.Depth, reason: String, target: String? = nil) {
         launch(depth: depth, reason: reason, target: target, adoptAsReport: true)
+    }
+
+    /// Whether the "Full check" action should be offered as runnable right
+    /// now. Read by the views to disable the control and say why.
+    var fullCheckIsSafe: Bool {
+        FullCheckPolicy.isSafe(severity: monitor.latest?.status.severity ?? "")
+    }
+
+    /// The full battery: bufferbloat, the MTU probe, per-hop loss and a
+    /// speed test — none of which any other depth produces, and all of
+    /// which the Report card, the Trends charts and the dropdown's
+    /// throughput cells are built to display.
+    ///
+    /// Refuses while the CLI's verdict is critical, and falls back to the
+    /// alert-triggered depth instead of doing nothing: someone who pressed
+    /// this button wants a check, and the lighter one is still worth
+    /// running. See `FullCheckPolicy` for why bufferbloat is the specific
+    /// hazard.
+    func runFullCheck(reason: String = "you asked for a full check") {
+        guard fullCheckIsSafe else {
+            runScan(depth: .alertTriggered, reason: reason)
+            return
+        }
+        runScan(depth: .full, reason: reason)
     }
 
     private func launch(depth: NetdiagRunner.Depth, reason: String,
