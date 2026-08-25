@@ -28,6 +28,7 @@ struct RunDetailView: View {
                     header(detail)
                     RunReportView(snapshot: detail.run,
                                   comparison: detail.comparison,
+                                  rawJSON: detail.asRunResult.rawJSON,
                                   showRuleIDs: appSettings.expertExpanded)
                     expertDisclosure(detail)
                 } else if let error {

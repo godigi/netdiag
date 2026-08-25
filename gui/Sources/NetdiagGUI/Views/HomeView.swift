@@ -57,12 +57,14 @@ struct HomeView: View {
 
                 switch coordinator.reportSource {
                 case .live(let run):
-                    RunReportView(snapshot: run.snapshot, showRuleIDs: appSettings.expertExpanded)
+                    RunReportView(snapshot: run.snapshot, rawJSON: run.rawJSON,
+                                  showRuleIDs: appSettings.expertExpanded)
                 case .stored(let detail):
                     // Comparison chips come free: `detail` is a `--show`
                     // response, and RunReportView already knows how to
                     // render one — RunDetailView passes the identical pair.
                     RunReportView(snapshot: detail.run, comparison: detail.comparison,
+                                  rawJSON: detail.asRunResult.rawJSON,
                                   showRuleIDs: appSettings.expertExpanded)
                 case nil:
                     emptyState

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// The report card: one row per thing that was measured, then the CLI's own
 /// prose about what it means.
@@ -16,6 +17,10 @@ struct RunReportView: View {
     /// nil for a live run: a run has nothing to be compared against until
     /// it is in the store.
     var comparison: RunDetail.Comparison?
+    /// The CLI's own bytes for this run, when the caller has them. `nil`
+    /// for a snapshot decoded without them — the Copy control says so
+    /// rather than silently vanishing.
+    var rawJSON: String?
     /// Whether each diagnosis shows its rule id. Passed in rather than read
     /// from `Defaults` so the captions appear the instant the enclosing
     /// expert disclosure is opened, not on the next launch.
@@ -25,10 +30,60 @@ struct RunReportView: View {
     /// below, and the `RuleChip`s in the diagnosis captions.
     @Environment(NetdiagCoordinator.self) private var coordinator
 
+    @State private var shareError: String?
+    @State private var didCopy = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             card
+            copyRow
             diagnoses
+        }
+    }
+
+    // MARK: - Copy report
+
+    /// Copies the CLI's own redacted rendering, never a re-encode of this
+    /// app's partial model — the same reason `RunResult` keeps `rawJSON`
+    /// around at all.
+    @ViewBuilder
+    private var copyRow: some View {
+        HStack(spacing: 8) {
+            Button(didCopy ? "Copied" : "Copy report") {
+                copyShareableReport()
+            }
+            .controlSize(.small)
+            .disabled(didCopy || rawJSON == nil)
+            Text("Plain text, with your network name, IP addresses and location masked.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if let shareError {
+                Text(shareError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func copyShareableReport() {
+        guard let raw = rawJSON else {
+            shareError = "This report came from an older netdiag and can't be shared."
+            return
+        }
+        Task { @MainActor in
+            do {
+                let text = try await NetdiagRunner.share(rawJSON: raw)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                shareError = nil
+                didCopy = true
+                try? await Task.sleep(for: .seconds(2))
+                didCopy = false
+            } catch {
+                shareError = "Couldn't build a shareable report."
+            }
         }
     }
 

@@ -243,7 +243,13 @@ struct ExpertPanel: View {
             HStack {
                 Text("Raw JSON").font(.headline)
                 Spacer()
-                Button("Copy") {
+                // Named for what it does. This is the whole record with
+                // the public IP, IPv6 address, SSID, BSSID, gateway MAC
+                // and city in it — useful for a bug report, wrong for a
+                // support chat. "Copy report" on the card above is the
+                // redacted one, and the labels have to make that obvious
+                // because the consequence of picking wrong is published.
+                Button("Copy raw JSON (unredacted)") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(run.rawJSON, forType: .string)
                 }
