@@ -22,9 +22,15 @@ import argparse
 import json
 import statistics
 import sys
+import textwrap
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
+
+# Prose wrapping width. Not a threshold — nothing is judged against it and
+# no diagnosis depends on it; it is the shape of a paragraph, which is why
+# it lives here rather than in lib/thresholds.sh.
+DIAGNOSIS_WRAP_COLS = 68
 
 
 def load_jsonl(p: Path) -> list[dict]:
@@ -71,11 +77,18 @@ def fmt_val(v: Any) -> str:
     return str(v)
 
 
+def plural(n: int, noun: str) -> str:
+    """'1 sample' / '2 samples'. The GUI's Trends counts were corrected
+    for exactly this in 3e5ca0b; the CLI's were missed."""
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
 def stats(label: str, values: list[float | int], unit: str = "") -> str:
     if not values:
         return f"  {label:24s}  no data"
     lo, med, hi = min(values), statistics.median(values), max(values)
-    return f"  {label:24s}  {fmt_val(lo)}{unit} / {fmt_val(med)}{unit} / {fmt_val(hi)}{unit}   ({len(values)} samples)"
+    return (f"  {label:24s}  {fmt_val(lo)}{unit} / {fmt_val(med)}{unit} / "
+            f"{fmt_val(hi)}{unit}   ({plural(len(values), 'sample')})")
 
 
 def main() -> None:
@@ -113,12 +126,17 @@ def main() -> None:
     incidents = [r for r in in_window if r.get("diagnosis")]
     print(f"  incidents (any diagnosis):  {len(incidents)} / {len(in_window)} runs")
     if incidents:
-        # Top recurring diagnosis summaries
+        # Top recurring diagnosis summaries, wrapped rather than cut. The
+        # CLI writes the fix into the back half of each sentence — "…the
+        # box that…", advice following — so an 80-character truncation
+        # reliably threw away the only actionable part.
         from collections import Counter
         all_summaries = [d.get("summary", "") for r in incidents for d in r.get("diagnosis", [])]
         for summary, n in Counter(all_summaries).most_common(5):
-            short = summary[:80] + ("…" if len(summary) > 80 else "")
-            print(f"     × {n:3d}  {short}")
+            lines = textwrap.wrap(summary, width=DIAGNOSIS_WRAP_COLS) or [""]
+            print(f"     × {n:3d}  {lines[0]}")
+            for continuation in lines[1:]:
+                print(f"            {continuation}")
     print()
 
     # Metric distributions
