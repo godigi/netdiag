@@ -203,15 +203,19 @@ identifying values masked, on stdout.
    The field list must mirror `_REDACT_ENV` (`emit_json.py:275`) exactly,
    because that tuple's exclusions are reasoned and load-bearing:
 
+   Record paths verified against `examples/sample-output.json` on
+   2026-08-25 — note `interface.ip` and `interface.gateway_mac`, not the
+   `iface.*` / `gateway.mac` an earlier draft of this table guessed at:
+
    | Record path | `_REDACT_ENV` name | Masked? |
    |---|---|---|
    | `public.ip` | `PUB_IP` | yes |
-   | `iface.local_ip` | `LOCAL_IP` | yes |
+   | `interface.ip` | `LOCAL_IP` | yes |
    | `wifi.ssid` | `WIFI_SSID` | yes |
    | `wifi.bssid` | `WIFI_BSSID` | yes |
    | `ipv6.global_addr` | `IPV6_GLOBAL_ADDR` | yes |
    | `ipv6.gateway` | `IPV6_GATEWAY` | yes — a `fe80::` address is EUI-64-derived from the router's MAC |
-   | `gateway.mac` | `GW_MAC` | yes |
+   | `interface.gateway_mac` | `GW_MAC` | yes |
    | `public.city` | `PUB_CITY` | yes |
    | `public.isp`, `public.asn` | — | **no**, deliberately — they name a provider, which is what a reader needs to reason about the fault |
    | `public.country` | — | no — two characters, too short to substring-replace safely |
