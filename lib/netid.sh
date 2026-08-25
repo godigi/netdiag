@@ -52,16 +52,36 @@ netid_run() {
   # helpers/history.py's group_key() derives from stored records, so a
   # live consumer (the monitor, the GUI) can join straight onto
   # --history's network groups without post-processing the raw id.
-  # Preference mirrors group_key exactly: MAC (lowercased) beats gateway
-  # IP beats SSID. netid_run and group_key are a pair — change one,
+  # Preference mirrors group_key exactly: MAC (lowercased), then SSID,
+  # then gateway IP. netid_run and group_key are a pair — change one,
   # change the other; tests/test_history.bats runs both over the same
   # ids and fails the build if they drift apart.
+  #
+  # The order is SSID-before-gateway-IP for the reason this file's own
+  # header gives: a gateway IP "collides constantly" (192.168.1.1 is
+  # every third home network), while an SSID is at least
+  # human-meaningful. This block previously read GATEWAY before ssid,
+  # which contradicted both that header and group_key: on Wi-Fi with a
+  # visible SSID but no gateway MAC — ARP not yet resolved, or a captive
+  # network — netid_run emitted `gw:192.168.1.1` while group_key derived
+  # `ssid:Cafe` from the very id netid_run had just written, so the join
+  # this key exists to enable silently failed. The old test's fixtures
+  # never carried both an SSID and a gateway at once, so nothing caught
+  # it.
+  #
+  # `tr` rather than `${GW_MAC,,}`: that expansion is bash 4+, and under
+  # macOS's system bash 3.2 it is a fatal runtime "bad substitution"
+  # that kills the surrounding subshell — which is what made
+  # tests/test_history.bats fail with "netid_group failed" rather than
+  # with a value mismatch. CLAUDE.md requires this code run under both
+  # zsh and Homebrew bash 5, but a construct that detonates on the
+  # system bash is a landmine regardless of the declared shebang.
   if [ -n "$GW_MAC" ]; then
-    NETWORK_GROUP="mac:${GW_MAC,,}"
-  elif [ -n "$GATEWAY" ]; then
-    NETWORK_GROUP="gw:$GATEWAY"
+    NETWORK_GROUP="mac:$(printf '%s' "$GW_MAC" | tr '[:upper:]' '[:lower:]')"
   elif [ -n "$ssid" ]; then
     NETWORK_GROUP="ssid:$ssid"
+  elif [ -n "$GATEWAY" ]; then
+    NETWORK_GROUP="gw:$GATEWAY"
   else
     NETWORK_GROUP=""
   fi
