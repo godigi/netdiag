@@ -366,7 +366,8 @@ Common:
                     test, internet packet-loss probe, MTU probe, WiFi
                     scan). Finishes in ~8 s on a healthy network.
   --no-speed        skip the speedtest — use on metered or slow links, and
-                    to bring a full run back under ~30 s
+                    to bring a full run back under ~30 s (to force it back
+                    on under --quick, see --speed under Advanced)
   --expert          show every detailed measurement section (RSSI, full
                     DNS / TCP / traceroute / DHCP / per-hop loss). Default
                     output is a compact Report card + diagnoses only.
@@ -432,20 +433,6 @@ Modes (exit after running, don't run the normal check battery):
   --install-watcher        install a launchd plist that runs netdiag
                            every 15 min in the background.
   --uninstall-watcher      remove the launchd plist.
-
-Advanced:
-  --speed           run the speedtest even under --quick (it is already on
-                    by default in a normal run; ~30 s and ~50 MB)
-  --no-bufferbloat  skip the 100 MB / 10 s bufferbloat probe (saves data on
-                    metered links)
-  --gping           after the report, launch a live ping monitor on the
-                    discovered hops (gping must be installed). Without
-                    this flag you'll be prompted; default is no.
-  --no-gping        skip the gping prompt entirely (used by scripts /
-                    watchers; equivalent to answering "no" upfront)
-  --baseline        compare this run against medians of the last 10 runs
-                    in ~/net-diag/baseline.jsonl (default on)
-  --no-baseline     skip the baseline comparison and don't append to history
   --version                print "netdiag VERSION" and exit.
   --capabilities           print one JSON object describing this install:
                            per-mode schema numbers, a feature list, and
@@ -465,6 +452,20 @@ Advanced:
                            tone, and a plain sentence per band — the word a
                            GUI shows next to a raw RSSI reading instead of
                            inventing its own scale.
+
+Advanced:
+  --speed           run the speedtest even under --quick (it is already on
+                    by default in a normal run; ~30 s and ~50 MB)
+  --no-bufferbloat  skip the 100 MB / 10 s bufferbloat probe (saves data on
+                    metered links)
+  --gping           after the report, launch a live ping monitor on the
+                    discovered hops (gping must be installed). Without
+                    this flag you'll be prompted; default is no.
+  --no-gping        skip the gping prompt entirely (used by scripts /
+                    watchers; equivalent to answering "no" upfront)
+  --baseline        compare this run against medians of the last 10 runs
+                    in ~/net-diag/baseline.jsonl (default on)
+  --no-baseline     skip the baseline comparison and don't append to history
 HELP
       exit 0 ;;
     -*)

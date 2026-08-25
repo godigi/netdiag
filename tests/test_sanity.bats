@@ -106,7 +106,11 @@ setup() {
   run "$NETDIAG" --help
   [ "$status" -eq 0 ]
   local quick_block
-  quick_block="$(printf '%s\n' "$output" | grep -A 3 -- '--quick  ')"
+  quick_block="$(printf '%s\n' "$output" | awk '
+      /^  --quick( |$)/ { inblock = 1; print; next }
+      inblock && /^  --/ { exit }
+      inblock           { print }
+  ')"
   [[ "$quick_block" == *"MTU"* ]] || {
     echo "--quick's help text does not mention MTU:"
     echo "$quick_block"
