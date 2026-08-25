@@ -301,10 +301,7 @@ final class NetdiagCoordinator {
         // history only learns about the network *from* this scan — reading
         // it here would fire the trigger a second time.
         guard Defaults.scanOnNewNetwork else { return }
-        var seen = Defaults.seenNetworks
-        guard !seen.contains(id) else { return }
-        seen.insert(id)
-        Defaults.seenNetworks = seen
+        guard !Defaults.seenNetworks.contains(id) else { return }
         log.info("first sighting of \(id, privacy: .public) — scanning")
         // The one automatic full check, and the reason there is no timed
         // one: joining a network for the first time is exactly when a
@@ -312,7 +309,24 @@ final class NetdiagCoordinator {
         // is worth having, and the `seenNetworks` guard above bounds it to
         // once per network for the life of the install. Monitoring covers
         // the continuous question; this covers the one-off one.
-        runFullCheck(reason: "new network")
+        //
+        // `seenNetworks` is written *after* `runFullCheck` reports the scan
+        // actually started, not before it is attempted (NET.3). `launch()`
+        // silently no-ops when a scan is already in flight — two networks
+        // joined back to back, or a manual scan the user happened to start
+        // — and marking a network seen ahead of that check burns its one
+        // automatic baseline on an attempt that never ran, permanently:
+        // nothing ever retries a network already in this set. Both calls
+        // run synchronously up to the point the scan's `Task` is handed to
+        // `scanTask`, so there is no `await` between "did it start?" and
+        // "mark it seen" for a second sample to race through.
+        guard runFullCheck(reason: "new network") else {
+            log.debug("first-sighting scan for \(id, privacy: .public) declined — a scan is already running; left unseen so the next sighting retries")
+            return
+        }
+        var seen = Defaults.seenNetworks
+        seen.insert(id)
+        Defaults.seenNetworks = seen
     }
 
     /// Auto-start a short, fast-cadence "investigation" burst the moment
@@ -361,7 +375,15 @@ final class NetdiagCoordinator {
 
     // MARK: - Scans
 
-    func runScan(depth: NetdiagRunner.Depth, reason: String, target: String? = nil) {
+    /// Returns whether the scan actually started, as opposed to being
+    /// silently declined because one was already in flight — see
+    /// `launch(depth:reason:target:adoptAsReport:)` for the guard, and the
+    /// first-sighting trigger in `handleSample` for the caller that has to
+    /// tell the two apart. Every other caller uses this as a plain
+    /// fire-and-forget action, which is why the result is
+    /// `@discardableResult`.
+    @discardableResult
+    func runScan(depth: NetdiagRunner.Depth, reason: String, target: String? = nil) -> Bool {
         launch(depth: depth, reason: reason, target: target, adoptAsReport: true)
     }
 
@@ -381,19 +403,30 @@ final class NetdiagCoordinator {
     /// this button wants a check, and the lighter one is still worth
     /// running. See `FullCheckPolicy` for why bufferbloat is the specific
     /// hazard.
-    func runFullCheck(reason: String = "you asked for a full check") {
+    ///
+    /// Returns whether a scan actually started (full depth, or the
+    /// `alertTriggered` fallback) — see `runScan` for why this is a
+    /// `Bool` rather than `Void`.
+    @discardableResult
+    func runFullCheck(reason: String = "you asked for a full check") -> Bool {
         guard fullCheckIsSafe else {
-            runScan(depth: .alertTriggered, reason: reason)
-            return
+            return runScan(depth: .alertTriggered, reason: reason)
         }
-        runScan(depth: .full, reason: reason)
+        return runScan(depth: .full, reason: reason)
     }
 
+    /// Returns `true` once the scan has actually been handed to a `Task` —
+    /// `false` when the guard below declined it. That distinction is the
+    /// whole point of the return value: a caller that only finds out a scan
+    /// *would* run by checking `isScanning` beforehand has a race between
+    /// the check and this call, where the return value has none, since both
+    /// happen on the same synchronous call.
+    @discardableResult
     private func launch(depth: NetdiagRunner.Depth, reason: String,
-                        target: String?, adoptAsReport: Bool) {
+                        target: String?, adoptAsReport: Bool) -> Bool {
         guard !isScanning else {
             log.debug("scan already running, ignoring request: \(reason, privacy: .public)")
-            return
+            return false
         }
         isScanning = true
         scanStartedAt = Date()
@@ -450,6 +483,7 @@ final class NetdiagCoordinator {
                 self.log.error("scan failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+        return true
     }
 
     func cancelScan() {
