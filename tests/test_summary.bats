@@ -59,3 +59,25 @@ now_ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
     echo "the advice did not survive:"; echo "$output"; return 1
   }
 }
+
+@test "disconnects report the busiest single run, never a sum" {
+  # wifi_disconnects.count covers a rolling 1h window
+  # (WIFI_DISCONNECT_WINDOW_HOURS in lib/globals.sh) and is recomputed
+  # per run. Three runs 15 minutes apart, each seeing the same 5
+  # events, describe 5 disconnects — not 15.
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"wifi_disconnects":{"count":5}'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"wifi_disconnects":{"count":5}'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"wifi_disconnects":{"count":5}'
+  run summarise
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"15"* ]] || { echo "still summing:"; echo "$output"; return 1; }
+  [[ "$output" == *"busiest hour"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"5 disconnect"* ]] || { echo "$output"; return 1; }
+}
+
+@test "no disconnect data at all says so rather than reporting zero" {
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"rtt_avg_ms":5.0}'
+  run summarise
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no data"* ]] || { echo "$output"; return 1; }
+}

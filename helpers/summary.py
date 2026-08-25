@@ -169,9 +169,23 @@ def main() -> None:
     print(f"  distinct WiFi channels:    {', '.join(sorted(map(str, channels))) or '-'}")
     print(f"  distinct path MTUs:        {', '.join(sorted(map(str, pmtus))) or '-'}")
 
-    # WiFi disconnect totals
-    dc_total = sum(get_nested(r, "wifi_disconnects.count") or 0 for r in in_window)
-    print(f"  WiFi disconnect events:    {dc_total} (summed over {len(in_window)} runs)")
+    # WiFi disconnects: a maximum, never a sum.
+    #
+    # wifi_disconnects.count is a count of events in the past
+    # WIFI_DISCONNECT_WINDOW_HOURS (1, lib/globals.sh:42), recomputed on
+    # every run. Summing it across a 24h window adds twelve overlapping
+    # one-hour views of the same events together — this printed "173" on a
+    # laptop that had seen nothing like 173 disconnects. The worst single
+    # window is a real quantity; the sum is not a quantity of anything.
+    dc_counts = [c for r in in_window
+                 if isinstance(c := get_nested(r, "wifi_disconnects.count"), int)]
+    if dc_counts:
+        worst = max(dc_counts)
+        print(f"  WiFi disconnects:          busiest hour: "
+              f"{plural(worst, 'disconnect')} "
+              f"(worst of {plural(len(dc_counts), 'run')})")
+    else:
+        print("  WiFi disconnects:          no data")
 
 
 if __name__ == "__main__":
