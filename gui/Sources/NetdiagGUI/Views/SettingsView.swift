@@ -203,8 +203,16 @@ struct SettingsView: View {
 
             Section("Automation") {
                 Toggle("Run a check automatically when something breaks", isOn: $appSettings.scanOnAlert)
-                Toggle("Run a check the first time I join a network", isOn: $appSettings.scanOnNewNetwork)
                 Text("An automatic check skips the speed test, so it won't slow down a connection that is already struggling.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle("Run a check the first time I join a network", isOn: $appSettings.scanOnNewNetwork)
+                // The cost is disclosed at the switch that causes it. This
+                // is the only automatic full check netdiag runs — there is
+                // no timed one — so it is the only place a speed test
+                // happens without someone pressing a button.
+                Text("This first check is a full one: it includes a speed test and takes about a minute. It runs once per network, ever.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
