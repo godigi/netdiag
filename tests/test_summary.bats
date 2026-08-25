@@ -24,6 +24,17 @@ rec() {
 # Run summary.py directly with a wide window so fixture timestamps land
 # inside it regardless of when the suite runs.
 summarise() {
+  # Every network block now judges its metrics, so every invocation needs
+  # the cutoffs in the environment — the same handshake summarise_judged()
+  # below uses. This helper predates that requirement; it still needs to
+  # satisfy it, or every pre-existing format/labelling test here would fail
+  # on the refusal path instead of exercising what it actually tests.
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
+         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
+         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
   python3 "$REPO/helpers/summary.py" --history "$STORE" --window "${1:-999999}"
 }
 
@@ -141,4 +152,101 @@ now_ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
   run summarise
   [ "$status" -eq 0 ]
   [[ "$output" == *"── Home"* ]] || { echo "$output"; return 1; }
+}
+
+# Judging needs the cutoffs, which arrive through the environment exactly
+# as history.py's do.
+summarise_judged() {
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
+         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
+         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
+  python3 "$REPO/helpers/summary.py" --history "$STORE" --window "${1:-24}"
+}
+
+@test "a clean metric is marked clean" {
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"loss_pct":0.0}'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  local line
+  line="$(printf '%s\n' "$output" | grep 'gateway loss')"
+  [[ "$line" == *"✓"* ]] || { echo "$line"; return 1; }
+}
+
+@test "a metric whose median is past the critical cutoff is marked critical" {
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"loss_pct":100.0}'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  local line
+  line="$(printf '%s\n' "$output" | grep 'gateway loss')"
+  [[ "$line" == *"×"* ]] || { echo "$line"; return 1; }
+}
+
+@test "a clean median with a bad max says so on the same line" {
+  # The glyph judges the median — the typical case — but a run that hit
+  # 100% loss is the thing the user came to find, so the max is named.
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"loss_pct":0.0}'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"loss_pct":0.0}'
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"loss_pct":100.0}'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  local line
+  line="$(printf '%s\n' "$output" | grep 'gateway loss')"
+  [[ "$line" == *"✓"* ]] || { echo "median is clean, expected a tick: $line"; return 1; }
+  [[ "$line" == *"max"* ]] || { echo "the 100% run was not named: $line"; return 1; }
+}
+
+@test "a metric with no samples takes no glyph at all" {
+  # Absence of a measurement is not a verdict — the same rule the Report
+  # card's grey minus.circle follows.
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"loss_pct":0.0}'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  local line
+  line="$(printf '%s\n' "$output" | grep 'NTP drift')"
+  [[ "$line" == *"no data"* ]] || { echo "$line"; return 1; }
+  [[ "$line" != *"✓"* ]] || { echo "unmeasured metric claimed health: $line"; return 1; }
+}
+
+@test "a weak-but-not-terrible RSSI lands in the warn band, not critical" {
+  # -72 dBm is worse than G1's -70 but better than W1's -75. If the two
+  # cutoffs are assigned to warn/crit the wrong way round, every reading
+  # below -70 reads critical and this band becomes unreachable.
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"wifi":{"rssi":-72}'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  local line
+  line="$(printf '%s\n' "$output" | grep 'RSSI')"
+  [[ "$line" == *"⚠"* ]] || { echo "expected a warn glyph: $line"; return 1; }
+  [[ "$line" != *"×"* ]] || { echo "-72 dBm should not be critical: $line"; return 1; }
+}
+
+@test "a genuinely bad RSSI is critical" {
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"wifi":{"rssi":-85}'
+  run summarise_judged
+  [ "$status" -eq 0 ]
+  local line
+  line="$(printf '%s\n' "$output" | grep 'RSSI')"
+  [[ "$line" == *"×"* ]] || { echo "$line"; return 1; }
+}
+
+@test "summary.py refuses to judge without the thresholds" {
+  # Same contract history.py holds: a Python default would be a second
+  # home for a number that has exactly one, and a stale second copy
+  # still produces a plausible verdict.
+  rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"gateway":{"loss_pct":0.0}'
+  run env -u LOSS_WARN_PCT -u LOSS_CRIT_PCT \
+    python3 "$REPO/helpers/summary.py" --history "$STORE" --window 24
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"LOSS_WARN_PCT"* ]]
+  [[ "$output" == *"lib/thresholds.sh"* ]]
+}
+
+@test "netdiag --summary passes the cutoffs through" {
+  # The CLI is what sources lib/thresholds.sh and exports. If it stops,
+  # every metric silently loses its verdict.
+  run "$REPO/bin/netdiag" --summary=1
+  [ "$status" -eq 0 ]
 }

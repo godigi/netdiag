@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import textwrap
@@ -40,6 +41,28 @@ from history import group_key, clean, is_redacted
 # no diagnosis depends on it; it is the shape of a paragraph, which is why
 # it lives here rather than in lib/thresholds.sh.
 DIAGNOSIS_WRAP_COLS = 68
+
+
+def _require_threshold(name: str) -> float:
+    """Read one cutoff from the environment, or refuse to run.
+
+    No defaults, ever. A default here would be a second home for a number
+    that has exactly one home (lib/thresholds.sh), and a stale second copy
+    still produces a plausible verdict — the failure nobody notices. Same
+    contract helpers/history.py holds for THRESH_COMPARE_*.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        print(f"summary.py: {name} is not set. It is defined in "
+              f"lib/thresholds.sh and exported by bin/netdiag before this "
+              f"helper runs.", file=sys.stderr)
+        sys.exit(3)
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"summary.py: {name}={raw!r} is not a number. It is defined "
+              f"in lib/thresholds.sh.", file=sys.stderr)
+        sys.exit(3)
 
 
 def load_jsonl(p: Path) -> list[dict]:
@@ -92,12 +115,54 @@ def plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
-def stats(label: str, values: list[float | int], unit: str = "") -> str:
+OK, WARN, CRIT = "✓", "⚠", "×"
+
+
+def judge(value: float, warn: float, crit: float, higher_is_worse: bool = True) -> str:
+    """One glyph for one number, against two cutoffs from thresholds.sh.
+
+    The comparisons here are against named parameters, never literals —
+    tests/test_thresholds.bats greps this file for a bare number beside a
+    comparison operator and fails the build on one.
+    """
+    if higher_is_worse:
+        if value >= crit:
+            return CRIT
+        if value >= warn:
+            return WARN
+        return OK
+    if value <= crit:
+        return CRIT
+    if value <= warn:
+        return WARN
+    return OK
+
+
+def stats(label: str, values: list[float | int], unit: str = "",
+          warn: float | None = None, crit: float | None = None,
+          higher_is_worse: bool = True) -> str:
     if not values:
-        return f"  {label:24s}  no data"
+        # Absence of a measurement is not a verdict. Same rule the Report
+        # card follows when it renders a grey minus.circle instead of a
+        # green dot on a row that was never measured.
+        return f"     {label:24s}  no data"
     lo, med, hi = min(values), statistics.median(values), max(values)
-    return (f"  {label:24s}  {fmt_val(lo)}{unit} / {fmt_val(med)}{unit} / "
-            f"{fmt_val(hi)}{unit}   ({plural(len(values), 'sample')})")
+    body = (f"{fmt_val(lo)}{unit} / {fmt_val(med)}{unit} / {fmt_val(hi)}{unit}"
+            f"   ({plural(len(values), 'sample')})")
+    if warn is None or crit is None:
+        return f"     {label:24s}  {body}"
+
+    # The glyph judges the median — the typical case, which is what a
+    # distribution summary is for. A worse extreme is named rather than
+    # promoted: "usually fine, once terrible" is the true sentence, and
+    # letting the max own the glyph would make one bad minute in a month
+    # read as a broken network.
+    glyph = judge(med, warn, crit, higher_is_worse)
+    worst = judge(hi if higher_is_worse else lo, warn, crit, higher_is_worse)
+    if worst != glyph:
+        extreme = hi if higher_is_worse else lo
+        body += f"   {worst} {'max' if higher_is_worse else 'min'} {fmt_val(extreme)}{unit}"
+    return f"  {glyph}  {label:24s}  {body}"
 
 
 def report_network(label: str, records: list[dict]) -> None:
@@ -137,16 +202,40 @@ def report_network(label: str, records: list[dict]) -> None:
                 out.append(float(v))
         return out
 
-    print("  metric                    min / med / max")
-    print(stats("gateway RTT (ms)",       metric("gateway.rtt_avg_ms")))
-    print(stats("gateway loss (%)",       metric("gateway.loss_pct")))
-    print(stats("bufferbloat gw Δ (ms)",  metric("bufferbloat.gw_delta_ms")))
-    print(stats("bufferbloat inet Δ (ms)", metric("bufferbloat.inet_delta_ms")))
-    print(stats("WiFi RSSI (dBm)",        metric("wifi.rssi")))
-    print(stats("path MTU",               metric("mtu.effective")))
-    print(stats("NTP drift (s)",          metric("ntp.drift_seconds")))
-    print(stats("speedtest down (Mbps)",  metric("speedtest.down_mbps")))
-    print(stats("speedtest up   (Mbps)",  metric("speedtest.up_mbps")))
+    print("     metric                    min / med / max")
+    print(stats("gateway RTT (ms)", metric("gateway.rtt_avg_ms")))
+    print(stats("gateway loss (%)", metric("gateway.loss_pct"),
+                warn=_require_threshold("LOSS_WARN_PCT"),
+                crit=_require_threshold("LOSS_CRIT_PCT")))
+    print(stats("bufferbloat gw Δ (ms)", metric("bufferbloat.gw_delta_ms"),
+                warn=_require_threshold("THRESH_BUFFERBLOAT_B_MS"),
+                crit=_require_threshold("THRESH_BUFFERBLOAT_C_MS")))
+    print(stats("bufferbloat inet Δ (ms)", metric("bufferbloat.inet_delta_ms"),
+                warn=_require_threshold("THRESH_BUFFERBLOAT_B_MS"),
+                crit=_require_threshold("THRESH_BUFFERBLOAT_C_MS")))
+    # higher_is_worse=False, so judge() tests the critical cutoff first, and
+    # a lower (more negative) dBm is worse. THRESH_WIFI_RSSI_WEAK_DBM (-75)
+    # is worse than THRESH_WIFI_RSSI_G1_DBM (-70), so the weak cutoff is
+    # crit and the G1 cutoff is warn. Swapping them would put every reading
+    # at or below G1's cutoff into the critical band, leaving the warn band
+    # unreachable: a signal a few dBm past G1 would read identically to one
+    # deep past the weak floor.
+    print(stats("WiFi RSSI (dBm)", metric("wifi.rssi"),
+                warn=_require_threshold("THRESH_WIFI_RSSI_G1_DBM"),
+                crit=_require_threshold("THRESH_WIFI_RSSI_WEAK_DBM"),
+                higher_is_worse=False))
+    print(stats("path MTU", metric("mtu.effective"),
+                warn=_require_threshold("THRESH_MTU_STANDARD"),
+                crit=_require_threshold("THRESH_MTU_CRIT"),
+                higher_is_worse=False))
+    print(stats("NTP drift (s)", metric("ntp.drift_seconds"),
+                warn=_require_threshold("THRESH_NTP_DRIFT_WARN_S"),
+                crit=_require_threshold("THRESH_NTP_DRIFT_CRIT_S")))
+    # Throughput has no absolute cutoff — "slow" is relative to what this
+    # link has done before, which is BL-1's job in --show, not a number
+    # that could live in thresholds.sh. Reported unjudged, deliberately.
+    print(stats("speedtest down (Mbps)", metric("speedtest.down_mbps")))
+    print(stats("speedtest up   (Mbps)", metric("speedtest.up_mbps")))
     print()
 
     # Categorical changes. Distinct ISPs is deliberately scoped to this one

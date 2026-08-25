@@ -16,12 +16,13 @@ Grown from a ~300-line bash starter into a modular `lib/*.sh` CLI with 14 diagno
   - Two checks must **not** be parallelised, because both measure a property of a quiet link: `internet_ping_run` (packet loss / latency) and `bufferbloat_run` (which saturates the link deliberately). Running the loss probe inside the parallel batch made it report 30% loss on a healthy network.
 - **Read-only:** never modify routing, DNS, WiFi, or ARP state.
 - **shellcheck-clean** at default severity. `# shellcheck disable=...` only with justification.
-- **Thresholds live in `lib/thresholds.sh`, nowhere else.** Three things now
+- **Thresholds live in `lib/thresholds.sh`, nowhere else.** Four things now
   judge a network — `lib/diagnosis.sh` (one verdict per scan),
-  `lib/monitor.sh` (one every few seconds) and `helpers/history.py` (one per
-  metric, per stored run) — and if they drift the app shows a green dot over
-  a red report. `tests/test_thresholds.bats` fails the build on an inline
-  numeric cutoff in any of the three.
+  `lib/monitor.sh` (one every few seconds), `helpers/history.py` (one per
+  metric, per stored run) and `helpers/summary.py` (one per metric, per
+  network, over a window) — and if they drift the app shows a green dot
+  over a red report. `tests/test_thresholds.bats` fails the build on an
+  inline numeric cutoff in any of the four.
 - **The GUI holds no diagnostic logic.** `gui/` renders what the CLI
   decides: rule IDs come from `status.rules`, prose comes from
   `diagnosis[].summary` verbatim. If a change would put a threshold or a
@@ -107,7 +108,7 @@ Before refactoring past ~700 lines of bash, decide bash-modules vs bash+Python h
 
 1. Before writing code for a new chunk of work, produce a short plan (< 400 words) covering structure, bash/Python split, implementation order, and clarifying questions.
 2. After implementing, actually run `netdiag` on this machine and paste real output into `examples/sample-output.{txt,json}`. If running in a sandbox, say so explicitly.
-   - **Capture those with `--redact`, from stdout.** This repo is public, and a plain run puts the machine's public IPv6 address, ISP and city in the sample — an IPv6 address identifies a household the way a NATed v4 address does not. The trap: `--redact` masks stdout and JSON while the **local log deliberately keeps full detail**, so capturing via `--log` yields an unredacted file that looks like it worked. Use `netdiag --redact --json` and `netdiag --redact | sed $'s/\\x1b\\[[0-9;]*[mK]//g'`. The text sample is the default view, not `--expert`: `--redact` forces `EXPERT=0`, because the expert panel is where the identifying values live.
+   - **Capture those with `--redact`, from stdout.** This repo is public, and a plain run puts the machine's public IPv6 address and city in the sample — an IPv6 address identifies a household the way a NATed v4 address does not. (The ISP name is kept by design even under `--redact`: `helpers/emit_json.py:275`'s `_REDACT_ENV` deliberately excludes it — ASN and ISP name a provider, which is needed to reason about the fault — so `examples/sample-output.txt` still shows `TELEFONICA BRASIL S.A ([redacted], Brazil)`.) The trap: `--redact` masks stdout and JSON while the **local log deliberately keeps full detail**, so capturing via `--log` yields an unredacted file that looks like it worked. Use `netdiag --redact --json` and `netdiag --redact | sed $'s/\\x1b\\[[0-9;]*[mK]//g'`. The text sample is the default view, not `--expert`: `--redact` forces `EXPERT=0`, because the expert panel is where the identifying values live.
 3. Commits: one per logical feature group, clean history. Tag releases `v0.2.0+`.
 4. Don't push to GitHub or create the repo until the script runs and sample output looks sane.
 

@@ -572,6 +572,16 @@ if [ "$UNINSTALL_WATCHER" -eq 1 ]; then
   uninstall_watcher_run
 fi
 if [ "$SUMMARY" -eq 1 ]; then
+  # --summary now judges each metric line, so it needs the cutoffs, and
+  # they reach Python through the environment exactly as --history's and
+  # --show's do. The helper refuses to start without them rather than
+  # carrying a default — see summary.py's _require_threshold.
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
+         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
+         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
   python3 "$HELPERS_DIR/summary.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --window "$SUMMARY_WINDOW_HOURS" || exit 3

@@ -200,3 +200,20 @@ setup() {
   [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_A_MS")" = B ]
   [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_D_MS")" = F ]
 }
+
+@test "helpers/summary.py carries no inline numeric cutoff either" {
+  # --summary now judges each metric line, so this file is the fourth
+  # thing in the project that decides whether a number is normal. Same
+  # guard as the history.py one above, same reasoning: a cutoff creeping
+  # back as a Python literal is a number lib/thresholds.sh would never
+  # reflect a change to.
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$REPO/helpers/summary.py"
+  [ "$status" -ne 0 ] || { echo "inline cutoff in summary.py:"; echo "$output"; return 1; }
+}
+
+@test "the guard would actually catch a cutoff planted in summary.py" {
+  cp "$REPO/helpers/summary.py" "$BATS_TEST_TMPDIR/planted_summary.py"
+  printf '\nif False:\n    pass  # if loss >= 20:\n' >> "$BATS_TEST_TMPDIR/planted_summary.py"
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$BATS_TEST_TMPDIR/planted_summary.py"
+  [ "$status" -eq 0 ]
+}
