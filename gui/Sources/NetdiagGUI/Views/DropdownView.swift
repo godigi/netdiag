@@ -596,14 +596,20 @@ struct DropdownView: View {
             // The throughput benchmark the button above deliberately is
             // not. Kept visually quieter and stating its cost, because a
             // menu-bar click that saturates the link for a minute should
-            // never be the one you hit by accident.
-            Button("Full check · \(NetdiagRunner.Depth.full.estimate)") {
+            // never be the one you hit by accident. The label tracks
+            // which depth will actually run — `runFullCheck` falls back
+            // to the lighter depth whenever the last reading was not
+            // clearly healthy, so a label fixed at "Full check" would lie
+            // in exactly that state. Shared with `HomeView` via
+            // `FullCheckPolicy` so the two controls can't drift.
+            Button(FullCheckPolicy.controlLabel(isSafe: coordinator.fullCheckIsSafe)) {
                 coordinator.runFullCheck()
             }
             .buttonStyle(.plain)
             .font(.caption)
             .foregroundStyle(.secondary)
             .disabled(coordinator.isScanning)
+            .help(FullCheckPolicy.controlHelp(isSafe: coordinator.fullCheckIsSafe))
         }
     }
 

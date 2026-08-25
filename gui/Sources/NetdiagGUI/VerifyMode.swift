@@ -181,6 +181,21 @@ private enum VerifyHarness {
         // know is a value we cannot clear.
         equal(FullCheckPolicy.isSafe(severity: ""), false, "unknown severity blocks a full check")
         equal(FullCheckPolicy.isSafe(severity: "catastrophic"), false, "unrecognised severity blocks a full check")
+
+        // The control's label and tooltip must name the depth that will
+        // actually run, and the unsafe help must never author a verdict.
+        // Commit 69fa7fb shipped one that asserted the connection was
+        // down at that instant — Swift composing a diagnosis, and false
+        // whenever `isSafe` declined for want of a sample rather than for
+        // a critical reading. These four assertions are what keep it out.
+        let safeLabel = FullCheckPolicy.controlLabel(isSafe: true)
+        let unsafeLabel = FullCheckPolicy.controlLabel(isSafe: false)
+        equal(safeLabel.contains("Full check"), true, "safe label names the full check")
+        equal(unsafeLabel.contains("Lighter check"), true, "unsafe label names the lighter check")
+
+        let unsafeHelp = FullCheckPolicy.controlHelp(isSafe: false)
+        equal(unsafeHelp.contains("is failing"), false, "unsafe help never claims the connection is failing")
+        equal(unsafeHelp.contains("speed test"), true, "unsafe help discloses the speed test is skipped too")
     }
 
     // MARK: - 2. Stage-card visual contract (offscreen render → PNG)

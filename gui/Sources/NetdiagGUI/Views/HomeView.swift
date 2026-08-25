@@ -268,22 +268,18 @@ struct HomeView: View {
         }
     }
 
-    /// The full check's own cost, stated on the control rather than
-    /// discovered by pressing it. `Depth.full.estimate` is the CLI's
-    /// budget — the same string that has existed unread since the depth
-    /// was written.
+    // Both of these are `FullCheckPolicy`'s wording, not this view's — see
+    // that file for why the label has to track which depth will actually
+    // run, and why the fallback text states only what the app knows. The
+    // dropdown's own control reads the same two functions, so the two can
+    // never describe the same button differently.
+
     private var fullCheckLabel: String {
-        "Full check · \(NetdiagRunner.Depth.full.estimate)"
+        FullCheckPolicy.controlLabel(isSafe: coordinator.fullCheckIsSafe)
     }
 
-    /// Says what the extra minute buys, and — when the connection is
-    /// already failing — why the button will quietly do something lighter.
-    /// The wording describes what netdiag measures, never what it concludes
-    /// about this network; the verdicts stay in the CLI's own prose below.
     private var fullCheckHelp: String {
-        coordinator.fullCheckIsSafe
-            ? "Adds speed, latency under load, path MTU and per-hop loss to the report."
-            : "Your connection is failing right now, so this will skip the load test — measuring it would saturate the link you are trying to use."
+        FullCheckPolicy.controlHelp(isSafe: coordinator.fullCheckIsSafe)
     }
 
     private func elapsedLabel(at now: Date) -> String {
