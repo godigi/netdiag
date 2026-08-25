@@ -62,6 +62,7 @@ private enum VerifyHarness {
         // policy consistent and run the checks.
         NSApp?.setActivationPolicy(.accessory)
         runStageTests()
+        runFullCheckPolicyTests()
         runSnapshots()
         print("")
         if failures.isEmpty {
@@ -158,6 +159,28 @@ private enum VerifyHarness {
         equal(StageResolver.resolve(inputs(severity: "ok", linkUp: true,
                                             measurementState: "unknown")),
               .checking, "first-sample unknown → checking")
+    }
+
+    // MARK: - Full-check policy
+    //
+    // A full check runs a bufferbloat probe that deliberately saturates
+    // the link for ~10 s. Doing that to a connection already reporting
+    // critical makes the user's situation worse in the middle of the
+    // problem they opened the app about. Same reasoning
+    // NetdiagRunner.Depth.alertTriggered already encodes by passing
+    // --no-bufferbloat; this extends it to the manual path.
+
+    private static func runFullCheckPolicyTests() {
+        print("\nFullCheckPolicy")
+        equal(FullCheckPolicy.isSafe(severity: "ok"), true, "ok permits a full check")
+        equal(FullCheckPolicy.isSafe(severity: "info"), true, "info permits a full check")
+        equal(FullCheckPolicy.isSafe(severity: "warn"), true, "warn permits a full check")
+        equal(FullCheckPolicy.isSafe(severity: "critical"), false, "critical blocks a full check")
+        // An unrecognised severity must not silently read as safe: the
+        // CLI is the authority on this vocabulary and a value we do not
+        // know is a value we cannot clear.
+        equal(FullCheckPolicy.isSafe(severity: ""), false, "unknown severity blocks a full check")
+        equal(FullCheckPolicy.isSafe(severity: "catastrophic"), false, "unrecognised severity blocks a full check")
     }
 
     // MARK: - 2. Stage-card visual contract (offscreen render → PNG)
