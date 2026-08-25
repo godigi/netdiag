@@ -152,17 +152,22 @@ struct HistoryView: View {
     }
 
     /// Why a metric is empty is usually a fact about how netdiag is being
-    /// run, and saying so turns a dead chart into an instruction.
+    /// run, and saying so turns a dead chart into an instruction. Since a
+    /// full check became reachable from Home and the menu bar, the
+    /// instruction is a button rather than a terminal — except for RSSI,
+    /// which still genuinely needs a privileged run.
     private func hint(for key: String) -> String {
         switch key {
         case "speed_down_mbps", "speed_up_mbps":
-            return "Speed tests only run in a full check, not in --quick — and the launchd watcher uses --quick."
+            return "Speed is only measured by a full check. Press \"Full check\" on Home, or join a new network — netdiag runs one automatically the first time."
         case "wifi_rssi_dbm", "wifi_snr_db":
             return "Signal strength needs sudo: run `sudo netdiag` in a terminal to record it."
         case "bufferbloat_gw_ms", "bufferbloat_inet_ms":
-            return "Bufferbloat is skipped by --quick and by --no-bufferbloat."
+            return "Latency under load is only measured by a full check, and is skipped entirely while a connection is already failing."
+        case "mtu_effective":
+            return "Path MTU is only measured by a full check — the quick check and the background watcher both skip it."
         case "inet_rtt_ms", "inet_loss_pct":
-            return "The internet loss probe is skipped by --quick."
+            return "The internet loss probe is skipped by the quick check that the background watcher runs."
         default:
             return "It may be skipped by the check mode you normally run."
         }
