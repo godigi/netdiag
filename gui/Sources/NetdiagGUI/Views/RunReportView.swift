@@ -55,6 +55,12 @@ struct RunReportView: View {
                         .foregroundStyle(row.value.hasPrefix("not measured") ? .secondary : .primary)
                         .lineLimit(1)
                         .frame(width: 128, alignment: .leading)
+                        // Safety net for any value long enough to
+                        // tail-truncate at this column's fixed width (the
+                        // Wi-Fi row's sudo-hint fallback is the current
+                        // longest) — the full string is always one hover
+                        // away instead of silently lost.
+                        .help(row.value)
                     medianColumn(row)
                         .frame(width: 96, alignment: .leading)
                     Spacer(minLength: 4)
@@ -181,7 +187,7 @@ struct RunReportView: View {
         // not being there.
         if let wifi = s.wifi {
             out.append(Row(label: "Wi-Fi signal",
-                           value: wifi.rssi.map { "\($0) dBm" } ?? "not measured — needs one sudo run",
+                           value: wifi.rssi.map { "\($0) dBm" } ?? "not measured (needs sudo)",
                            health: health(["WD-1"], ["wifi"]),
                            metricKey: "wifi_rssi_dbm",
                            glossaryKey: "wifi_signal",
