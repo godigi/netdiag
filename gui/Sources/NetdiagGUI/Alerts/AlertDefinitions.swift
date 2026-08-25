@@ -48,6 +48,13 @@ struct AlertDefinition: Identifiable, Sendable {
     /// condition that comes and goes.
     let oncePerNetwork: Bool
 
+    /// One mechanism-only sentence for Settings: which category of thing
+    /// this watches and how its timing works, built only from this
+    /// struct's own dwell/cooldown/scanOnly/oncePerNetwork fields — never
+    /// an explanation of what a firing alert means for the network. That
+    /// sentence is the CLI's, verbatim, per this file's own header.
+    let caption: String
+
     /// Neutral holding text, shown only in the gap between the alert firing
     /// and the triggered scan landing. Deliberately says nothing about
     /// cause or remedy — that is the CLI's to say, and guessing here is how
@@ -60,6 +67,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["N1", "N1b", "P1", "P2"],
             dwell: 15, cooldown: 300, resolves: true, scanOnly: false,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Confirms for 15 seconds before alerting, then waits 5 minutes before repeating.",
             interimBody: "Checking what happened…"),
 
         AlertDefinition(
@@ -67,6 +75,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["G1", "G2", "G3", "WD-1"],
             dwell: 25, cooldown: 1800, resolves: true, scanOnly: false,
             suppressedByICMPFilter: true, oncePerNetwork: false,
+            caption: "Confirms for 25 seconds before alerting, then waits 30 minutes before repeating.",
             interimBody: "Checking whether it's your Wi-Fi or your router…"),
 
         AlertDefinition(
@@ -74,6 +83,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["L1", "L2"],
             dwell: 25, cooldown: 600, resolves: true, scanOnly: false,
             suppressedByICMPFilter: true, oncePerNetwork: false,
+            caption: "Confirms for 25 seconds before alerting, then waits 10 minutes before repeating.",
             interimBody: "Checking whether the loss is at your router or your internet provider…"),
 
         AlertDefinition(
@@ -81,6 +91,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["P1", "D1", "D3", "D4", "V6-2"],
             dwell: 30, cooldown: 1800, resolves: true, scanOnly: false,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Confirms for 30 seconds before alerting, then waits 30 minutes before repeating.",
             interimBody: "Checking your name lookups…"),
 
         AlertDefinition(
@@ -88,6 +99,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: [],   // raised from a monitor event, not a rule
             dwell: 0, cooldown: 60, resolves: false, scanOnly: false,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Fires as soon as it's seen; won't repeat within 1 minute.",
             interimBody: ""),
 
         AlertDefinition(
@@ -99,6 +111,7 @@ struct AlertDefinition: Identifiable, Sendable {
             // with a Wi-Fi icon that looks connected and no working web.
             dwell: 15, cooldown: 0, resolves: true, scanOnly: false,
             suppressedByICMPFilter: false, oncePerNetwork: true,
+            caption: "Fires once per network, 15 seconds after joining, if the sign-in page didn't open on its own.",
             interimBody: "Open your browser to sign in to this network."),
 
         AlertDefinition(
@@ -106,6 +119,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: [],   // raised from a vpn.active true→false transition
             dwell: 10, cooldown: 300, resolves: true, scanOnly: false,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Confirms for 10 seconds before alerting, then waits 5 minutes before repeating.",
             interimBody: "Your traffic is no longer going through the VPN."),
 
         AlertDefinition(
@@ -113,6 +127,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["NT-1"],
             dwell: 0, cooldown: 43_200, resolves: true, scanOnly: true,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Checked only during a full check; won't repeat for 12 hours.",
             interimBody: ""),
 
         AlertDefinition(
@@ -120,6 +135,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["DI-1", "DI-2"],
             dwell: 0, cooldown: 21_600, resolves: true, scanOnly: true,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Checked only during a full check; won't repeat for 6 hours.",
             interimBody: ""),
 
         AlertDefinition(
@@ -127,6 +143,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: [],   // raised from a gateway-MAC change under a known SSID
             dwell: 30, cooldown: 0, resolves: false, scanOnly: false,
             suppressedByICMPFilter: false, oncePerNetwork: true,
+            caption: "Fires once per network, 30 seconds after the router behind a familiar Wi-Fi name changes.",
             interimBody: "The Wi-Fi name is the same, but the router behind it is a different one."),
 
 
@@ -135,6 +152,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["DH-1"],
             dwell: 0, cooldown: 21_600, resolves: false, scanOnly: true,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Checked only during a full check; won't repeat for 6 hours.",
             interimBody: ""),
 
         AlertDefinition(
@@ -142,6 +160,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["BL-1"],
             dwell: 0, cooldown: 43_200, resolves: false, scanOnly: true,
             suppressedByICMPFilter: false, oncePerNetwork: false,
+            caption: "Checked only during a full check; won't repeat for 12 hours.",
             interimBody: ""),
 
         AlertDefinition(
@@ -149,6 +168,7 @@ struct AlertDefinition: Identifiable, Sendable {
             rules: ["NAT-1"],
             dwell: 0, cooldown: 86_400, resolves: true, scanOnly: true,
             suppressedByICMPFilter: false, oncePerNetwork: true,
+            caption: "Checked only during a full check; fires once per network, then won't repeat for 24 hours.",
             interimBody: "Two routers are chained together in your home, which can cause gaming and VPN issues."),
     ]
 

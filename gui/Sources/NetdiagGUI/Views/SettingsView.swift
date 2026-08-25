@@ -211,13 +211,19 @@ struct SettingsView: View {
 
             Section("Tell me about") {
                 ForEach(AlertDefinition.all) { def in
-                    Toggle(def.title, isOn: Binding(
-                        get: { !appSettings.disabledAlerts.contains(def.id) },
-                        set: { on in
-                            var set = appSettings.disabledAlerts
-                            if on { set.remove(def.id) } else { set.insert(def.id) }
-                            appSettings.disabledAlerts = set
-                        }))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Toggle(def.title, isOn: Binding(
+                            get: { !appSettings.disabledAlerts.contains(def.id) },
+                            set: { on in
+                                var set = appSettings.disabledAlerts
+                                if on { set.remove(def.id) } else { set.insert(def.id) }
+                                appSettings.disabledAlerts = set
+                            }))
+                        Text(def.caption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
                 }
             }
 
