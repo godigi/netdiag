@@ -50,9 +50,12 @@ struct AlertDefinition: Identifiable, Sendable {
 
     /// One mechanism-only sentence for Settings: which category of thing
     /// this watches and how its timing works, built only from this
-    /// struct's own dwell/cooldown/scanOnly/oncePerNetwork fields — never
-    /// an explanation of what a firing alert means for the network. That
-    /// sentence is the CLI's, verbatim, per this file's own header.
+    /// struct's own dwell/cooldown/scanOnly/oncePerNetwork fields. Unlike
+    /// `interimBody` below, this is Swift-authored text — it stays
+    /// compliant with this file's own header not by being CLI-sourced but
+    /// by staying strictly mechanism/timing: never an explanation of what
+    /// a firing alert means for the network. That explanation is the
+    /// CLI's, verbatim, elsewhere (`diagnosis[].summary`).
     let caption: String
 
     /// Neutral holding text, shown only in the gap between the alert firing
