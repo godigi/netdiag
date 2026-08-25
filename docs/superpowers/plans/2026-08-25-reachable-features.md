@@ -1447,8 +1447,8 @@ Finally, in `report_network`, pass the cutoffs. Read them once at module level i
                 warn=_require_threshold("THRESH_BUFFERBLOAT_B_MS"),
                 crit=_require_threshold("THRESH_BUFFERBLOAT_C_MS")))
     print(stats("WiFi RSSI (dBm)", metric("wifi.rssi"),
-                warn=_require_threshold("THRESH_WIFI_RSSI_WEAK_DBM"),
-                crit=_require_threshold("THRESH_WIFI_RSSI_G1_DBM"),
+                warn=_require_threshold("THRESH_WIFI_RSSI_G1_DBM"),
+                crit=_require_threshold("THRESH_WIFI_RSSI_WEAK_DBM"),
                 higher_is_worse=False))
     print(stats("path MTU", metric("mtu.effective"),
                 warn=_require_threshold("THRESH_MTU_STANDARD"),
@@ -1464,7 +1464,23 @@ Finally, in `report_network`, pass the cutoffs. Read them once at module level i
     print(stats("speedtest up   (Mbps)", metric("speedtest.up_mbps")))
 ```
 
-> `THRESH_BUFFERBLOAT_B_MS` (30) / `THRESH_BUFFERBLOAT_C_MS` (60) are the existing B/C grade boundaries — a B is fine, a C is where it starts hurting. `THRESH_WIFI_RSSI_WEAK_DBM` (-75) / `THRESH_WIFI_RSSI_G1_DBM` (-70) are the two RSSI cutoffs `tests/test_thresholds.bats` explicitly documents as meaning different things; -70 is "bad enough to explain packet loss", so it is the critical one. All values verified present in `lib/thresholds.sh` on 2026-08-25.
+> `THRESH_BUFFERBLOAT_B_MS` (30) / `THRESH_BUFFERBLOAT_C_MS` (60) are the existing B/C grade boundaries — a B is fine, a C is where it starts hurting. All values verified present in `lib/thresholds.sh` on 2026-08-25.
+>
+> **RSSI ordering — an earlier draft of this plan had it backwards.** With
+> `higher_is_worse=False`, `judge` tests `value <= crit` first, so `crit`
+> must be the *more negative* number. `THRESH_WIFI_RSSI_WEAK_DBM` is -75 and
+> `THRESH_WIFI_RSSI_G1_DBM` is -70, and -75 is the worse signal. So
+> `warn=THRESH_WIFI_RSSI_G1_DBM`, `crit=THRESH_WIFI_RSSI_WEAK_DBM`. The
+> reverse assignment makes every reading below -70 critical and leaves the
+> warn band unreachable — because -72 satisfies `<= -70` just as -80 does.
+> The two cutoffs are documented in `tests/test_thresholds.bats` as meaning
+> different things, and that comment is about which *rule* fires, not about
+> which is the worse signal; do not read the ordering out of it.
+>
+> The equivalent check for MTU comes out the other way and the original
+> assignment was right: `THRESH_MTU_CRIT` (1280) is lower than
+> `THRESH_MTU_STANDARD` (1400), and a lower MTU is worse, so `crit=1280`
+> already is the more-negative-equivalent.
 
 - [ ] **Step 4: Export the thresholds from the CLI**
 
