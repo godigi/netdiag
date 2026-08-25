@@ -247,12 +247,43 @@ struct HomeView: View {
                     Button("Cancel") { coordinator.cancelScan() }
                 }
             } else {
-                Button("Run a check") {
-                    coordinator.runScan(depth: .quick, reason: "you asked")
+                HStack(spacing: 8) {
+                    // Secondary, and second: the quick check answers "is it
+                    // broken right now" while the problem is still
+                    // happening, and that stays the default. This one is
+                    // the deliberate, slower question — the only depth that
+                    // measures throughput, latency under load and path MTU.
+                    Button(fullCheckLabel) {
+                        coordinator.runFullCheck()
+                    }
+                    .help(fullCheckHelp)
+
+                    Button("Run a check") {
+                        coordinator.runScan(depth: .quick, reason: "you asked")
+                    }
+                    .keyboardShortcut("r")
+                    .buttonStyle(.borderedProminent)
                 }
-                .keyboardShortcut("r")
             }
         }
+    }
+
+    /// The full check's own cost, stated on the control rather than
+    /// discovered by pressing it. `Depth.full.estimate` is the CLI's
+    /// budget — the same string that has existed unread since the depth
+    /// was written.
+    private var fullCheckLabel: String {
+        "Full check · \(NetdiagRunner.Depth.full.estimate)"
+    }
+
+    /// Says what the extra minute buys, and — when the connection is
+    /// already failing — why the button will quietly do something lighter.
+    /// The wording describes what netdiag measures, never what it concludes
+    /// about this network; the verdicts stay in the CLI's own prose below.
+    private var fullCheckHelp: String {
+        coordinator.fullCheckIsSafe
+            ? "Adds speed, latency under load, path MTU and per-hop loss to the report."
+            : "Your connection is failing right now, so this will skip the load test — measuring it would saturate the link you are trying to use."
     }
 
     private func elapsedLabel(at now: Date) -> String {
