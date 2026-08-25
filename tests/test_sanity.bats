@@ -82,3 +82,34 @@ setup() {
     }
   done
 }
+
+@test "--help is organised into labelled sections" {
+  # A 110-line wall of flags in no particular order made a user scroll
+  # past --progress's file-descriptor protocol to reach --wifi-only.
+  # The sections are the navigation; this asserts they exist and stay.
+  run "$NETDIAG" --help
+  [ "$status" -eq 0 ]
+  for section in "Common:" "Sharing and output:" "Just one check:" \
+                 "Modes" "Advanced:"; do
+    [[ "$output" == *"$section"* ]] || {
+      echo "missing section from --help: $section"
+      return 1
+    }
+  done
+}
+
+@test "--quick's own description admits it skips the MTU probe" {
+  # lib/mtu.sh:13 returns early under --quick, but --help listed the
+  # skips as "bufferbloat, per-hop loss, speed test, internet
+  # packet-loss probe, WiFi scan" and never said so. A user reading
+  # only --help would expect an MTU number and get "not measured".
+  run "$NETDIAG" --help
+  [ "$status" -eq 0 ]
+  local quick_block
+  quick_block="$(printf '%s\n' "$output" | grep -A 3 -- '--quick  ')"
+  [[ "$quick_block" == *"MTU"* ]] || {
+    echo "--quick's help text does not mention MTU:"
+    echo "$quick_block"
+    return 1
+  }
+}
