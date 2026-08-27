@@ -783,7 +783,7 @@ fi
 . "$LIB_DIR/globals.sh"
 for mod in iface vpn wifi wifi_scan wifi_disconnect dhcp arp gateway public \
            bufferbloat mtu dns ipv6 tcp_reach speedtest ntp traceroute mtr \
-           wan internet_ping hosts netid headline diagnosis output gping; do
+           wan internet_ping hosts netid path headline diagnosis output gping; do
   # shellcheck disable=SC1090
   . "$LIB_DIR/$mod.sh"
 done
@@ -898,6 +898,11 @@ run_timed wifi       wifi_run
 run_timed gateway    gateway_run
 run_timed arp        arp_run   # L2: belongs with the gateway/L2 layer
 run_timed netid      netid_run # needs GW_MAC from arp_run, SSID from wifi_run
+# The identity tripwire's first reading, taken once the interface and
+# WiFi state are known. Cheap (~15 ms) and deliberately not a second
+# netid_run, which would cost tens of seconds. [DQ-1]
+NETID_FP_START="$(netid_fingerprint_live)"
+
 run_timed dhcp       dhcp_run  # L3 control plane, between L2 and public reach
 run_timed public     public_run
 
@@ -912,6 +917,7 @@ launch_parallel wifi_scan       wifi_scan_run
 launch_parallel wifi_disconnect wifi_disconnect_run
 launch_parallel wan_lb          wan_load_balancing_run
 launch_parallel wan_upnp        wan_upnp_run
+launch_parallel path            path_run
 progress_spin_start "Running parallel checks (DNS, IPv6, TCP, NTP, hosts, WiFi, dual-WAN, UPnP)"
 run_timed parallel_batch collect_parallel
 progress_spin_stop
@@ -932,6 +938,13 @@ run_timed mtu         mtu_run
 run_timed traceroute  traceroute_run
 run_timed nat         wan_double_nat_run  # pure parse over TRACE_LINES
 run_timed mtr         mtr_run
+
+# The second reading, before anything judges the numbers. Everything
+# between here and NETID_FP_START was measured on the network this
+# compares against — if it changed, the measurements straddle two. [DQ-1]
+NETID_FP_END="$(netid_fingerprint_live)"
+netid_fingerprint_changed "$NETID_FP_START" "$NETID_FP_END" \
+  && NETWORK_CHANGED_MID_RUN=1
 
 headline_run     # one-line punchline of everything above
 diagnosis_run

@@ -479,6 +479,19 @@ def main() -> None:
             "name": _env("VPN_NAME"),
         },
         "tcp_reach": build_tcp_reach(),
+        # What else is in the path besides the network. Facts, not
+        # verdicts: each of these sits in the datapath WITHOUT holding
+        # the default route, so every other measurement in this document
+        # still describes "the network" while a different subset of it
+        # stops describing what the user's traffic actually does. See
+        # DIAGNOSIS-RULES.md#what-else-is-in-the-path.
+        "path_actors": {
+            "split_tunnel": _bool("PATH_SPLIT_TUNNEL"),
+            "split_tunnel_interfaces": (_env("PATH_SPLIT_TUNNEL_IFACES") or "").split(),
+            "proxy": _bool("PATH_PROXY"),
+            "proxy_detail": _env("PATH_PROXY_DETAIL"),
+            "network_filters": (_env("PATH_FILTERS") or "").split(),
+        },
         "wifi_scan": ({
             "current_channel": _env("WIFI_SCAN_CURRENT_CHANNEL"),
             "current_band": _env("WIFI_SCAN_CURRENT_BAND"),
@@ -543,6 +556,12 @@ def main() -> None:
         "most_likely_root_cause": _env("MOST_LIKELY_ROOT_CAUSE"),
         "netdiag_extras": {
             "arp_gw_incomplete": _bool("ARP_GW_INCOMPLETE"),
+            # True when the Mac changed networks between the start and
+            # the end of this run, so the measurements straddle two. Such
+            # a run is deliberately absent from baseline.jsonl — this
+            # field exists for a consumer holding the record in hand,
+            # which by construction only happens via stdout. [DQ-1]
+            "network_changed_mid_run": _bool("NETWORK_CHANGED_MID_RUN"),
             "target": target,
             "target_ping": ({
                 "loss_pct": _maybe_float("TARGET_PING_LOSS"),

@@ -212,14 +212,37 @@ Every measurement netdiag takes with `curl` bypasses it — so netdiag
 reports the real ISP and real latency while the user's browser is going
 through a completely different path and *feels* slow.
 
-**Detect.** Unproven. `defaults read com.apple.networkserviceproxy`
-exists on this machine and holds `NSPServiceStatusManagerInfo` as a
-binary plist — the state is in there but needs decoding
-(`plutil -convert xml1`) and version-checking before it can be trusted.
-**Do not ship a rule on an unverified detection**; prototype first.
+**Detect — prototyped 2026-08-27, mechanism proven, mapping is not.**
+`NSPServiceStatusManagerInfo` under `com.apple.networkserviceproxy` is a
+binary plist containing an `NSKeyedArchiver` graph. It decodes cleanly:
 
-**Rule.** `PR-1` (info): browser traffic takes a different path than
-everything measured here.
+```python
+inner = plistlib.loads(plistlib.loads(raw)["NSPServiceStatusManagerInfo"])
+objs  = inner["$objects"]
+root  = objs[inner["$top"]["ServiceStatus"].data]
+root["PrivacyProxyServiceStatus"]      # → 0 on this machine
+```
+
+So the state is readable without sudo. What is *not* established is the
+value mapping: this machine reads `0`, and Private Relay is off here, so
+only "off" has been observed. Nobody has seen what "on" reads as.
+
+**Therefore still no rule.** A rule that fires on a value never
+observed is a rule that has never been tested, and the whole point of
+this document is not shipping confident guesses. This is finishable in
+about ten minutes by anyone with iCloud+ and Private Relay enabled:
+read that key with it on, and with it off, and record both.
+
+**A hard constraint when it is finished.** The same plist holds
+`PrivacyProxyNetworkStatuses` — a *history* of every network the Mac
+has joined, by name. That is a location trail: this developer's copy
+names specific hotels and cafés. netdiag must read the scalar
+`PrivacyProxyServiceStatus` and nothing else from this file. Reading
+the network names, storing them, or emitting them would put a travel
+history into `~/net-diag/baseline.jsonl` and into any shared report.
+
+**Rule (when the mapping is known).** `PR-1` (info): browser traffic
+takes a different path than everything measured here.
 
 ### 2.3 Encrypted DNS (DoH/DoT) via configuration profile
 

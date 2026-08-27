@@ -473,3 +473,84 @@ iface_setup() {
   [ "$INTERFACE" = "en0" ]
   [ "$(cat "$ROUTE_CALLS_FILE")" -ge 2 ]
 }
+
+# ── The run measured one network, not two [DQ-1] ─────────────────────────
+#
+# A full check takes ~60 s. Walk out of Wi-Fi range onto Ethernet at
+# second 30 and the run blends two networks, then stamps the result with
+# one network.id and files it in one network's history — where BL-1 later
+# judges future runs against it. Roaming between two mesh APs does the
+# same to W1/W2: one averaged RSSI describing neither radio.
+
+netid_setup() {
+  # shellcheck source=../lib/netid.sh
+  . "$REPO/lib/netid.sh"
+}
+
+@test "netid: a fingerprint is built from the four cheap identity signals" {
+  netid_setup
+  run netid_fingerprint "en0" "192.168.1.1" "Home" "aa:bb:cc:dd:ee:ff"
+  [ "$status" -eq 0 ]
+  [ "$output" = "en0|192.168.1.1|Home|aa:bb:cc:dd:ee:ff" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "netid: missing parts still produce a comparable fingerprint" {
+  # An unprivileged run has no BSSID and a hidden SSID. The fingerprint
+  # must still be stable across two calls in the same conditions, or
+  # DQ-1 fires on every such run.
+  netid_setup
+  local a b
+  a="$(netid_fingerprint "en0" "192.168.1.1" "" "")"
+  b="$(netid_fingerprint "en0" "192.168.1.1" "" "")"
+  [ "$a" = "$b" ] || { echo "'$a' != '$b'"; return 1; }
+  [ -n "$a" ] || { echo "empty fingerprint"; return 1; }
+}
+
+@test "netid: a changed network is detected" {
+  netid_setup
+  local before after
+  before="$(netid_fingerprint "en0" "192.168.1.1" "Home" "")"
+  after="$(netid_fingerprint "en5" "10.0.0.1" "" "")"
+  netid_fingerprint_changed "$before" "$after" \
+    || { echo "WiFi -> ethernet not detected"; return 1; }
+}
+
+@test "netid: a roam to another BSSID on the same SSID is detected" {
+  # Same network name, different radio. W1/W2 would otherwise average
+  # two APs' signal into one number describing neither.
+  netid_setup
+  netid_fingerprint_changed \
+    "$(netid_fingerprint en0 192.168.1.1 Home aa:bb:cc:dd:ee:01)" \
+    "$(netid_fingerprint en0 192.168.1.1 Home aa:bb:cc:dd:ee:02)" \
+    || { echo "roam not detected"; return 1; }
+}
+
+@test "netid: an unchanged network is not flagged" {
+  netid_setup
+  local fp; fp="$(netid_fingerprint en0 192.168.1.1 Home aa:bb:cc:dd:ee:ff)"
+  netid_fingerprint_changed "$fp" "$fp" \
+    && { echo "a stable network was flagged as changed"; return 1; }
+  return 0
+}
+
+@test "netid: an unknown fingerprint on either side is never a change" {
+  # The failure this prevents: a check that could not read the identity
+  # at one end reports "your network changed" on every single run. An
+  # absent reading is not evidence of a change.
+  netid_setup
+  local fp; fp="$(netid_fingerprint en0 192.168.1.1 Home "")"
+  netid_fingerprint_changed "" "$fp" && { echo "empty before flagged"; return 1; }
+  netid_fingerprint_changed "$fp" "" && { echo "empty after flagged"; return 1; }
+  netid_fingerprint_changed "" ""    && { echo "both empty flagged"; return 1; }
+  return 0
+}
+
+@test "netid: a fingerprint with only empty fields counts as unknown" {
+  # "|||" carries no identity at all and must not compare equal to a
+  # real one, nor count as a reading.
+  netid_setup
+  local blank; blank="$(netid_fingerprint "" "" "" "")"
+  netid_fingerprint_changed "$blank" "$(netid_fingerprint en0 192.168.1.1 Home "")" \
+    && { echo "a contentless fingerprint was treated as a reading"; return 1; }
+  return 0
+}

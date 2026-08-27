@@ -389,6 +389,46 @@ diagnosis_run() {
     add_diag info SP-1 "Your download speed (${SPEEDTEST_DOWN_MBPS} Mbps) is about as fast as this WiFi connection can physically carry — the link between your Mac and the router negotiated ${WIFI_TX} Mbps, and real-world throughput is always well below that headline figure. So this number is the ceiling of your *wireless* connection, not of your internet plan: a faster plan would not change it. To see what your connection can really do, plug in with an ethernet cable, or move closer to the router and prefer the 5 GHz or 6 GHz band."
   fi
 
+  # VPN-2 / PX-1 / FW-1 — something else is in the path.
+  #
+  # All three exist because netdiag equates "carries my traffic" with
+  # "holds the default route", and macOS stopped honouring that equation
+  # years ago. Each of these sits in the datapath without taking the
+  # default route, so every measurement above still reads as a clean
+  # description of "the network" while a different subset of it is
+  # quietly not describing what the user's traffic actually does.
+  #
+  # All three are `info` and all three are worded as "here is something
+  # else in the path", never as an accusation. A split tunnel, a
+  # corporate proxy and a content filter are usually working exactly as
+  # their owner intended; a network tool crying wolf about them is worse
+  # than silence. What they add is the sentence that stops a user
+  # trusting a clean report while their work applications are broken.
+  if [ "${PATH_SPLIT_TUNNEL:-0}" -eq 1 ]; then
+    add_diag info VPN-2 "A VPN tunnel is carrying part of your traffic — some destinations go through it (via ${PATH_SPLIT_TUNNEL_IFACES}) while everything else goes direct. That's how a work VPN is normally set up. It matters here because everything this report measured took the direct path: if the sites that feel broken are the ones behind the VPN, nothing above describes them, and the tunnel is the place to look."
+  fi
+  if [ "${PATH_PROXY:-0}" -eq 1 ]; then
+    add_diag info PX-1 "Your connection is configured to send traffic through a proxy (${PATH_PROXY_DETAIL:-configured on this network}). netdiag's own tests connect directly, so the results above describe the network rather than the path your browser and apps actually take. If pages fail while this report looks clean, the proxy — or the rules deciding what goes through it — is the more likely cause."
+  fi
+  if [ "${PATH_FILTER_COUNT:-0}" -gt 0 ]; then
+    add_diag info FW-1 "Network filtering software is installed and sits in the path of your traffic (${PATH_FILTERS}). This is normal on a managed or security-conscious Mac and is not a fault in itself. It is worth knowing because it can produce exactly the symptoms this report is for — blocked connections, stalls, failures on some sites and not others — and none of those would show up as a problem with your network."
+  fi
+
+  # DQ-1 — this run measured more than one network.
+  #
+  # Fires first among the informational rules because it changes how
+  # every number above it should be read. A run that started on WiFi and
+  # ended on ethernet has a latency figure from one link, a speed figure
+  # from another, and a single network.id stamped on both.
+  #
+  # info rather than warn: nothing is broken, and the user did nothing
+  # wrong by walking out of range. The value is in not silently
+  # presenting a blend as a measurement — and in keeping the run out of
+  # the baseline, which lib/output.sh does on the same flag.
+  if [ "${NETWORK_CHANGED_MID_RUN:-0}" -eq 1 ]; then
+    add_diag info DQ-1 "Your Mac changed networks while this check was running — so these numbers describe the switch, not any one network. Latency, speed and signal here were measured on different connections and can't be compared with each other. This run has been left out of the history for both networks rather than filed under the wrong one. Re-run once you've settled on a connection for a result that means something."
+  fi
+
   # WI-1 — macOS is withholding the network's name.
   #
   # A data-completeness fact, not a network fault, and it is here rather

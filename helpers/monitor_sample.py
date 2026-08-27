@@ -215,6 +215,18 @@ def main() -> None:
         "version": _env("VERSION"),
         "ts": _env("TS"),
         "seq": _i("SEQ") or 0,
+        # Seconds lost between this sample and the previous one, when
+        # that exceeded the scheduled cadence by THRESH_MON_GAP_FACTOR;
+        # null on an ordinary cycle.
+        #
+        # This is what a laptop lid closing looks like from the stream:
+        # two samples eight hours apart, both reporting a healthy link,
+        # and nothing in between. Without this field a consumer cannot
+        # tell that silence from a dead network — so an overnight sleep
+        # reads as an overnight outage. The monitor deliberately stays
+        # dumb about *why* (sleep, SIGSTOP, a stalled probe); it reports
+        # only that it was not looking, and for how long.
+        "gap_s": _i("GAP_S"),
         # Which tiers actually refreshed this cycle. Everything outside
         # this list is carried over from an earlier sample, which a
         # consumer plotting a series needs to know before it draws a point.

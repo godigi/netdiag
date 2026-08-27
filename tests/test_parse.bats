@@ -688,6 +688,9 @@ assert_not_contains() {
 @test "diagnosis: an ordinary link does not fire MET-1" {
   sp_setup
   LINK_METERED=0 LINK_SERVICE="Wi-Fi" LINK_METERED_CERTAIN=0
+  PATH_SPLIT_TUNNEL=0 PATH_SPLIT_TUNNEL_IFACES=""
+  PATH_PROXY=0 PATH_PROXY_DETAIL="" PATH_FILTERS="" PATH_FILTER_COUNT=0
+  NETWORK_CHANGED_MID_RUN=0
   diagnosis_run >/dev/null
   diag_has MET-1 && { echo "MET-1 fired on an unmetered link"; return 1; }
   return 0
@@ -789,6 +792,9 @@ sp_setup() {
   LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
   LINK_METERED=0 LINK_SERVICE="Wi-Fi" LINK_METERED_CERTAIN=0
+  PATH_SPLIT_TUNNEL=0 PATH_SPLIT_TUNNEL_IFACES=""
+  PATH_PROXY=0 PATH_PROXY_DETAIL="" PATH_FILTERS="" PATH_FILTER_COUNT=0
+  NETWORK_CHANGED_MID_RUN=0
   WIFI_NAME_HIDDEN=0 WIFI_PRIVILEGED=0 WIFI_DISCONNECT_COUNT=0
   EXPERT=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
@@ -853,6 +859,9 @@ eth_setup() {
   LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
   LINK_METERED=0 LINK_SERVICE="Wi-Fi" LINK_METERED_CERTAIN=0
+  PATH_SPLIT_TUNNEL=0 PATH_SPLIT_TUNNEL_IFACES=""
+  PATH_PROXY=0 PATH_PROXY_DETAIL="" PATH_FILTERS="" PATH_FILTER_COUNT=0
+  NETWORK_CHANGED_MID_RUN=0
   WIFI_NAME_HIDDEN=0 WIFI_PRIVILEGED=0 WIFI_DISCONNECT_COUNT=0
   EXPERT=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
@@ -1132,4 +1141,100 @@ diag_text_for() {
   diagnosis_run >/dev/null
   assert_contains " ${DIAG_RULE[*]} " " D1 "
   assert_not_contains " ${DIAG_RULE[*]} " " D2 "
+}
+
+# ── DQ-1: the run measured two networks, not one ─────────────────────────
+#
+# A full check takes ~60 s. Walk out of WiFi range onto ethernet at second
+# 30 and the run blends two networks, then files the blend under one of
+# them — where BL-1 judges every future run against a baseline that
+# describes a transition.
+
+@test "diagnosis: a network change mid-run fires DQ-1 as info" {
+  sp_setup
+  NETWORK_CHANGED_MID_RUN=1
+  diagnosis_run >/dev/null
+  diag_has DQ-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  [ "$MAX_SEVERITY" -eq 0 ] || { echo "DQ-1 moved the exit code"; return 1; }
+  assert_contains "$(diag_text_for DQ-1)" "changed networks"
+  # It must say the run was kept out of history, or the user has no way
+  # to know why the result is missing from their trends.
+  assert_contains "$(diag_text_for DQ-1)" "left out of the history"
+}
+
+@test "diagnosis: a stable run does not fire DQ-1" {
+  sp_setup
+  NETWORK_CHANGED_MID_RUN=0
+  diagnosis_run >/dev/null
+  diag_has DQ-1 && { echo "DQ-1 fired on a stable run"; return 1; }
+  return 0
+}
+
+@test "diagnosis: DQ-1 quotes no network identity" {
+  # The fingerprint carries the SSID and BSSID of both networks. Naming
+  # either would put a second network's identity into a report filed
+  # under the first — and into anything the user pastes.
+  sp_setup
+  NETWORK_CHANGED_MID_RUN=1 WIFI_SSID="Mercure"
+  diagnosis_run >/dev/null
+  assert_not_contains "$(diag_text_for DQ-1)" "Mercure"
+}
+
+# ── VPN-2 / PX-1 / FW-1: something else is in the path ───────────────────
+#
+# One assumption wearing three disguises: netdiag equates "carries my
+# traffic" with "holds the default route". Each of these sits in the
+# datapath without taking it, so every measurement above still reads as a
+# clean description of "the network".
+
+@test "diagnosis: a split tunnel fires VPN-2 as info" {
+  sp_setup
+  PATH_SPLIT_TUNNEL=1 PATH_SPLIT_TUNNEL_IFACES="utun4"
+  diagnosis_run >/dev/null
+  diag_has VPN-2 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  [ "$MAX_SEVERITY" -eq 0 ] || { echo "VPN-2 moved the exit code"; return 1; }
+  assert_contains "$(diag_text_for VPN-2)" "utun4"
+  # The load-bearing sentence: this report did not measure the tunnel.
+  assert_contains "$(diag_text_for VPN-2)" "direct path"
+}
+
+@test "diagnosis: a proxy fires PX-1 and names it" {
+  sp_setup
+  PATH_PROXY=1 PATH_PROXY_DETAIL="proxy.corp.example:8080"
+  diagnosis_run >/dev/null
+  diag_has PX-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  assert_contains "$(diag_text_for PX-1)" "proxy.corp.example:8080"
+  assert_contains "$(diag_text_for PX-1)" "connect directly"
+}
+
+@test "diagnosis: a content filter fires FW-1 without accusing it" {
+  # These are usually working exactly as their owner intended. A network
+  # tool crying wolf about corporate security software is worse than
+  # silence, so the wording must stay descriptive.
+  sp_setup
+  PATH_FILTER_COUNT=1 PATH_FILTERS="com.netskope.client.NetskopeClientExtension"
+  diagnosis_run >/dev/null
+  diag_has FW-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  assert_contains "$(diag_text_for FW-1)" "com.netskope.client.NetskopeClientExtension"
+  assert_contains "$(diag_text_for FW-1)" "not a fault in itself"
+}
+
+@test "diagnosis: a clean path fires none of the three" {
+  sp_setup
+  diagnosis_run >/dev/null
+  for r in VPN-2 PX-1 FW-1; do
+    diag_has "$r" && { echo "$r fired on a clean path"; return 1; }
+  done
+  return 0
+}
+
+@test "diagnosis: the path rules never move the exit code" {
+  # All three are info by design. A split tunnel is not a fault, and
+  # exiting 1 or 2 on one would make every corporate Mac look broken.
+  sp_setup
+  PATH_SPLIT_TUNNEL=1 PATH_SPLIT_TUNNEL_IFACES="utun4"
+  PATH_PROXY=1 PATH_PROXY_DETAIL="p:1"
+  PATH_FILTER_COUNT=1 PATH_FILTERS="com.example.f"
+  diagnosis_run >/dev/null
+  [ "$MAX_SEVERITY" -eq 0 ] || { echo "MAX_SEVERITY=$MAX_SEVERITY"; return 1; }
 }

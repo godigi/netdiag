@@ -1,11 +1,11 @@
-netdiag  2026-08-27-201026
-log: /Users/bfreeman/net-diag/2026-08-27-201026.log
+netdiag  2026-08-27-205230
+log: /Users/bfreeman/net-diag/2026-08-27-205230.log
 
 ── Report ──
   ✓  Network             en0 · WiFi 5GHz ch149
-  ✓  Router              192.168.60.1 · 0% loss · 3.2 ms · ±0.8 ms jitter
+  ✓  Router              192.168.60.1 · 0% loss · 2.9 ms · ±0.7 ms jitter
   ✓  Internet            Cyber Info Provedor de Acesso LTDA ME ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 48 ms · ±0.5 ms jitter
+  ✓  Latency             1.1.1.1 · 49 ms · ±1.2 ms jitter
   ✓  Packet loss         0.0% to 1.1.1.1 · 5.0% to 8.8.8.8 · clean
   ✓  DNS                 working
   ✓  Bufferbloat         grade A/A · clean under load
@@ -27,9 +27,8 @@ log: /Users/bfreeman/net-diag/2026-08-27-201026.log
 
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 19.3 Mbps · Up 13.5 Mbps · 8.276 ms (jitter 0.968 ms)
+  ✓ Down 19.0 Mbps · Up 14.2 Mbps · 6.547 ms (jitter 0.148 ms)
   · Server: Cyber Info Serviços de Telecomunicações Ltda
-  ⚠ Something changed since your last runs: bufferbloat inet Δ is 0.7 vs 0.1 median (×7.0 spike)
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-27-201026.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-27-205230.log

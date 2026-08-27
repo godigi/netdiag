@@ -1,0 +1,8 @@
+3 extension(s)
+--- com.apple.system_extension.network_extension
+enabled	active	teamID	bundleID (version)	name	[state]
+*	*	PXPZ95SK77	com.netskope.client.Netskope-Client.NetskopeClientExtension (110.0/110.0.0.1234)	Netskope Client	[activated enabled]
+	*	EQHXZ8M8AV	com.getlittlesnitch.daemon (6.2/6234)	Little Snitch Daemon	[activated waiting for user]
+--- com.apple.system_extension.driver_extension
+enabled	active	teamID	bundleID (version)	name	[state]
+*	*	G43BCU2T37	org.pqrs.Karabiner-DriverKit-VirtualHIDDevice (1.8.0/1.8.0)	Karabiner	[activated enabled]

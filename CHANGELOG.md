@@ -6,6 +6,98 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — one check for everything else in the path
+
+`VPN-1` fires on the *default route*. So did netdiag's whole model of a
+network: **it equated "carries my traffic" with "holds the default
+route"**, and macOS stopped honouring that equation years ago. Split
+tunnels, PAC proxies and NetworkExtension content filters each sit in
+the datapath *without* taking the default route — so every measurement
+in the report still read as a clean description of "the network" while a
+different subset of it quietly stopped describing what the user's
+traffic actually does.
+
+The most expensive version of that: a corporate split-tunnel VPN
+installs routes for the company's prefixes only, so netdiag reported a
+perfectly healthy network while every work application was broken, and
+said nothing about the one component that was failing.
+
+New `lib/path.sh` — one check, not five features, because these are one
+bug wearing several disguises. It enumerates actors and says which
+measurements each undermines; it does not diagnose faults.
+
+- **`VPN-2`** — non-default routes via `utun*`/`ipsec*`/`wg*`/`ppp*`.
+  Keyed on *routes*, never on interfaces: this machine has `utun0`
+  through `utun5` all UP and carrying nothing, which is why
+  `lib/vpn.sh` already warned that "existence alone is meaningless".
+- **`PX-1`** — a web proxy or PAC file on the service carrying the
+  link. `networksetup -getwebproxy` was read nowhere before, so
+  `tcp_reach`'s direct connections were testing a path real traffic
+  never uses.
+- **`FW-1`** — NetworkExtension content filters (Zscaler, Netskope,
+  WARP, Little Snitch). Only the `network_extension` group counts; this
+  machine has camera and driver extensions installed and neither is in
+  the datapath.
+
+All three are `info` and worded as "here is something else in the path",
+never as an accusation — these are usually working exactly as their
+owner intended, and a network tool crying wolf about corporate security
+software is worse than silence. New `path_actors` block in the JSON.
+
+**Two actors deliberately absent.** iCloud Private Relay and encrypted
+DNS both belong here and neither ships, for the same reason: the
+detection has never been observed in its *positive* state. Private
+Relay was prototyped today and the mechanism works —
+`PrivacyProxyServiceStatus` decodes out of
+`com.apple.networkserviceproxy` without sudo — but only the "off" value
+(`0`) has ever been seen, so the mapping is unverified and a rule firing
+on a value nobody has observed is a rule nobody has tested. Recorded in
+the design doc, along with the constraint that the same plist holds a
+*location trail* (every network joined, by name) that netdiag must never
+read.
+
+### Fixed — a run that measured two networks no longer poisons a baseline
+
+A full check takes ~60 s. Walk out of Wi-Fi range onto ethernet at
+second 30 and the run blended two networks: a latency figure from one
+link, a speed figure from another, and a single `network.id` stamped on
+both. It then went into that network's history, where `BL-1` judged
+every future run against a baseline describing a transition. Roaming
+between two mesh APs did the same to `W1`/`W2` — one averaged RSSI
+describing neither radio.
+
+New `DQ-1` names it, and — the larger half — `lib/output.sh` now forces
+`NO_BASELINE=1` and `HISTORY_APPEND=0` on such a run. Comparing a blend
+against either network's history manufactures `BL-1` regressions out of
+the switch itself; *storing* it poisons every future comparison.
+Silently filing it under one of the two networks was what happened
+before.
+
+Detected with a cheap fingerprint (interface, gateway, SSID, BSSID)
+taken at both ends of the run, ~15 ms, rather than a second `netid_run`
+— which would mean re-running `iface`, `wifi` and `arp`, tens of
+seconds, to answer a question four fast reads settle. An unreadable
+fingerprint on either side is never a change: a warning that fires on
+every run is a warning nobody reads.
+
+### Fixed — an overnight sleep no longer reads as an overnight outage
+
+`lib/monitor.sh` states that it "stays dumb about sleep" and leaves the
+question to the GUI's `NSWorkspace` notifications. That is right for the
+GUI and wrong for everyone else: `--monitor` is documented as a stream
+for *any* program, so a laptop lid closed for eight hours emitted two
+samples eight hours apart — both reporting a healthy link, nothing in
+between — and a consumer reading that stream could not tell the silence
+from a dead network.
+
+New `gap_s` on each monitor sample: the seconds lost when the interval
+between samples exceeded its scheduled cadence by the new
+`THRESH_MON_GAP_FACTOR` (3), `null` otherwise. `null` rather than `0`,
+because `0` would mean "no time passed" where this means "no
+discontinuity". The monitor stays deliberately dumb about *why* it
+stopped looking — sleep, `SIGSTOP`, a stalled probe — and reports only
+that it did, and for how long.
+
 ## [0.11.0] - 2026-08-27
 
 ### Added — enough detail to diagnose the *next* Wi-Fi flapping episode

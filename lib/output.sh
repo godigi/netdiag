@@ -90,6 +90,11 @@ build_json() {
   NETDIAG_IPV6_TRACE_HOPS="$IPV6_TRACE_HOPS" \
   NETDIAG_IPV6_TCP_OK="$IPV6_TCP_OK" \
   NETDIAG_TCP_REACH_LINES="$TCP_REACH_LINES" \
+  NETDIAG_PATH_SPLIT_TUNNEL="${PATH_SPLIT_TUNNEL:-0}" \
+  NETDIAG_PATH_SPLIT_TUNNEL_IFACES="${PATH_SPLIT_TUNNEL_IFACES:-}" \
+  NETDIAG_PATH_PROXY="${PATH_PROXY:-0}" \
+  NETDIAG_PATH_PROXY_DETAIL="${PATH_PROXY_DETAIL:-}" \
+  NETDIAG_PATH_FILTERS="${PATH_FILTERS:-}" \
   NETDIAG_WIFI_SCAN_CURRENT_CHANNEL="$WIFI_SCAN_CURRENT_CHANNEL" \
   NETDIAG_WIFI_SCAN_CURRENT_BAND="$WIFI_SCAN_CURRENT_BAND" \
   NETDIAG_WIFI_SCAN_NEIGHBOR_COUNT="$WIFI_SCAN_NEIGHBOR_COUNT" \
@@ -116,6 +121,7 @@ build_json() {
   NETDIAG_GW_MAC="$GW_MAC" \
   NETDIAG_NETWORK_ID="$NETWORK_ID" \
   NETDIAG_NETWORK_LABEL="$NETWORK_LABEL" \
+  NETDIAG_NETWORK_CHANGED_MID_RUN="${NETWORK_CHANGED_MID_RUN:-0}" \
   NETDIAG_ARP_GW_INCOMPLETE="$ARP_GW_INCOMPLETE" \
   NETDIAG_MTR_FIRST_LOSSY_HOP="$MTR_FIRST_LOSSY_HOP" \
   NETDIAG_TARGET="$TARGET" \
@@ -334,6 +340,17 @@ output_run() {
   # runs --quick — keeps building the history that full runs are measured
   # against. --speed-only is the same trade for a different reason: its
   # numbers are worth storing and its verdict is not worth comparing.
+  # A run whose network changed mid-way is compared against nothing and
+  # appended nowhere. Both halves matter and for different reasons:
+  # comparing a WiFi-to-ethernet blend against either network's history
+  # manufactures BL-1 regressions out of the switch, and *storing* it
+  # poisons the baseline every future run on that network is judged
+  # against. Silently filing it under one of the two networks is the
+  # worst option, and was what happened before DQ-1. [DQ-1]
+  if [ "${NETWORK_CHANGED_MID_RUN:-0}" -eq 1 ]; then
+    NO_BASELINE=1
+    HISTORY_APPEND=0
+  fi
   if [ "$NO_BASELINE" -eq 0 ] && [ "$BASELINE" -eq 1 ] && [ "$QUICK" -eq 0 ]; then
     mkdir -p "$LOG_DIR"
     # THRESH_SPEED_* judge a speedtest drop the same way THRESH_COMPARE_*

@@ -180,6 +180,9 @@ GW_MAC=""                # gateway's hardware address; feeds NETWORK_ID
 # between networks doesn't register as a regression.
 NETWORK_ID=""
 NETWORK_LABEL=""
+NETID_FP_START=""       # cheap identity fingerprint, start of run [DQ-1]
+NETID_FP_END=""         # ...and at the end; a difference means two networks
+NETWORK_CHANGED_MID_RUN=0
 
 # /etc/hosts (lib/hosts.sh)
 HOSTS_CUSTOM_COUNT=0
@@ -199,6 +202,15 @@ WAN_UPNP_STATE="unknown" # enabled | disabled | unknown
 WAN_UPNP_DEVICE=""
 WAN_UPNP_URL=""
 WAN_UPNP_TESTED_VIA=""   # miniupnpc | ssdp | nat-pmp
+
+# What else is in the path (lib/path.sh) — actors that invalidate a
+# subset of the measurements above without holding the default route.
+PATH_SPLIT_TUNNEL=0        # 1 = non-default routes via a tunnel [VPN-2]
+PATH_SPLIT_TUNNEL_IFACES="" # which ones, space-separated
+PATH_PROXY=0               # 1 = a web proxy or PAC is enabled [PX-1]
+PATH_PROXY_DETAIL=""       # host:port, or the PAC URL
+PATH_FILTERS=""            # NetworkExtension filter bundle ids [FW-1]
+PATH_FILTER_COUNT=0
 
 # Output / baseline (lib/output.sh)
 DIAGNOSIS_LINES=""       # one "SEV|MSG" per line (SEV ∈ critical/warn/info)

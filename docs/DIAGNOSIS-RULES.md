@@ -486,6 +486,123 @@ All of the below are implemented and can fire.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
 
+## What else is in the path
+
+`VPN-2`, `PX-1` and `FW-1` all exist for one reason: **netdiag equates
+"carries my traffic" with "holds the default route"**, and macOS stopped
+honouring that equation years ago. Split tunnels, PAC proxies,
+NetworkExtension content filters, per-app proxies and DoH resolvers each
+sit in the datapath *without* taking the default route — so every
+measurement in the report still reads as a clean description of "the
+network" while a different subset of it quietly stops describing what
+the user's traffic actually does.
+
+They were designed as one check (`lib/path.sh`) rather than five
+features, because they are one bug wearing five disguises. The module
+does not diagnose faults; it enumerates actors and says which
+measurements each one undermines.
+
+**All three are `info`, and worded as "here is something else in the
+path" rather than as an accusation.** A split tunnel, a corporate proxy
+and a content filter are usually working exactly as their owner
+intended, and a network tool crying wolf about corporate security
+software is worse than silence. What they add is the one sentence that
+stops a user trusting a clean report while their work applications are
+broken.
+
+**Two actors are deliberately absent.** iCloud Private Relay and
+encrypted DNS (DoH/DoT) both belong here, and neither ships, for the
+same reason: the detection has never been observed in its *positive*
+state. See `docs/design/networks-we-cannot-yet-describe.md` §2.2 and
+§2.3 — the Private Relay mechanism is proven and only its value mapping
+is unverified. A rule that fires on a value nobody has seen is a rule
+that has never been tested.
+
+### VPN-2 — A split tunnel carries part of your traffic
+
+- Trigger: `netstat -rn -f inet` shows a **non-default** route via a
+  `utun*` / `ipsec*` / `wg*` / `ppp*` interface.
+- Severity: `info`.
+- Evidence: the tunnel interfaces carrying routes.
+
+`VPN-1` fires on the *default route*. A corporate split-tunnel VPN
+deliberately does not take it — it installs routes for the company's
+prefixes only — so netdiag reported a perfectly healthy network while
+every work application was broken, and said nothing about the one
+component that was failing.
+
+**Interfaces are not evidence; routes are.** The machine this was
+written on has `utun0` through `utun5` all UP and carrying no routes
+whatsoever. macOS creates them as a matter of course, which is why
+`lib/vpn.sh` already warns that "existence alone is meaningless" — and
+why this rule keys on the routing table instead.
+
+### PX-1 — A proxy or PAC file is configured
+
+- Trigger: `networksetup -getwebproxy` or `-getautoproxyurl` reports
+  `Enabled: Yes` for the service carrying the link.
+- Severity: `info`.
+- Evidence: `host:port`, or the PAC URL.
+
+On a managed Mac a PAC file decides which destinations go direct and
+which go through a proxy, so `tcp_reach`'s direct connections test a
+path real traffic never uses. Nothing in netdiag read these settings
+before. Checked only for `LINK_SERVICE` — proxy settings are per-service
+and only the service carrying this run's traffic is relevant.
+
+### FW-1 — Network filtering software is in the path
+
+- Trigger: `systemextensionsctl list` reports one or more extensions
+  under `com.apple.system_extension.network_extension`.
+- Severity: `info`.
+- Evidence: the bundle IDs.
+
+Zscaler, Netskope, Cloudflare WARP, Little Snitch and LuLu install
+NetworkExtension content filters that sit in the datapath. When one
+misbehaves it *is* the fault, and netdiag would otherwise attribute its
+symptoms to the router or the ISP.
+
+Only the `network_extension` group counts. This machine has a camera
+extension and a driver extension installed; neither is in the datapath,
+and reporting them would be a false alarm on a very common setup.
+
+### DQ-1 — The run measured two networks
+
+- Trigger: `netid_fingerprint_live` taken once after `dhcp_run` and again
+  before `diagnosis_run` differ (`netid_fingerprint_changed`).
+- Severity: `info`.
+- Evidence: none quoted — the fingerprint carries the SSID and BSSID,
+  and naming them would put a second network's identity in a report
+  filed under the first.
+- Recommendation: settle on a connection and re-run.
+
+**The defect it closes.** A full check takes ~60 s. Walk out of Wi-Fi
+range onto ethernet at second 30 and the run blends two networks: a
+latency figure from one link, a speed figure from another, and a single
+`network.id` stamped on both. It then goes into that network's history,
+where `BL-1` judges every future run against a baseline describing a
+transition. Roaming between two mesh APs does the same to `W1`/`W2` —
+one averaged RSSI describing neither radio.
+
+**It also changes what is stored, which is the larger half.**
+`lib/output.sh` forces `NO_BASELINE=1` and `HISTORY_APPEND=0` on this
+flag. Comparing a blend against either network's history manufactures
+`BL-1` regressions out of the switch itself; *storing* it poisons the
+baseline every future run on that network is measured against. Silently
+filing it under one of the two was what happened before this rule.
+
+**Why a fingerprint rather than a second `netid_run`.** Re-deriving
+`NETWORK_ID` means re-running `iface`, `wifi` and `arp` — tens of
+seconds to answer a question that four fast reads settle. The
+fingerprint (interface, gateway, SSID, BSSID) costs ~15 ms and is not
+the network's identity; it is a tripwire for the identity changing.
+
+**An unreadable fingerprint is never a change.** If either reading comes
+back empty — or as `|||`, every field blank, which an unprivileged
+routeless run produces — the rule stays silent. A warning that fires on
+every run is a warning nobody reads, and absence of a reading is not
+evidence of a change.
+
 ### WI-1 — macOS is withholding the network's name
 
 - Trigger: on Wi-Fi, `WIFI_NAME_HIDDEN == 1` — `lib/wifi.sh` saw the

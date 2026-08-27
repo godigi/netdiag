@@ -43,6 +43,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `ipv6` | object | `available`, `global_addr`, `gateway`, `ping_loss_pct`, `aaaa_ok`, `trace_hops`, `tcp_v6_ok` |
 | `vpn` | object | `active`, `type` (`managed`/`tailscale`/`utun-route`), `name` |
 | `tcp_reach` | array | `host`, `port`, `ok`, `elapsed_ms` |
+| `path_actors` | object | `split_tunnel`, `split_tunnel_interfaces[]`, `proxy`, `proxy_detail`, `network_filters[]`. What else sits in the datapath **without holding the default route** — so every other measurement in this document still describes "the network" while a different subset of it stops describing what the user's traffic actually does. Facts, not verdicts; the rules that read them (`VPN-2`, `PX-1`, `FW-1`) are all `info` (see `DIAGNOSIS-RULES.md#what-else-is-in-the-path`). |
 | `wifi_scan` | object | `current_channel`, `current_band`, `neighbour_count`, `current_channel_neighbours` |
 | `wifi_disconnects` | object | `window_hours`, `count`, `events`. `events` holds the condensed log lines behind the count — `"YYYY-MM-DD HH:MM:SS  <message>"`, each truncated to 120 chars — capped at `THRESH_WIFI_EVENTS_STORED` (50) and newest last. The report prints only the most recent five, because the 2 KB-per-line `airportd` dumps would drown out everything else; the record keeps more, because macOS's log retention rolls over long before anyone investigates and a line not captured at run time is gone. |
 | `speedtest` | object | on by default since v0.6.0. `null` when the test was skipped — `--no-speed`, `--quick` without an explicit `--speed`, no speedtest CLI installed, no internet to test against, or `interface.metered` is `true` (see `MET-1`) |
@@ -56,7 +57,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `baseline` | object | comparison against history, or `null` — see below |
 | `diagnosis` | array | `severity` (`info`/`warn`/`critical`), `rule`, `summary` |
 | `most_likely_root_cause` | string | the highest-severity diagnosis summary, first by insertion order |
-| `netdiag_extras` | object | `arp_gw_incomplete`, plus `target*` keys when a positional TARGET was given |
+| `netdiag_extras` | object | `arp_gw_incomplete`, `network_changed_mid_run`, plus `target*` keys when a positional TARGET was given. `network_changed_mid_run` is `true` when the Mac changed networks between the start and end of the run, so the measurements straddle two — such a run is deliberately **absent from `baseline.jsonl`**, so this field is only ever seen on stdout (see `DIAGNOSIS-RULES.md#dq-1--the-run-measured-two-networks`). |
 
 ## `run_mode`
 
@@ -361,6 +362,7 @@ it would accumulate forever.
   "version": "0.9.0",
   "ts": "2026-08-11T16:20:51Z",
   "seq": 42,
+  "gap_s": null,                  // seconds lost since the last sample, or null
   "refreshed": ["fast"],          // which cadence tiers ran this cycle
   "link":    {"up": true, "interface": "en0", "type": "wifi", "ip": "…",
               "gateway": "192.168.15.1", "gateway_mac": "10:98:5f:…",
@@ -408,6 +410,20 @@ it would accumulate forever.
   joining on it never matches. `null` when the network has no identity
   at all, and absent from a CLI older than the field — consumers fall
   back to `network.id` there and simply re-derive grouping themselves.
+- **`gap_s`** is the seconds lost between this sample and the previous
+  one, when that exceeded the scheduled cadence by
+  `THRESH_MON_GAP_FACTOR`; `null` on an ordinary cycle. `null` rather
+  than `0`, because `0` would mean "no time passed" — a measurement —
+  where this means "no discontinuity".
+
+  **This is what a laptop lid closing looks like from the stream:** two
+  samples eight hours apart, both reporting a healthy link, nothing in
+  between. Without this field a consumer cannot tell that silence from a
+  dead network, so an overnight sleep reads as an overnight outage. The
+  monitor stays deliberately dumb about *why* it stopped looking — sleep,
+  `SIGSTOP`, a stalled probe — and reports only that it did, and for how
+  long. A consumer plotting a series should break the line across a gap
+  rather than interpolating it.
 - **`refreshed`** lists the tiers that actually ran this cycle. Everything
   outside it is carried over from an earlier sample. A consumer plotting a
   series needs this: `public.ip` is refreshed every 300 s, so nine out of

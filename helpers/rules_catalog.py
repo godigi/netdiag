@@ -524,6 +524,71 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#wi-1--macos-is-withholding-the-networks-name",
     },
     {
+        "id": "DQ-1",
+        "title": "This check measured two networks, not one",
+        "category": "baseline",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "Your Mac changed networks while this check was running, so "
+            "these numbers describe the switch rather than any one "
+            "network — latency, speed and signal were measured on "
+            "different connections and cannot be compared with each "
+            "other. The run has been left out of the history for both "
+            "networks rather than filed under the wrong one. Re-run "
+            "once you have settled on a connection."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#dq-1--the-run-measured-two-networks",
+    },
+    {
+        "id": "VPN-2",
+        "title": "A VPN is carrying part of your traffic",
+        "category": "vpn",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "A VPN tunnel carries some destinations while everything "
+            "else goes direct — the normal shape of a work VPN. It "
+            "matters because everything in this report was measured on "
+            "the direct path: if the sites that feel broken are the "
+            "ones behind the VPN, nothing here describes them, and the "
+            "tunnel is the place to look."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#vpn-2--a-split-tunnel-carries-part-of-your-traffic",
+    },
+    {
+        "id": "PX-1",
+        "title": "Traffic is configured to go through a proxy",
+        "category": "topology",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "This connection sends traffic through a proxy, and "
+            "netdiag's own tests connect directly — so the results "
+            "describe the network rather than the path your browser and "
+            "apps actually take. If pages fail while this report looks "
+            "clean, the proxy, or the rules deciding what goes through "
+            "it, is the more likely cause."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#px-1--a-proxy-or-pac-file-is-configured",
+    },
+    {
+        "id": "FW-1",
+        "title": "Network filtering software is in the path",
+        "category": "topology",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "Filtering software sits in the path of your traffic — "
+            "normal on a managed or security-conscious Mac, and not a "
+            "fault in itself. Worth knowing because it can produce "
+            "exactly the symptoms this report is for: blocked "
+            "connections, stalls, failures on some sites and not "
+            "others, none of which would show up as a network problem."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#fw-1--network-filtering-software-is-in-the-path",
+    },
+    {
         "id": "SP-1",
         "title": "WiFi is the speed cap, not your plan",
         "category": "speed",

@@ -120,3 +120,69 @@ netid_run() {
     setvar NETWORK_GROUP "$NETWORK_GROUP"
   fi
 }
+
+# ── Did this run measure one network, or two? [DQ-1] ─────────────────────
+#
+# A full check takes ~60 s. Walk out of Wi-Fi range onto ethernet at
+# second 30 and the run blends two networks, then stamps the result with
+# one network.id and files it in one network's history — where BL-1 later
+# judges future runs against a baseline that describes a transition.
+# Roaming between two mesh APs mid-run does the same to W1/W2: one
+# averaged RSSI describing neither radio.
+#
+# Deliberately a *cheap* fingerprint rather than a second netid_run.
+# Re-deriving NETWORK_ID would mean re-running iface, wifi and arp — tens
+# of seconds — to answer a question that four fast reads settle. This is
+# not the network's identity; it is a tripwire for the identity changing.
+
+# The fingerprint string from its four parts: $1 interface, $2 gateway,
+# $3 SSID, $4 BSSID. Any may be empty.
+#
+# Pure, so the tests drive it without a network. Joined with "|" rather
+# than compared field-by-field because the only question ever asked of it
+# is "same or not".
+netid_fingerprint() {
+  printf '%s|%s|%s|%s' "${1:-}" "${2:-}" "${3:-}" "${4:-}"
+}
+
+# True when $1 and $2 describe different networks.
+#
+# An unreadable fingerprint on either side is NOT a change. The failure
+# this prevents is the loud one: a check that could not read the identity
+# at one end would otherwise report "your network changed" on every
+# single run, and a warning that fires always is a warning nobody reads.
+# Absence of a reading is not evidence of a change.
+#
+# "|||" — every field empty — is a fingerprint carrying no identity at
+# all, and counts as unreadable rather than as a network in its own
+# right, or an unprivileged run with no gateway would compare equal to
+# every other one.
+netid_fingerprint_changed() {
+  local before="${1:-}" after="${2:-}"
+  case "$before" in ''|'|||') return 1 ;; esac
+  case "$after"  in ''|'|||') return 1 ;; esac
+  [ "$before" != "$after" ]
+}
+
+# The current fingerprint, read from live state. No sudo, no packets:
+# the routing table, one ipconfig summary, and the ARP cache.
+#
+# Costs ~15 ms, which is why it can be taken twice in a run.
+#
+# The one function in this file that is not standalone: it borrows
+# wifi_parse_ipconfig_summary from lib/wifi_common.sh. Only bin/netdiag
+# calls it, and that sources every module, but a test exercising this
+# must source wifi_common.sh too — the pure helpers above do not.
+netid_fingerprint_live() {
+  local iface="" gw="" ssid="" bssid="" route_out
+  route_out="$(route -n get default 2>/dev/null || true)"
+  iface="$(printf '%s\n' "$route_out" | awk '/interface:/{print $2; exit}')"
+  gw="$(printf '%s\n' "$route_out" | awk '/gateway:/{print $2; exit}')"
+  if [ -n "$iface" ]; then
+    local summary
+    summary="$(ipconfig getsummary "$iface" 2>/dev/null || true)"
+    { IFS=$'\t' read -r ssid bssid _; } \
+      <<<"$(wifi_parse_ipconfig_summary "$summary")"
+  fi
+  netid_fingerprint "$iface" "$gw" "$ssid" "$bssid"
+}

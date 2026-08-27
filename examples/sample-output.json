@@ -1,6 +1,6 @@
 {
-  "version": "0.10.0",
-  "timestamp": "2026-08-27T23:09:28Z",
+  "version": "0.11.0",
+  "timestamp": "2026-08-27T23:51:32Z",
   "run_mode": "full",
   "run_id": null,
   "interface": {
@@ -40,16 +40,16 @@
   "gateway": {
     "ip": "192.168.60.1",
     "loss_pct": 0.0,
-    "rtt_avg_ms": 3.054,
-    "rtt_jitter_ms": 1.085
+    "rtt_avg_ms": 2.639,
+    "rtt_jitter_ms": 0.205
   },
   "internet_latency": {
     "target": "1.1.1.1",
-    "rtt_avg_ms": 48.504,
-    "rtt_jitter_ms": 0.532,
+    "rtt_avg_ms": 48.235,
+    "rtt_jitter_ms": 0.601,
     "loss_pct": 0.0,
     "target_alt": "8.8.8.8",
-    "rtt_avg_ms_alt": 53.116,
+    "rtt_avg_ms_alt": 52.869,
     "loss_pct_alt": 0.0
   },
   "public": {
@@ -83,7 +83,7 @@
     {
       "resolver": "192.168.60.1",
       "name": "cloudflare.com",
-      "answer": "104.16.133.229",
+      "answer": "104.16.132.229",
       "ok": true
     },
     {
@@ -106,19 +106,19 @@
         "n": 1,
         "ip": "192.168.60.1",
         "responded": true,
-        "rtt_ms": 2.913
+        "rtt_ms": 2.58
       },
       {
         "n": 2,
         "ip": "177.21.98.253",
         "responded": true,
-        "rtt_ms": 3.697
+        "rtt_ms": 3.426
       },
       {
         "n": 3,
         "ip": "177.21.96.1",
         "responded": true,
-        "rtt_ms": 3.741
+        "rtt_ms": 3.655
       },
       {
         "n": 4,
@@ -130,37 +130,37 @@
         "n": 5,
         "ip": "10.5.6.137",
         "responded": true,
-        "rtt_ms": 5.769
+        "rtt_ms": 10.328
       },
       {
         "n": 6,
         "ip": "10.5.3.126",
         "responded": true,
-        "rtt_ms": 5.911
+        "rtt_ms": 29.617
       },
       {
         "n": 7,
         "ip": "10.5.16.5",
         "responded": true,
-        "rtt_ms": 8.392
+        "rtt_ms": 5.728
       },
       {
         "n": 8,
         "ip": "10.5.4.178",
         "responded": true,
-        "rtt_ms": 157.258
+        "rtt_ms": 13.359
       },
       {
         "n": 9,
         "ip": "10.5.14.69",
         "responded": true,
-        "rtt_ms": 10.707
+        "rtt_ms": 8.66
       },
       {
         "n": 10,
         "ip": "10.5.9.42",
         "responded": true,
-        "rtt_ms": 57.43
+        "rtt_ms": 51.428
       },
       {
         "n": 11,
@@ -172,25 +172,25 @@
         "n": 12,
         "ip": "10.5.20.66",
         "responded": true,
-        "rtt_ms": 57.744
+        "rtt_ms": 51.057
       },
       {
         "n": 13,
         "ip": "187.16.219.111",
         "responded": true,
-        "rtt_ms": 61.218
+        "rtt_ms": 48.603
       },
       {
         "n": 14,
-        "ip": "172.68.16.115",
+        "ip": "172.68.16.129",
         "responded": true,
-        "rtt_ms": 48.516
+        "rtt_ms": 48.808
       },
       {
         "n": 15,
         "ip": "1.1.1.1",
         "responded": true,
-        "rtt_ms": 48.122
+        "rtt_ms": 48.584
       }
     ]
   },
@@ -200,21 +200,21 @@
       "ip": "192.168.60.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 3.548
+      "avg_ms": 3.069
     },
     {
       "n": 2,
       "ip": "177.21.98.253",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 4.228
+      "avg_ms": 4.458
     },
     {
       "n": 3,
       "ip": "177.21.96.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 13.496
+      "avg_ms": 12.624
     },
     {
       "n": 4,
@@ -270,30 +270,30 @@
       "ip": "187.16.219.111",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 52.335
+      "avg_ms": 57.586
     },
     {
       "n": 12,
-      "ip": "172.68.16.115",
+      "ip": "172.68.16.129",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 52.918
+      "avg_ms": 50.427
     },
     {
       "n": 13,
       "ip": "1.1.1.1",
       "responded": true,
       "loss_pct": 0.0,
-      "avg_ms": 48.708
+      "avg_ms": 51.217
     }
   ],
   "bufferbloat": {
-    "idle_gw_rtt_ms": 3.054,
-    "loaded_gw_rtt_ms": 2.901,
-    "idle_inet_rtt_ms": 48.264,
-    "loaded_inet_rtt_ms": 48.405,
-    "gw_delta_ms": -0.2,
-    "inet_delta_ms": 0.1,
+    "idle_gw_rtt_ms": 2.639,
+    "loaded_gw_rtt_ms": 2.802,
+    "idle_inet_rtt_ms": 47.943,
+    "loaded_inet_rtt_ms": 48.201,
+    "gw_delta_ms": 0.2,
+    "inet_delta_ms": 0.3,
     "gw_grade": "A",
     "inet_grade": "A"
   },
@@ -320,37 +320,44 @@
       "host": "1.1.1.1",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 60.0
+      "elapsed_ms": 64.0
     },
     {
       "host": "1.1.1.1",
       "port": 53,
       "ok": true,
-      "elapsed_ms": 59.0
+      "elapsed_ms": 66.0
     },
     {
       "host": "8.8.8.8",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 65.0
+      "elapsed_ms": 71.0
     },
     {
       "host": "github.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 67.0
+      "elapsed_ms": 74.0
     },
     {
       "host": "apple.com",
       "port": 443,
       "ok": true,
-      "elapsed_ms": 62.0
+      "elapsed_ms": 70.0
     }
   ],
+  "path_actors": {
+    "split_tunnel": false,
+    "split_tunnel_interfaces": [],
+    "proxy": false,
+    "proxy_detail": null,
+    "network_filters": []
+  },
   "wifi_scan": {
     "current_channel": "149",
     "current_band": "5GHz",
-    "neighbour_count": 11,
+    "neighbour_count": 9,
     "current_channel_neighbours": 1
   },
   "wifi_disconnects": {
@@ -359,14 +366,14 @@
     "events": []
   },
   "speedtest": {
-    "down_mbps": 19.1,
+    "down_mbps": 19.0,
     "up_mbps": 14.2,
-    "latency_ms": 6.28,
-    "jitter_ms": 0.312,
+    "latency_ms": 6.306,
+    "jitter_ms": 0.249,
     "server": "Cyber Info Servi\u00e7os de Telecomunica\u00e7\u00f5es Ltda"
   },
   "ntp": {
-    "drift_seconds": 0.108337,
+    "drift_seconds": 0.085419,
     "using_network_time": null,
     "server": null
   },
@@ -375,7 +382,7 @@
     "server": "192.168.60.1",
     "lease_start": "08/27/2026 16:25:42",
     "lease_end": "08/28/2026 16:25:42",
-    "time_remaining_s": 72970,
+    "time_remaining_s": 70445,
     "dns_servers": "192.168.60.1"
   },
   "mtr": {
@@ -387,21 +394,21 @@
         "ip": "192.168.60.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 3.548
+        "avg_ms": 3.069
       },
       {
         "n": 2,
         "ip": "177.21.98.253",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 4.228
+        "avg_ms": 4.458
       },
       {
         "n": 3,
         "ip": "177.21.96.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 13.496
+        "avg_ms": 12.624
       },
       {
         "n": 4,
@@ -457,21 +464,21 @@
         "ip": "187.16.219.111",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 52.335
+        "avg_ms": 57.586
       },
       {
         "n": 12,
-        "ip": "172.68.16.115",
+        "ip": "172.68.16.129",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 52.918
+        "avg_ms": 50.427
       },
       {
         "n": 13,
         "ip": "1.1.1.1",
         "responded": true,
         "loss_pct": 0.0,
-        "avg_ms": 48.708
+        "avg_ms": 51.217
       }
     ],
     "first_lossy_hop": null
@@ -510,30 +517,30 @@
     "suspicious_redirects": []
   },
   "timings": {
-    "total_s": 58.15,
+    "total_s": 57.44,
     "budget_s": 30.0,
     "over_budget": true,
     "phases": {
       "iface": 0.06,
       "vpn": 0.02,
-      "wifi": 0.04,
-      "gateway": 3.99,
+      "wifi": 0.05,
+      "gateway": 3.97,
       "arp": 0.02,
       "netid": 0.0,
       "dhcp": 0.03,
-      "public": 0.56,
-      "parallel_batch": 13.87,
-      "internet_ping": 4.07,
-      "bufferbloat": 11.28,
-      "mtu": 0.48,
-      "traceroute": 4.52,
-      "nat": 0.02,
-      "mtr": 4.24,
-      "speedtest": 14.78
+      "public": 0.52,
+      "parallel_batch": 14.03,
+      "internet_ping": 4.01,
+      "bufferbloat": 11.24,
+      "mtu": 0.47,
+      "traceroute": 4.36,
+      "nat": 0.01,
+      "mtr": 4.23,
+      "speedtest": 14.27
     }
   },
   "baseline": {
-    "compared_runs": 6,
+    "compared_runs": 10,
     "network_id": "wifi:mac=[redacted]",
     "skipped_other_networks": 2075,
     "regressions": []
@@ -548,6 +555,7 @@
   "most_likely_root_cause": null,
   "netdiag_extras": {
     "arp_gw_incomplete": false,
+    "network_changed_mid_run": false,
     "target": null,
     "target_ping": null,
     "target_traceroute": null

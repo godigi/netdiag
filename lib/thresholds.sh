@@ -274,6 +274,23 @@ THRESH_WIFI_GOODPUT_CEILING_PCT=45
 # 241-line dump into every record of a bad hour.
 THRESH_WIFI_EVENTS_STORED=50
 
+# ── Monitor: sleep and stall detection [--monitor gap_s] ─────────────────
+# How many times the expected cadence a cycle may overrun before the gap
+# is reported as a discontinuity rather than a slow cycle.
+#
+# lib/monitor.sh's header says the monitor "stays dumb about sleep" and
+# leaves it to the GUI's NSWorkspace notifications. That is fine for the
+# GUI and wrong for everyone else: `--monitor` is documented as a stream
+# for *any* program, so a laptop lid closed for eight hours emits two
+# consecutive samples eight hours apart, and a consumer reading that
+# stream sees an eight-hour outage that never happened.
+#
+# 3 rather than 2: probes take 2-6 s of a 10 s cycle already, and a busy
+# machine legitimately overruns. At 3 a 10 s cadence tolerates 30 s
+# before it calls anything a gap, which no ordinary slow cycle reaches
+# and every sleep/wake exceeds by orders of magnitude.
+THRESH_MON_GAP_FACTOR=3
+
 # ── Bufferbloat grading ──────────────────────────────────────────────────
 # Waveform/DSLReports cutoffs for added latency under load, in ms:
 # A < 5, B < 30, C < 60, D < 200, F ≥ 200. B1/B2 warn at grade C and go

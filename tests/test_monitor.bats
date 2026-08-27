@@ -1195,3 +1195,74 @@ except Exception:
       echo "not forwarded: $v"; return 1; }
   done
 }
+
+# ── Sleep and stall detection: gap_s ─────────────────────────────────────
+#
+# The monitor deliberately stays dumb about sleep and leaves it to the
+# GUI's NSWorkspace notifications. That is right for the GUI and wrong for
+# every other consumer: --monitor is documented as a stream for ANY
+# program, and a laptop lid closed for eight hours emits two samples eight
+# hours apart with nothing marking the discontinuity. A program reading
+# that stream sees an eight-hour outage that never happened.
+
+@test "monitor: an ordinary cycle reports no gap" {
+  # 10 s cadence, 11 s elapsed — probes take 2-6 s, so overrun is normal.
+  run _mon_gap_seconds 11 10
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ] || { echo "flagged an ordinary cycle: '$output'"; return 1; }
+}
+
+@test "monitor: a cycle at exactly the tolerance is not a gap" {
+  # factor 3 × 10 s cadence = 30 s. The boundary is exclusive, so 30 is
+  # still a slow cycle and 31 is a discontinuity.
+  run _mon_gap_seconds 30 10
+  [ "$output" = "" ] || { echo "30 s flagged at a 10 s cadence: '$output'"; return 1; }
+  run _mon_gap_seconds 31 10
+  [ "$output" = "31" ] || { echo "31 s not flagged: '$output'"; return 1; }
+}
+
+@test "monitor: an overnight sleep reports the seconds lost" {
+  # The case this exists for. Eight hours, at a 10 s cadence.
+  run _mon_gap_seconds 28800 10
+  [ "$output" = "28800" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "monitor: the tolerance scales with the cadence" {
+  # A slow-tier consumer at a 300 s cadence must not have every cycle
+  # called a gap just because 301 > 30.
+  run _mon_gap_seconds 400 300
+  [ "$output" = "" ] || { echo "400 s flagged at a 300 s cadence: '$output'"; return 1; }
+  run _mon_gap_seconds 1000 300
+  [ "$output" = "1000" ] || { echo "1000 s not flagged at 300 s: '$output'"; return 1; }
+}
+
+@test "monitor: unusable inputs report nothing rather than guessing" {
+  # The first cycle has no previous timestamp, and a zero cadence would
+  # make every elapsed time infinitely over tolerance.
+  for args in "'' 10" "11 ''" "'' ''" "11 0" "abc 10" "11 abc" "-5 10"; do
+    # shellcheck disable=SC2086
+    eval "run _mon_gap_seconds $args"
+    [ "$output" = "" ] || { echo "args [$args] gave '$output'"; return 1; }
+  done
+}
+
+@test "monitor: gap_s reaches the emitted sample" {
+  run env NETDIAG_MON_SEQ=5 NETDIAG_MON_GAP_S=28800 \
+    python3 "$REPO/helpers/monitor_sample.py"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+assert json.load(sys.stdin)['gap_s'] == 28800
+"
+}
+
+@test "monitor: an ordinary sample carries gap_s null, not zero" {
+  # 0 would mean 'no time passed', which is a measurement. null means
+  # 'no discontinuity', which is the absence of one — the same
+  # null-vs-zero distinction the JSON schema draws everywhere else.
+  run env NETDIAG_MON_SEQ=5 python3 "$REPO/helpers/monitor_sample.py"
+  printf '%s' "$output" | python3 -c "
+import json, sys
+assert json.load(sys.stdin)['gap_s'] is None
+"
+}

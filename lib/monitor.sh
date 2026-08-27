@@ -175,6 +175,11 @@ MON_PREV_VPN_ACTIVE=""
 MON_PREV_VPN_NAME=""
 MON_PREV_SSID=""
 MON_PREV_BSSID=""
+# The wall-clock second the previous cycle began, and the cadence it was
+# scheduled at — the two inputs _mon_gap_seconds compares.
+MON_PREV_CYCLE_TS=""
+MON_PREV_CADENCE=""
+MON_GAP_S=""
 MON_PREV_INTERFACE=""
 MON_PREV_RULES=""
 
@@ -780,6 +785,7 @@ _mon_emit() {
   NETDIAG_MON_VERSION="$NETDIAG_VERSION" \
   NETDIAG_MON_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   NETDIAG_MON_SEQ="$MON_SEQ" \
+  NETDIAG_MON_GAP_S="$MON_GAP_S" \
   NETDIAG_MON_REFRESHED="$MON_REFRESHED" \
   NETDIAG_MON_LINK_UP="$MON_LINK_UP" \
   NETDIAG_MON_INTERFACE="$MON_INTERFACE" \
@@ -838,6 +844,34 @@ _mon_emit() {
 }
 
 # ── Loop ─────────────────────────────────────────────────────────────────
+
+# ── Sleep and stall detection ────────────────────────────────────────────
+#
+# The seconds lost between two consecutive cycles, or empty when the
+# elapsed time is within tolerance. $1 = elapsed seconds since the
+# previous cycle started, $2 = the cadence that cycle was scheduled at.
+#
+# The header of this file says the monitor stays dumb about sleep and
+# leaves it to the GUI's NSWorkspace notifications. That is right for the
+# GUI and wrong for every other consumer: `--monitor` is documented as a
+# stream for *any* program, and a laptop lid closed for eight hours emits
+# two samples eight hours apart with nothing marking the discontinuity.
+# A program reading that stream sees an eight-hour outage that never
+# happened — the loss and latency figures either side are both fine, and
+# the silence between them is indistinguishable from a dead link.
+#
+# Reports the elapsed time rather than a boolean, because "how long was I
+# not looking" is the question a consumer actually has to answer, and it
+# is the difference between a hiccup and an overnight sleep.
+#
+# Pure: no clock reads, no state. Both inputs come from the caller.
+_mon_gap_seconds() {
+  local elapsed="${1:-}" cadence="${2:-}"
+  case "$elapsed" in ''|*[!0-9]*) return 0 ;; esac
+  case "$cadence" in ''|*[!0-9]*|0) return 0 ;; esac
+  [ "$elapsed" -gt $((cadence * THRESH_MON_GAP_FACTOR)) ] || return 0
+  printf '%s' "$elapsed"
+}
 
 # Interruptible sleep. A bare `sleep` swallows the signal until it returns,
 # so a GUI sending SIGTERM would wait up to a full cadence for the process
@@ -918,6 +952,15 @@ monitor_run() {
     announced_pause=0
 
     now="$EPOCHSECONDS"
+    # How long since the previous cycle began, against what that cycle was
+    # scheduled for. Computed here rather than after the probes so it
+    # measures the gap the consumer experienced — the silence between two
+    # samples — not the time this cycle's own work took.
+    MON_GAP_S=""
+    if [ -n "$MON_PREV_CYCLE_TS" ] && [ -n "$MON_PREV_CADENCE" ]; then
+      MON_GAP_S="$(_mon_gap_seconds \
+        "$((now - MON_PREV_CYCLE_TS))" "$MON_PREV_CADENCE")"
+    fi
     MON_REFRESHED=""
 
     # Fast tier drives everything: it establishes whether there is a link
@@ -1012,6 +1055,8 @@ monitor_run() {
     next_fast=$((now + cadence))
 
     MON_SEQ=$((MON_SEQ + 1))
+    MON_PREV_CYCLE_TS="$now"
+    MON_PREV_CADENCE="$cadence"
     # A failed emit means stdout is gone — the GUI exited, or a `| head -5`
     # closed the pipe. Either way there is no one left to talk to.
     _mon_emit "$cadence" || break
