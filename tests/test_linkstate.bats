@@ -70,3 +70,82 @@ bridge0
 en0
 en4" ]
 }
+
+# ── iface_run: the route is one input, not the only one ──────────────────
+
+iface_setup() {
+  JSON_MODE=0 QUIET=0 QUICK=0 LOG=/dev/null
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  # shellcheck source=../lib/globals.sh
+  . "$REPO/lib/globals.sh"
+  # shellcheck source=../lib/iface.sh
+  . "$REPO/lib/iface.sh"
+}
+
+@test "iface: a joined link with no default route keeps INTERFACE and reports LINK_UP" {
+  iface_setup
+  # No default route, but en0 is active and holds a lease.
+  route() { return 1; }
+  netstat() { return 1; }
+  ifconfig() { cat "$FIX/ifconfig_en0_active.txt"; }
+  ipconfig() {
+    case "$1" in
+      getpacket) cat "$FIX/ipconfig_getpacket.txt" ;;
+      getifaddr) printf '10.125.129.35\n' ;;
+    esac
+  }
+  networksetup() { cat "$FIX/networksetup_serviceorder.txt"; }
+
+  THRESH_ROUTE_RECHECK_DELAY_S=0 iface_run >/dev/null
+  [ "$GATEWAY" = "" ]
+  [ "$LINK_UP" -eq 1 ]
+  [ "$INTERFACE" = "en5" ]
+  [ "$LOCAL_IP" = "10.125.129.35" ]
+  [ "$LINK_DHCP_ROUTER" = "10.125.128.1" ]
+}
+
+@test "iface: nothing joined leaves LINK_UP at zero" {
+  iface_setup
+  route() { return 1; }
+  netstat() { return 1; }
+  ifconfig() { cat "$FIX/ifconfig_en0_inactive.txt"; }
+  ipconfig() { return 1; }
+  networksetup() { cat "$FIX/networksetup_serviceorder.txt"; }
+
+  THRESH_ROUTE_RECHECK_DELAY_S=0 iface_run >/dev/null
+  [ "$LINK_UP" -eq 0 ]
+  [ "$INTERFACE" = "" ]
+  [ "$LINK_DHCP_ROUTER" = "" ]
+}
+
+@test "iface: the route is re-read once before it is called missing" {
+  iface_setup
+  # First read returns nothing, second returns a real route — the flicker
+  # this re-check exists for.
+  ROUTE_CALLS_FILE="$BATS_TEST_TMPDIR/route_calls"
+  printf '0' > "$ROUTE_CALLS_FILE"
+  route() {
+    local n
+    n="$(cat "$ROUTE_CALLS_FILE")"
+    printf '%s' "$((n + 1))" > "$ROUTE_CALLS_FILE"
+    [ "$n" -eq 0 ] && return 0
+    printf 'gateway: 10.125.128.1\ninterface: en0\n'
+  }
+  netstat() { return 1; }
+  ifconfig() { cat "$FIX/ifconfig_en0_active.txt"; }
+  ipconfig() {
+    case "$1" in
+      getpacket) cat "$FIX/ipconfig_getpacket.txt" ;;
+      getifaddr) printf '10.125.129.35\n' ;;
+    esac
+  }
+  networksetup() { cat "$FIX/networksetup_serviceorder.txt"; }
+
+  THRESH_ROUTE_RECHECK_DELAY_S=0 iface_run >/dev/null
+  [ "$GATEWAY" = "10.125.128.1" ]
+  [ "$INTERFACE" = "en0" ]
+  [ "$(cat "$ROUTE_CALLS_FILE")" -ge 2 ]
+}

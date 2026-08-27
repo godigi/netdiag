@@ -25,7 +25,7 @@
 #   3. gateway IP    — weakest: 192.168.1.1 collides constantly. Used only
 #                      when neither of the above is available.
 #
-# Reads:  IS_WIFI, WIFI_SSID, GW_MAC, GATEWAY, INTERFACE
+# Reads:  IS_WIFI, WIFI_SSID, GW_MAC, GATEWAY, LINK_DHCP_ROUTER, INTERFACE
 # Writes: NETWORK_ID, NETWORK_LABEL, NETWORK_GROUP
 # Entry:  netid_run
 
@@ -44,8 +44,22 @@ netid_run() {
   [ -n "$GW_MAC" ]  && parts="${parts:+$parts,}mac=$GW_MAC"
   # Only fall back to the gateway IP when nothing stronger identified the
   # network — on its own it's a near-guaranteed collision across sites.
-  if [ -z "$parts" ] && [ -n "$GATEWAY" ]; then
-    parts="gw=$GATEWAY"
+  #
+  # LINK_DHCP_ROUTER is the second fallback rather than a peer of GATEWAY
+  # because it names the same box by a weaker route: the DHCP server said
+  # so, rather than the kernel having installed a route to it. It exists
+  # here because without it every routeless run filed itself under the
+  # synthetic "unknown" network — six of twelve consecutive runs on this
+  # developer's machine — which put "no network at all" verdicts into a
+  # history bucket shared by every other routeless run on every other
+  # network, and kept them out of the bucket for the network actually
+  # being diagnosed.
+  if [ -z "$parts" ]; then
+    if [ -n "$GATEWAY" ]; then
+      parts="gw=$GATEWAY"
+    elif [ -n "${LINK_DHCP_ROUTER:-}" ]; then
+      parts="gw=$LINK_DHCP_ROUTER"
+    fi
   fi
 
   # The canonical history GROUP KEY for this network — the key

@@ -18,6 +18,17 @@ LOCAL_IP=""
 GATEWAY=""
 GW_COUNT=0
 
+# Link state (lib/linkstate.sh, consumed by lib/iface.sh) — deliberately
+# separate from GATEWAY above, which means one specific thing: "the
+# gateway of the default route". These say whether the Mac is joined to
+# anything at all, which is a different question and the one N1 was
+# answering wrong. See lib/linkstate.sh's header.
+LINK_DEVICE=""           # active device, found without the routing table
+LINK_STATUS=""           # ifconfig's own word: active | inactive | ""
+LINK_IP=""               # IPv4 address on LINK_DEVICE
+LINK_DHCP_ROUTER=""      # router the DHCP server offered, route or no route
+LINK_UP=0                # 1 = active device holding an address
+
 # WiFi (lib/wifi.sh, lib/wifi_scan.sh, lib/wifi_disconnect.sh)
 IS_WIFI=0
 # The *_CHECKED flags separate "measured and negative" from "never ran".

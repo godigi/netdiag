@@ -250,3 +250,20 @@ THRESH_BUFFERBLOAT_D_MS=200
 # A middle hop above this with a clean destination is classified as ICMP
 # rate limiting; the same boundary must be used by both branches.
 THRESH_MTR_HOP_LOSS_PCT=2
+
+# ── Default-route re-check [N1, N1c] ─────────────────────────────────────
+# How long to wait before re-reading the routing table when the first read
+# came back with no default route.
+#
+# Why this exists: six of twelve consecutive stored runs on this developer's
+# machine fired N1 — "no network connection at all" — and were filed under
+# network_id "unknown", while runs two minutes either side of them were
+# filed against a live gateway on the same network. The route flickers
+# during a DHCP renewal, a WiFi roam, or macOS re-evaluating a service, and
+# a single unlucky read turned that into the most alarming verdict netdiag
+# can produce plus a junk entry in the per-network history.
+#
+# One second: long enough to outlast a transition, short enough that the
+# --quick budget survives it. Paid only on the failing path, which is rare
+# by construction — a network with a route never reaches the re-read.
+THRESH_ROUTE_RECHECK_DELAY_S=1
