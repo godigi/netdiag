@@ -24,6 +24,11 @@ prefers Ookla. `--no-speed` brings it under 35 s and `--quick` under 8 s.
 Pass `--progress` (or use the app) to watch each check land rather than
 a spinner.
 
+On a **metered link** — a phone's hotspot, or USB/Bluetooth tethering —
+the speed test is skipped by default and `MET-1` says so, because it
+would spend hundreds of megabytes of a cellular allowance to answer a
+question you did not ask. Pass `--speed` to run it anyway.
+
 ## Why
 
 When the internet is flaky you don't have time to run `ping`, `traceroute`,
@@ -130,10 +135,9 @@ netdiag --rules-catalog          # JSON catalog: every rule ID, title, blurb
 | `--gping`            | launch live ping monitor on the discovered hops at end |
 | `--no-gping`         | skip the gping prompt (scripts / watchers)             |
 | `--no-bufferbloat`   | skip the 100 MB / 10 s probe (metered link)            |
-| `--speed`            | run the speedtest even under `--quick` (it is already  |
-|                      | on by default in a normal run)                         |
-| `--no-speed`         | skip the speedtest — metered links, or to bring a full |
-|                      | run back under ~35 s                                   |
+| `--speed`            | run the speedtest even under `--quick`, or on a        |
+|                      | metered link (it is already on by default otherwise)   |
+| `--no-speed`         | skip the speedtest, to bring a full run under ~35 s    |
 | `--json`             | emit schema-conformant JSON on stdout                  |
 | `--quiet`            | only the Diagnosis section is printed                  |
 | `--log PATH`         | override the default `~/net-diag/<timestamp>.log`      |

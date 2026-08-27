@@ -205,6 +205,63 @@ en4" ]
   [ "$output" = "100" ] || { echo "got '$output'"; return 1; }
 }
 
+# ── Metered links [MET-1] ────────────────────────────────────────────────
+# The speed test runs by default and moves hundreds of megabytes. On a
+# phone's hotspot that is the user's money.
+
+@test "linkstate: a device resolves to its service name" {
+  # The name and the device sit on separate lines, so the parser has to
+  # carry the name forward from the previous one.
+  run linkstate_service_for_device \
+    "$(cat "$FIX/networksetup_serviceorder.txt")" en0
+  [ "$status" -eq 0 ]
+  [ "$output" = "Wi-Fi" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: an unknown device resolves to no service" {
+  run linkstate_service_for_device \
+    "$(cat "$FIX/networksetup_serviceorder.txt")" en99
+  [ "$output" = "" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: tethered service names are recognised" {
+  # These are macOS's own names, not guesses — this developer's service
+  # order lists "iPhone USB".
+  for s in "iPhone USB" "iPad USB" "Bluetooth PAN" "Personal Hotspot" \
+           "Brian's iPhone Hotspot"; do
+    run linkstate_is_tethered_service "$s"
+    [ "$status" -eq 0 ] || { echo "'$s' not recognised as tethered"; return 1; }
+  done
+}
+
+@test "linkstate: ordinary service names are not tethered" {
+  for s in "Wi-Fi" "Ethernet" "Thunderbolt Bridge" "USB 10/100 LAN" ""; do
+    run linkstate_is_tethered_service "$s"
+    [ "$status" -ne 0 ] || { echo "'$s' wrongly called tethered"; return 1; }
+  done
+}
+
+@test "linkstate: the documented hotspot subnets are recognised" {
+  run linkstate_is_hotspot_subnet "172.20.10.3"   # iOS default
+  [ "$status" -eq 0 ] || { echo "iOS range missed"; return 1; }
+  run linkstate_is_hotspot_subnet "192.168.43.17"  # Android default
+  [ "$status" -eq 0 ] || { echo "Android range missed"; return 1; }
+}
+
+@test "linkstate: ordinary home subnets are not hotspots" {
+  for ip in "192.168.1.4" "10.0.0.5" "172.20.11.3" "192.168.4.3" ""; do
+    run linkstate_is_hotspot_subnet "$ip"
+    [ "$status" -ne 0 ] || { echo "'$ip' wrongly called a hotspot"; return 1; }
+  done
+}
+
+@test "linkstate: 172.20.100.x is not mistaken for the iOS range" {
+  # A prefix compare done on the string rather than the octet would match
+  # 172.20.10 inside 172.20.100.
+  run linkstate_is_hotspot_subnet "172.20.100.5"
+  [ "$status" -ne 0 ] || { echo "172.20.100.5 wrongly matched"; return 1; }
+}
+
 # ── iface_run: the route is one input, not the only one ──────────────────
 
 iface_setup() {
@@ -304,8 +361,11 @@ iface_setup() {
   iface_setup
   route() { return 1; }
   netstat() { return 1; }
+  # linkstate_run calls `ifconfig -m <dev>`, so the device is the LAST
+  # argument, not the first. A mock switching on $1 would see "-m" and
+  # answer for no device at all.
   ifconfig() {
-    case "$1" in
+    case "${@: -1}" in
       en5) cat "$FIX/ifconfig_en0_linklocal.txt" ;;
       en0) cat "$FIX/ifconfig_en0_active.txt" ;;
       *)   return 1 ;;
@@ -323,6 +383,66 @@ iface_setup() {
   [ "$LINK_UP" -eq 1 ] || { echo "LINK_UP=$LINK_UP"; return 1; }
   [ "$LINK_DEVICE" = "en0" ] || { echo "LINK_DEVICE=$LINK_DEVICE, expected the leased en0"; return 1; }
   [ "$LINK_SELF_ASSIGNED" -eq 0 ] || { echo "LINK_SELF_ASSIGNED=$LINK_SELF_ASSIGNED"; return 1; }
+}
+
+@test "iface: a link on the iPhone USB service is marked metered" {
+  iface_setup
+  # A default route exists and points at en4, so the fast path runs and
+  # the service order is never read by the device walk — the metered
+  # lookup has to fetch it itself.
+  route() { printf 'gateway: 172.20.10.1\ninterface: en4\n'; }
+  netstat() { return 1; }
+  ifconfig() { cat "$FIX/ifconfig_en0_active.txt"; }
+  ipconfig() {
+    case "$1" in
+      getpacket) cat "$FIX/ipconfig_getpacket.txt" ;;
+      getifaddr) printf '10.125.129.35\n' ;;
+    esac
+  }
+  networksetup() { cat "$FIX/networksetup_serviceorder.txt"; }
+
+  THRESH_ROUTE_RECHECK_DELAY_S=0 iface_run >/dev/null
+  [ "$LINK_SERVICE" = "iPhone USB" ] || { echo "LINK_SERVICE='$LINK_SERVICE'"; return 1; }
+  [ "$LINK_METERED" -eq 1 ] || { echo "LINK_METERED=$LINK_METERED"; return 1; }
+}
+
+@test "iface: an ordinary Wi-Fi link is not metered" {
+  iface_setup
+  route() { printf 'gateway: 10.125.128.1\ninterface: en0\n'; }
+  netstat() { return 1; }
+  ifconfig() { cat "$FIX/ifconfig_en0_active.txt"; }
+  ipconfig() {
+    case "$1" in
+      getpacket) cat "$FIX/ipconfig_getpacket.txt" ;;
+      getifaddr) printf '10.125.129.35\n' ;;
+    esac
+  }
+  networksetup() { cat "$FIX/networksetup_serviceorder.txt"; }
+
+  THRESH_ROUTE_RECHECK_DELAY_S=0 iface_run >/dev/null
+  [ "$LINK_SERVICE" = "Wi-Fi" ] || { echo "LINK_SERVICE='$LINK_SERVICE'"; return 1; }
+  [ "$LINK_METERED" -eq 0 ] || { echo "LINK_METERED=$LINK_METERED on plain WiFi"; return 1; }
+}
+
+@test "iface: a Wi-Fi link on the iOS hotspot subnet is metered" {
+  # A phone's Wi-Fi hotspot is an ordinary Wi-Fi service as far as macOS
+  # is concerned, so the service name says nothing and the address is
+  # the only signal there is.
+  iface_setup
+  route() { printf 'gateway: 172.20.10.1\ninterface: en0\n'; }
+  netstat() { return 1; }
+  ifconfig() { printf '\tinet 172.20.10.4 netmask 0xfffffff0\n\tmedia: autoselect\n\tstatus: active\n'; }
+  ipconfig() {
+    case "$1" in
+      getpacket) printf 'router (ip_mult): {172.20.10.1}\n' ;;
+      getifaddr) printf '172.20.10.4\n' ;;
+    esac
+  }
+  networksetup() { cat "$FIX/networksetup_serviceorder.txt"; }
+
+  THRESH_ROUTE_RECHECK_DELAY_S=0 iface_run >/dev/null
+  [ "$LINK_SERVICE" = "Wi-Fi" ] || { echo "LINK_SERVICE='$LINK_SERVICE'"; return 1; }
+  [ "$LINK_METERED" -eq 1 ] || { echo "LINK_METERED=$LINK_METERED on the iOS hotspot range"; return 1; }
 }
 
 @test "iface: the route is re-read once before it is called missing" {

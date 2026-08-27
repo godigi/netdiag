@@ -367,6 +367,11 @@ def main() -> None:
             "link_mbps": _maybe_int("LINK_MEDIA_MBPS"),
             "link_max_mbps": _maybe_int("LINK_MEDIA_MAX_MBPS"),
             "duplex": _env("LINK_DUPLEX"),
+            # The macOS service name carrying the link, and whether it
+            # costs money by the megabyte. `metered` is why the speed
+            # test may be absent from an otherwise complete run. [MET-1]
+            "service": _env("LINK_SERVICE"),
+            "metered": os.environ.get("NETDIAG_LINK_METERED", "") == "1",
             # The router the DHCP server offered, present whether or not
             # the kernel installed a route to it — so on a network that
             # withholds a route there is still an address to point a

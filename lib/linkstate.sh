@@ -28,7 +28,8 @@
 # Writes (via linkstate_run): LINK_DEVICE, LINK_STATUS, LINK_IP,
 #                             LINK_DHCP_ROUTER, LINK_UP, LINK_SELF_ASSIGNED,
 #                             LINK_MEDIA_MBPS, LINK_MEDIA_MAX_MBPS,
-#                             LINK_DUPLEX, LINK_MEDIA_FULL_DUPLEX_CAPABLE
+#                             LINK_DUPLEX, LINK_MEDIA_FULL_DUPLEX_CAPABLE,
+#                             LINK_SERVICE, LINK_METERED
 # Entry: linkstate_run
 
 # "active" / "inactive" / "" from `ifconfig <dev>` output ($1).
@@ -178,6 +179,83 @@ linkstate_media_has_full_duplex() {
     END { exit(found ? 0 : 1) }'
 }
 
+# ── Metered links [MET-1] ────────────────────────────────────────────────
+#
+# This exists for a trust reason rather than a diagnostic one. The speed
+# test runs by DEFAULT, and on a phone's hotspot it spends the user's
+# cellular allowance — potentially hundreds of megabytes — without ever
+# asking. The GUI makes it sharper still: a full check fires
+# automatically on joining a new network, and joining a phone's hotspot
+# is exactly that event.
+#
+# So the failure directions are not symmetric. A false positive costs an
+# unrequested skip, recoverable with an explicit --speed and announced in
+# the output. A false negative costs real money. These predicates lean
+# toward the first.
+
+# The service name for device $2, from `networksetup
+# -listnetworkserviceorder` output ($1), or empty.
+#
+# The output pairs a name line with a following detail line:
+#   (5) iPhone USB
+#   (Hardware Port: iPhone USB, Device: en7)
+# so the name has to be remembered from the previous line — there is no
+# single line carrying both.
+linkstate_service_for_device() {
+  printf '%s\n' "$1" | awk -v want="$2" '
+    /^\([0-9]+\)/ {
+      name = $0
+      sub(/^\([0-9]+\)[[:space:]]*/, "", name)
+      next
+    }
+    match($0, /Device: [^)]+/) {
+      d = substr($0, RSTART + 8, RLENGTH - 8)
+      if (d == want && name != "") { print name; exit }
+    }'
+}
+
+# True when service name $1 is a tethered link — the Mac reaching the
+# internet through a phone or another device's cellular data.
+#
+# These names come from macOS itself and are exact, not guesses: this
+# developer's own service order lists "iPhone USB" at position 5.
+linkstate_is_tethered_service() {
+  case "${1:-}" in
+    "iPhone USB"|"iPad USB")  return 0 ;;
+    "Bluetooth PAN"*)         return 0 ;;
+    # Covers "Personal Hotspot" and any "<device name> Hotspot" macOS
+    # names a tethered service; the leading wildcard subsumes the bare
+    # "Personal Hotspot" case, so listing it separately would be dead.
+    *"Hotspot")               return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when address $1 falls in a phone hotspot's documented default
+# range: 172.20.10.0/28 for iOS Personal Hotspot, 192.168.43.0/24 for
+# the Android default.
+#
+# A heuristic, and knowingly so — both are defaults a user can change,
+# so this misses a reconfigured hotspot, and a home network that happens
+# to use 192.168.43.0/24 would match. That direction is the acceptable
+# one: the cost is a skipped speed test the user can force with --speed,
+# announced in the output, versus spending their cellular data silently.
+#
+# Wi-Fi tethering is why this is needed at all. USB and Bluetooth
+# tethering announce themselves in the service name above; a phone's
+# Wi-Fi hotspot is an ordinary Wi-Fi network as far as macOS's CLI tools
+# are concerned, and nothing in `scutil --nwi`, `ipconfig getsummary` or
+# `system_profiler SPAirPortDataType` reports it as expensive. (The
+# "expensive"/"constrained" flags exist in NWPathMonitor, but are not
+# exposed to any command-line tool netdiag can reach.)
+linkstate_is_hotspot_subnet() {
+  case "${1:-}" in
+    172.20.10.*)  return 0 ;;
+    192.168.43.*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # The first router the DHCP server offered, from `ipconfig getpacket <dev>`
 # output ($1), or empty.
 #
@@ -208,12 +286,41 @@ linkstate_parse_service_devices() {
     }'
 }
 
+# Resolve LINK_SERVICE and LINK_METERED for the settled LINK_DEVICE.
+# $1 = `networksetup -listnetworkserviceorder` output if the caller
+# already has it, empty to fetch it here.
+#
+# Called from both of linkstate_run's exits rather than inlined at each,
+# so the two can never disagree about whether a link is metered.
+#
+# On the fast path (a default route existed, so the service order was
+# never read) this does cost one networksetup call that the run would
+# otherwise have skipped. Measured at ~20 ms on an M-series Mac — the
+# "~100 ms" in the comment above is a pessimistic older estimate — which
+# is 0.25% of --quick's 8 s budget. Paid unconditionally rather than
+# deferred, so a metered link is detected identically in every run mode.
+# shellcheck disable=SC2034
+_linkstate_resolve_service() {
+  local order="${1:-}"
+  LINK_SERVICE=""; LINK_METERED=0
+  [ -n "$LINK_DEVICE" ] || return 0
+  [ -n "$order" ] || \
+    order="$(networksetup -listnetworkserviceorder 2>/dev/null || true)"
+  LINK_SERVICE="$(linkstate_service_for_device "$order" "$LINK_DEVICE")"
+  if linkstate_is_tethered_service "$LINK_SERVICE" \
+     || linkstate_is_hotspot_subnet "$LINK_IP"; then
+    LINK_METERED=1
+  fi
+  return 0
+}
+
 # Discover the link. $1 = optional device to check first (the default
 # route's interface, when there is one) — checked before the service
 # order so the fast path costs one ifconfig and nothing else.
 #
 # Sets LINK_DEVICE / LINK_STATUS / LINK_IP / LINK_DHCP_ROUTER / LINK_UP /
-# LINK_SELF_ASSIGNED / LINK_MEDIA_MBPS / LINK_MEDIA_MAX_MBPS / LINK_DUPLEX.
+# LINK_SELF_ASSIGNED / LINK_MEDIA_MBPS / LINK_MEDIA_MAX_MBPS / LINK_DUPLEX /
+# LINK_SERVICE / LINK_METERED.
 # LINK_UP is 1 only when a device is BOTH active AND holds a *real*
 # address: an active radio with no lease is associated but unconfigured,
 # which is a fault worth naming, not a working link — and a self-assigned
@@ -224,19 +331,21 @@ linkstate_parse_service_devices() {
 # Writes globals read by lib/iface.sh, lib/diagnosis.sh and emit_json.py.
 # shellcheck disable=SC2034
 linkstate_run() {
-  local preferred="${1:-}" devices dev out
+  local preferred="${1:-}" devices dev out order=""
   LINK_DEVICE=""; LINK_STATUS=""; LINK_IP=""; LINK_DHCP_ROUTER=""; LINK_UP=0
   LINK_SELF_ASSIGNED=0
   LINK_MEDIA_MBPS=""; LINK_MEDIA_MAX_MBPS=""; LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
+  LINK_SERVICE=""; LINK_METERED=0
 
   devices="$preferred"
   # The service order is only read when the preferred device did not
   # settle it, because networksetup costs ~100 ms and the overwhelming
-  # majority of runs have a default route.
+  # majority of runs have a default route. Kept in `order` either way so
+  # the service-name lookup below never re-runs it.
   if [ -z "$preferred" ]; then
-    devices="$(linkstate_parse_service_devices \
-      "$(networksetup -listnetworkserviceorder 2>/dev/null || true)")"
+    order="$(networksetup -listnetworkserviceorder 2>/dev/null || true)"
+    devices="$(linkstate_parse_service_devices "$order")"
   fi
 
   # The best unconfigured candidate seen so far, held aside rather than
@@ -283,6 +392,7 @@ linkstate_run() {
       LINK_DUPLEX="$dev_duplex"
       LINK_MEDIA_FULL_DUPLEX_CAPABLE="$dev_fd"
       LINK_UP=1
+      _linkstate_resolve_service "$order"
       return 0
     fi
 
@@ -307,5 +417,6 @@ linkstate_run() {
   LINK_MEDIA_MAX_MBPS="$cand_max"
   LINK_DUPLEX="$cand_duplex"
   LINK_MEDIA_FULL_DUPLEX_CAPABLE="$cand_fd"
+  _linkstate_resolve_service "$order"
   return 0
 }

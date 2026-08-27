@@ -6,6 +6,40 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Changed — the speed test no longer spends your cellular data
+
+**Behaviour change.** `--speed` runs by default, moves hundreds of
+megabytes, and on a phone's hotspot that came out of the user's cellular
+allowance — spent by a tool they ran to ask a question, without being
+asked. The GUI made it sharper: its one automatic full check fires on
+joining a new network, and joining a hotspot is exactly that event.
+
+`speedtest_run` now skips on a metered link unless `--speed` was passed
+explicitly, and says why rather than skipping silently. New `MET-1`
+carries the reason to the Diagnosis section, where the user will
+actually read it — the same principle as "a captive portal is a
+diagnosis in a scan, not a log line".
+
+`MET-1` fires whether or not the speed test was skipped, because every
+*other* recommendation in the report changes on a tethered link: "reboot
+your router" and "check the cable" are nonsense when the router is a
+phone in someone's pocket.
+
+Detection is honest about its limits. USB and Bluetooth tethering
+announce themselves in the macOS service name and are exact. A phone's
+*Wi-Fi* hotspot is an ordinary Wi-Fi network to every command-line tool
+netdiag can reach — nothing in `scutil --nwi`, `ipconfig getsummary` or
+`system_profiler` reports it as expensive, and `NWPathMonitor`'s
+`expensive`/`constrained` flags are not exposed to any CLI — so that
+case falls back to the documented default subnets (`172.20.10.0/28` for
+iOS, `192.168.43.0/24` for Android). That is a heuristic: it misses a
+reconfigured hotspot and would match a home network using the same
+range. The asymmetry is deliberate — a false positive costs an
+announced, overridable skip; a false negative costs real money.
+
+New `interface.service` and `interface.metered` in the JSON, the latter
+being why `speedtest` may be `null` in an otherwise complete run.
+
 ### Fixed — Tier 1: link facts netdiag was reporting wrongly
 
 The first items from `docs/design/networks-we-cannot-yet-describe.md`.

@@ -346,6 +346,19 @@ diagnosis_run() {
   fi
 
 
+  # MET-1 — this connection costs money by the megabyte.
+  #
+  # info, and it fires whether or not the speed test was skipped: every
+  # other recommendation in this report changes on a tethered link.
+  # "Reboot your router" and "check the cable" are nonsense when the
+  # router is a phone in someone's pocket, and a background update
+  # kicking off here has a bill attached.
+  if [ "${LINK_METERED:-0}" -eq 1 ]; then
+    local _via="a phone or tethered device"
+    [ -n "${LINK_SERVICE:-}" ] && _via="\"$LINK_SERVICE\""
+    add_diag info MET-1 "You're online through $_via, so this connection is almost certainly metered — data here comes out of a cellular allowance and costs money by the megabyte. Two things follow. Everything else in this report describes the phone's mobile connection, not a home network, so advice about routers and cables doesn't apply. And the speed test is skipped by default here, because it would move hundreds of megabytes of your allowance; pass --speed if you want it run anyway."
+  fi
+
   # SP-1 — the wireless link is the cap, not the internet plan.
   #
   # The most common wrong conclusion a user draws from this report:

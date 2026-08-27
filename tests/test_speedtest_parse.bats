@@ -275,3 +275,78 @@ _speedtest_sh_function_body() {
   [ -z "$SPEEDTEST_JITTER_MS" ]
   [ -z "$SPEEDTEST_SERVER" ]
 }
+
+# ── The metered-link guard [MET-1] ───────────────────────────────────────
+#
+# The one skip in speedtest_run that is about the user's money rather than
+# about time. The speed test moves hundreds of megabytes, and on a phone's
+# hotspot that comes out of a cellular allowance — spent by a tool the
+# user ran to ask a question, without being asked.
+
+speed_guard_setup() {
+  JSON_MODE=0 QUIET=0 QUICK=0 LOG=/dev/null
+  # shellcheck source=../lib/thresholds.sh
+  . "$LIB/thresholds.sh"
+  # shellcheck source=../lib/common.sh
+  . "$LIB/common.sh"
+  # shellcheck source=../lib/speedtest.sh
+  . "$LIB/speedtest.sh"
+  SPEED=1 NO_SPEED=0 PUBLIC_OK=1 SPEED_EXPLICIT=0
+  LINK_METERED=0 LINK_SERVICE=""
+  # EXPERT=1 so `info` actually reaches stdout here. In a default run
+  # _should_print_stdout suppresses it before the diagnosis section, and
+  # that is deliberate: the user learns *why* the speed test is missing
+  # from MET-1 in the Diagnosis section, not from a log line. Same
+  # principle as "a captive portal is a diagnosis in a scan, not a log
+  # line" (ee20ac0). This test asserts the notice exists and says the
+  # right thing; MET-1's own tests assert the user-facing half.
+  EXPERT=1 DIAGNOSIS_REACHED=0
+  # A marker file rather than stdout: speedtest_flavor's output is
+  # captured into a variable by speedtest_run, so anything echoed here
+  # would be invisible to the assertions.
+  REACHED="$BATS_TEST_TMPDIR/reached"
+  rm -f "$REACHED"
+  speedtest_flavor() { : > "$REACHED"; printf 'none:none'; }
+}
+
+@test "speedtest: a metered link skips the test by default" {
+  speed_guard_setup
+  LINK_METERED=1 LINK_SERVICE="iPhone USB"
+  run speedtest_run
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *"metered connection"*) ;;
+    *) echo "no metered notice in: $output"; return 1 ;;
+  esac
+  [ ! -e "$REACHED" ] || { echo "the guard fell through to the real test"; return 1; }
+  # The skip must say how to override it, or it is just a missing result.
+  case "$output" in
+    *"--speed"*) ;;
+    *) echo "skip notice does not mention --speed: $output"; return 1 ;;
+  esac
+}
+
+@test "speedtest: an explicit --speed overrides the metered skip" {
+  # The user keeps the choice. This is a default, not a prohibition.
+  speed_guard_setup
+  LINK_METERED=1 LINK_SERVICE="iPhone USB" SPEED_EXPLICIT=1
+  speedtest_run >/dev/null 2>&1
+  [ -e "$REACHED" ] || { echo "--speed did not override the guard"; return 1; }
+}
+
+@test "speedtest: an unmetered link is unaffected" {
+  speed_guard_setup
+  LINK_METERED=0
+  speedtest_run >/dev/null 2>&1
+  [ -e "$REACHED" ] || { echo "the guard fired on an unmetered link"; return 1; }
+}
+
+@test "speedtest: the metered notice names the service" {
+  speed_guard_setup
+  LINK_METERED=1 LINK_SERVICE="iPhone USB"
+  run speedtest_run
+  case "$output" in
+    *"iPhone USB"*) ;;
+    *) echo "service not named: $output"; return 1 ;;
+  esac
+}

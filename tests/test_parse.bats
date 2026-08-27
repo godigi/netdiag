@@ -620,6 +620,43 @@ assert_not_contains() {
   [ "$MAX_SEVERITY" -eq 2 ]
 }
 
+# ── MET-1: this connection costs money by the megabyte ───────────────────
+
+@test "diagnosis: a metered link fires MET-1 as info" {
+  sp_setup
+  LINK_METERED=1 LINK_SERVICE="iPhone USB"
+  diagnosis_run >/dev/null
+  diag_has MET-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  [ "$MAX_SEVERITY" -eq 0 ] || { echo "MET-1 moved the exit code"; return 1; }
+  assert_contains "$(diag_text_for MET-1)" "iPhone USB"
+  assert_contains "$(diag_text_for MET-1)" "--speed"
+}
+
+@test "diagnosis: MET-1 warns that router advice does not apply" {
+  # The point of firing it even when the speed test was skipped: every
+  # other recommendation in the report is wrong on a tethered link.
+  sp_setup
+  LINK_METERED=1 LINK_SERVICE="iPhone USB"
+  diagnosis_run >/dev/null
+  assert_contains "$(diag_text_for MET-1)" "routers and cables"
+}
+
+@test "diagnosis: an ordinary link does not fire MET-1" {
+  sp_setup
+  LINK_METERED=0 LINK_SERVICE="Wi-Fi"
+  diagnosis_run >/dev/null
+  diag_has MET-1 && { echo "MET-1 fired on an unmetered link"; return 1; }
+  return 0
+}
+
+@test "diagnosis: MET-1 still names the link with no service name" {
+  sp_setup
+  LINK_METERED=1 LINK_SERVICE=""
+  diagnosis_run >/dev/null
+  diag_has MET-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  assert_contains "$(diag_text_for MET-1)" "tethered device"
+}
+
 # ── pct_at_least: the arithmetic SP-1 rests on ───────────────────────────
 
 @test "pct_at_least: 58% of the PHY rate clears a 45% cutoff" {
@@ -681,6 +718,7 @@ sp_setup() {
   WIFI_TX="" SPEEDTEST_DOWN_MBPS=""
   LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
+  LINK_METERED=0 LINK_SERVICE="Wi-Fi"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
 }
 
@@ -742,6 +780,7 @@ eth_setup() {
   GW_LOSS="" WIFI_RSSI="" WIFI_SNR=""
   LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
+  LINK_METERED=0 LINK_SERVICE="Wi-Fi"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
 }
 

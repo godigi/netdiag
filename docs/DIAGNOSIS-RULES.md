@@ -486,6 +486,49 @@ All of the below are implemented and can fire.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
 
+### MET-1 — Metered connection
+
+- Trigger: `LINK_METERED == 1`, set by `linkstate_run` when either the
+  macOS service name carrying the link is a tethered one
+  (`linkstate_is_tethered_service`) or the address falls in a phone
+  hotspot's documented default range (`linkstate_is_hotspot_subnet`).
+- Severity: `info`.
+- Evidence: the service name where macOS gives one.
+- Recommendation: none — it reframes the rest of the report.
+
+**This one is about trust, not diagnosis.** The speed test runs *by
+default* and moves hundreds of megabytes. On a phone's hotspot that is
+the user's cellular allowance, spent by a tool they ran to ask a
+question, without being asked. So `MET-1` comes with a **behaviour
+change**: `speedtest_run` skips on a metered link unless `--speed` was
+passed explicitly, and says so rather than skipping silently.
+
+The GUI makes the stakes sharper: its one automatic full check fires on
+joining a new network, and joining a phone's hotspot is exactly that
+event. The guard lives in the CLI, which the app shells out to, so it
+covers that path too.
+
+`MET-1` itself fires whether or not the speed test was skipped, because
+every *other* recommendation in the report changes on a tethered link.
+"Reboot your router" and "check the cable" are nonsense when the router
+is a phone in someone's pocket.
+
+**Detection, and what it cannot see.** USB and Bluetooth tethering
+announce themselves in the service name and are exact — this developer's
+own service order lists `iPhone USB`. A phone's *Wi-Fi* hotspot is an
+ordinary Wi-Fi network as far as every command-line tool netdiag can
+reach: nothing in `scutil --nwi`, `ipconfig getsummary` or
+`system_profiler SPAirPortDataType` reports it as expensive. (The
+`expensive` and `constrained` flags do exist in `NWPathMonitor`, but are
+not exposed to any CLI.) So that case falls back to the documented
+default subnets — `172.20.10.0/28` for iOS, `192.168.43.0/24` for
+Android — which is a heuristic and knowingly so: it misses a
+reconfigured hotspot, and a home network using `192.168.43.0/24` would
+match.
+
+That asymmetry is deliberate. A false positive costs an unrequested skip
+that is announced and overridable; a false negative costs real money.
+
 ### SP-1 — The wireless link is the speed cap
 
 - Trigger: on Wi-Fi, `SPEEDTEST_DOWN_MBPS >= WIFI_TX ×

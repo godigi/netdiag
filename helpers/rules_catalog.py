@@ -524,6 +524,23 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#sp-1--the-wireless-link-is-the-speed-cap",
     },
     {
+        "id": "MET-1",
+        "title": "Metered connection — data costs money here",
+        "category": "topology",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "You're online through a phone or tethered device, so data "
+            "here comes out of a cellular allowance. Everything else in "
+            "this report describes that mobile connection rather than a "
+            "home network, so advice about routers and cables does not "
+            "apply — and the speed test is skipped by default, because "
+            "it would spend a large part of your allowance. Pass "
+            "--speed to run it anyway."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#met-1--metered-connection",
+    },
+    {
         "id": "NT-1",
         "title": "System clock drifted",
         "category": "clock",

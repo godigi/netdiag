@@ -7,7 +7,8 @@
 # runs are opened to settle. --no-speed opts out; --quick skips it unless
 # --speed was passed explicitly.
 #
-# Reads:  SPEED, SPEED_EXPLICIT, NO_SPEED, QUICK, PUBLIC_OK
+# Reads:  SPEED, SPEED_EXPLICIT, NO_SPEED, QUICK, PUBLIC_OK,
+#         LINK_METERED, LINK_SERVICE
 # Writes: SPEEDTEST_DOWN_MBPS, SPEEDTEST_UP_MBPS, SPEEDTEST_LATENCY_MS,
 #         SPEEDTEST_JITTER_MS, SPEEDTEST_SERVER; `speed` events on fd 3
 # Entry:  speedtest_run
@@ -161,6 +162,21 @@ speedtest_run() {
   [ "$PUBLIC_OK" -eq 1 ] || { progress_skip "no internet to test against"; return 0; }
   if [ "$QUICK" -eq 1 ] && [ "${SPEED_EXPLICIT:-0}" -eq 0 ]; then
     progress_skip "--quick"
+    return 0
+  fi
+  # A metered link is the one skip that is about the user's money rather
+  # than about time. The speed test moves hundreds of megabytes, and on a
+  # phone's hotspot that is the user's cellular allowance — spent by a
+  # tool they ran to ask a question, without being asked. The GUI makes
+  # it sharper: its one automatic full check fires on joining a new
+  # network, and joining a hotspot is exactly that event.
+  #
+  # Announced rather than silent, and overridable with an explicit
+  # --speed, so the user keeps the choice. [MET-1]
+  if [ "${LINK_METERED:-0}" -eq 1 ] && [ "${SPEED_EXPLICIT:-0}" -eq 0 ]; then
+    hdr "Speed test"
+    info "Skipped: this looks like a metered connection${LINK_SERVICE:+ ($LINK_SERVICE)}, and a speed test would use hundreds of megabytes of your data allowance. Run with --speed if you want it anyway."
+    progress_skip "metered link"
     return 0
   fi
 

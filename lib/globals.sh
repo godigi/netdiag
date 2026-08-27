@@ -33,6 +33,8 @@ LINK_MEDIA_MBPS=""       # negotiated wired rate, Mb/s; empty on WiFi [ETH-1]
 LINK_MEDIA_MAX_MBPS=""   # top rate the port advertises, Mb/s [ETH-1]
 LINK_DUPLEX=""           # full | half | "" [ETH-2]
 LINK_MEDIA_FULL_DUPLEX_CAPABLE=0  # 1 = port advertises full duplex [ETH-2]
+LINK_SERVICE=""          # macOS service name carrying the link [MET-1]
+LINK_METERED=0           # 1 = tethered / hotspot; data costs money [MET-1]
 
 # WiFi (lib/wifi.sh, lib/wifi_scan.sh, lib/wifi_disconnect.sh)
 IS_WIFI=0
