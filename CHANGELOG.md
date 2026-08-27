@@ -6,6 +6,52 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Docs — twenty networks netdiag cannot yet describe
+
+New `docs/design/networks-we-cannot-yet-describe.md`. Nothing implemented;
+it is a forward look at where the 38 rules in `--rules-catalog` answer
+**confidently and wrongly**, which is worse than not answering. Every
+"what netdiag does today" claim in it is verified against the code at
+`31121ba` rather than assumed.
+
+The five in Tier 1 are existing rules firing on data that does not mean
+what the rule thinks:
+
+- A `169.254.x.x` self-assigned address sets `LINK_UP=1`, because
+  `linkstate_parse_ifconfig_ip` takes the first `inet` line whatever it
+  is — so a total DHCP failure is recorded as a healthy, configured link.
+  The one state `lib/linkstate.sh` exists to name, and it is folded into
+  the healthy one.
+- A worse interface can win the service order and nothing notices. The
+  author's own Mac ranks two pairs of display glasses and a Thunderbolt
+  bridge above Wi-Fi; `linkstate_run` reads the order only as a fallback
+  and stops at the first active device.
+- A gigabit port negotiated at 100 Mb/s is invisible — nothing reads
+  `ifconfig media` — so a damaged cable pair reads as a slow ISP, and a
+  duplex mismatch reads as `G2` "reboot your router".
+- The Wi-Fi PHY rate is collected and the speed result is collected and
+  no rule joins them, so a link-rate ceiling reads as a slow internet
+  plan. Highest value per line in the document: the data is already in
+  hand.
+- Satellite, cellular and fixed-wireless are judged against terrestrial
+  cutoffs. Deferred deliberately — a per-medium profile changes the
+  `lib/thresholds.sh` contract rather than adding under it.
+
+Tier 2 collects six entries that turn out to be one bug wearing different
+clothes: **netdiag assumes the default route is the path its traffic
+takes.** Split-tunnel VPNs, iCloud Private Relay, PAC proxies,
+DoH/DoT resolvers and NetworkExtension content filters each break that
+assumption and each silently invalidate a different subset of the report.
+The document argues for one "what else is in the path" pass over five
+unrelated rules.
+
+One item is a trust question rather than a diagnostic one, and is
+recommended first on those grounds: `--speed` runs by default, and on a
+personal hotspot or iPhone USB link that spends the user's cellular
+allowance without asking — including from the GUI's automatic
+first-sighting scan, since joining a phone's hotspot is exactly that
+event.
+
 ### Fixed — link state, captive portals, and a green dot over a red row
 
 Four defects, all reachable from one screenshot of a Mac sitting on hotel
