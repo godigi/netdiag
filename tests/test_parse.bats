@@ -552,6 +552,33 @@ TSV
   [[ " ${DIAG_RULE[*]:-} " != *" VPN-1 "* ]]
 }
 
+
+# ── Assertion helpers ────────────────────────────────────────────────────
+# A failing `[[ ... ]]` does NOT abort a bats test on bats-core 1.14 —
+# bash does not run the ERR trap bats installs for conditional constructs,
+# so any `[[ ]]` that isn't the last statement in a test body is silently
+# a no-op. A failing *function call* does abort, so assertions that must
+# actually hold go through these.
+#
+# Verified with a two-line probe: `[[ " P1 " == *" CP-1 "* ]]` followed by
+# `[ 1 -eq 1 ]` reports ok; the same test with `[ ]` reports not ok.
+
+assert_contains() {
+  case "$1" in (*"$2"*) return 0 ;; esac
+  echo "expected to contain: [$2]" >&2
+  echo "actual:              [$1]" >&2
+  return 1
+}
+
+assert_not_contains() {
+  case "$1" in (*"$2"*)
+    echo "expected NOT to contain: [$2]" >&2
+    echo "actual:                  [$1]" >&2
+    return 1 ;;
+  esac
+  return 0
+}
+
 # ── N1c: joined, addressed, no route out ─────────────────────────────────
 # N1 originally fired on the missing route alone and told the user their
 # Mac "isn't joined to a WiFi network" — a claim nothing in the run had
@@ -567,9 +594,9 @@ TSV
   diagnosis_run >/dev/null
   [ "${DIAG_RULE[0]}" = "N1c" ]
   [ "$MAX_SEVERITY" -eq 2 ]
-  [[ "${DIAG[0]}" == *"Mercure"* ]]
-  [[ "${DIAG[0]}" == *"10.125.128.1"* ]]
-  [[ "${DIAG[0]}" != *"isn't joined to a WiFi network"* ]]
+  assert_contains "${DIAG[0]}" "Mercure"
+  assert_contains "${DIAG[0]}" "10.125.128.1"
+  assert_not_contains "${DIAG[0]}" "isn't joined to a WiFi network"
 }
 
 @test "diagnosis: joined with no route on ethernet names no SSID" {
@@ -579,7 +606,8 @@ TSV
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
   [ "${DIAG_RULE[0]}" = "N1c" ]
-  [[ "${DIAG[0]}" == *"192.168.1.1"* ]]
+  assert_contains "${DIAG[0]}" "192.168.1.1"
+  assert_contains "${DIAG[0]}" "ethernet cable is connected"
 }
 
 @test "diagnosis: nothing joined is still N1, not N1c" {
@@ -598,6 +626,58 @@ TSV
   GATEWAY="" LINK_UP=1 IS_WIFI=1 WIFI_SSID="Mercure"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  local joined=" ${DIAG_RULE[*]} "
-  [[ "$joined" != *" N1 "* ]]
+  assert_not_contains " ${DIAG_RULE[*]} " " N1 "
+  assert_contains " ${DIAG_RULE[*]} " " N1c "
+}
+
+@test "diagnosis: N1c does not name a router it was never offered" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=1 IS_WIFI=1 WIFI_SSID="Mercure" LINK_DHCP_ROUTER=""
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  assert_not_contains "${DIAG[0]}" "http://"
+  assert_contains "${DIAG[0]}" "ask the network's owner"
+}
+
+# ── CP-1: a portal is a diagnosis, not just a log line ───────────────────
+# lib/public.sh has set CAPTIVE_PORTAL since v0.1 and printed a warn line
+# about it, but never called add_diag — so the portal never reached
+# status.rules[], the GUI's "What we found", or the exit code. P1 fired
+# instead, telling the user on a hotel network to "check their ISP's
+# status page or call support".
+
+@test "diagnosis: a portal blocking the internet is a critical CP-1, not P1" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.125.128.1" LINK_UP=1 GW_LOSS=0 PUBLIC_OK=0 DNS_OK=0
+  CAPTIVE_PORTAL=1 CAPTIVE_PORTAL_CODE=302
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  assert_contains " ${DIAG_RULE[*]} " " CP-1 "
+  assert_not_contains " ${DIAG_RULE[*]} " " P1 "
+  assert_not_contains " ${DIAG_RULE[*]} " " P2 "
+  [ "$MAX_SEVERITY" -eq 2 ]
+}
+
+@test "diagnosis: a portal that still lets traffic through is a warning" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.125.128.1" LINK_UP=1 GW_LOSS=0 PUBLIC_OK=1 DNS_OK=1
+  CAPTIVE_PORTAL=1 CAPTIVE_PORTAL_CODE=302
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  assert_contains " ${DIAG_RULE[*]} " " CP-1 "
+  [ "$MAX_SEVERITY" -eq 1 ]
+}
+
+@test "diagnosis: no portal leaves P1 in charge" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.125.128.1" LINK_UP=1 GW_LOSS=0 PUBLIC_OK=0 DNS_OK=0
+  CAPTIVE_PORTAL=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  assert_contains " ${DIAG_RULE[*]} " " P1 "
+  assert_not_contains " ${DIAG_RULE[*]} " " CP-1 "
 }

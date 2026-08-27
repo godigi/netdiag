@@ -240,9 +240,10 @@ scanner_rules() {
   local rule
   for rule in $(grep -oE '_mon_add_rule (critical|warn|info) [A-Za-z0-9-]+' "$REPO/lib/monitor.sh" \
                 | awk '{print $3}' | sort -u); do
-    case "$rule" in
-      CP-1) continue ;;  # captive portal: a public.captive_portal fact, not a diagnosis rule
-    esac
+    # No exclusions. CP-1 used to be one — it was emitted by the monitor
+    # and by nothing else, on the theory that a scan didn't need it. It
+    # did: without a scan call site a portal never reached status.rules[],
+    # the GUI, or the exit code, and P1's "call your ISP" spoke for it.
     grep -qE "add_diag [a-z]+ ${rule} " "$REPO/lib/diagnosis.sh" \
       || { echo "monitor emits '$rule', which lib/diagnosis.sh never does"; return 1; }
   done

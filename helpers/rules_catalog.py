@@ -649,15 +649,17 @@ RULES: list[dict[str, str]] = [
         "id": "CP-1",
         "title": "Captive portal blocking access",
         "category": "internet",
-        "severity": "warn",
-        "scope": "monitor",
+        "severity": "varies",
+        "scope": "both",
         "blurb": (
-            "The background monitor's probe got redirected instead of a "
-            "normal response, which is the signature of a captive portal "
-            "— the login or terms page hotel, airport, and "
-            "coffee-shop WiFi often require before real internet access "
-            "works. Open a browser and complete the portal; nothing else "
-            "will work until it's accepted."
+            "The check for internet access came back intercepted rather "
+            "than answered, which is the signature of a captive portal — "
+            "the login or terms page hotel, airport, and coffee-shop WiFi "
+            "often require before real internet access works. Open a "
+            "browser and complete the portal; nothing else will work "
+            "until it's accepted. Critical when nothing is getting "
+            "through, a warning when traffic still flows and the portal "
+            "is only waiting to cut it off."
         ),
         "doc": "DIAGNOSIS-RULES.md#cp-1--captive-portal-blocking-real-access",
     },

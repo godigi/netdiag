@@ -673,7 +673,10 @@ _mon_rules() {
   # compatibility fallback. An unmeasured value is "" and must not read as
   # an outage — the same distinction that JSON-SCHEMA.md draws between null
   # and 0.
-  if [ "$_mon_public_ok" = "0" ] && loss_below "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+  # Mirrors lib/diagnosis.sh: CP-1 owns the portal case on both sides, or
+  # the stream and the report disagree about what to tell the user.
+  if [ "$_mon_public_ok" = "0" ] && [ "${MON_CAPTIVE:-}" != "1" ] \
+     && loss_below "$MON_GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ "${MON_DNS_OK:-}" = "0" ]; then
       _mon_add_rule critical P1
     else

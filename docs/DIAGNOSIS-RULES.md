@@ -589,35 +589,50 @@ All of the below are implemented and can fire.
 
 `--monitor` evaluates a deliberately partial mirror of the rules above —
 see the comment at the top of `lib/monitor.sh::_mon_rules` — on whichever
-inputs a between-scans sample actually has, plus one rule below that has
-no scan-mode equivalent at all.
+inputs a between-scans sample actually has.
 
 ### CP-1 — Captive portal blocking real access
 
-- Trigger: the monitor's periodic probe to
-  `http://captive.apple.com/hotspot-detect.html` comes back as a redirect
-  (3xx) instead of the plain 200 a clean connection returns. Evaluated in
-  `lib/monitor.sh::_mon_probe_public` / `_mon_rules`.
-- Severity: `warn`.
-- Evidence: the observed HTTP status class from the probe.
-- Recommendation: open a browser and complete the portal's login or terms
-  page — hotel, airport, and coffee-shop WiFi commonly gate real internet
-  access behind one. Nothing else will work until it's accepted.
-- Rationale: a background monitor has no browser in the loop, so a
-  captive portal looks identical to a dead gateway on every other signal
-  it has. A full scan runs the exact same probe (`lib/public.sh::public_run`
-  — same URL, same 3xx test, no `-L`), but doesn't need a rule for it: a
-  detected portal already surfaces as `public.captive_portal` in the JSON
-  and a warn line in the Public reachability section, and when the portal
-  is actually blocking traffic the `ifconfig.co` fetch earlier in the
-  same function fails too, so P1/P2 fire anyway. The monitor emits the
-  same `public.captive_portal` field on every sample — but only
-  `status.rules[]` feeds `status.severity`. Without CP-1, a portal that
-  still lets the probe's fetch through would stream `severity: "ok"` — a
-  green menu-bar dot over a network where nothing loads — and one that
-  blocks the fetch would fire P2, whose "your provider's side" advice is
-  exactly wrong on a hotel network. CP-1 names the actual cause either
-  way.
+- **Trigger:** the probe to `http://captive.apple.com/hotspot-detect.html`
+  comes back intercepted rather than answered — a redirect (3xx), a 511
+  Network Authentication Required, or a 200 whose body is not Apple's
+  literal success page. Classified by `captive_portal_classify` in
+  `lib/common.sh`, shared by `lib/public.sh::public_run` (scan) and
+  `lib/monitor.sh::_mon_probe_public` (monitor).
+- **Severity:** critical when `public.ok` is false — nothing is getting
+  through and the network is unusable until the portal is accepted. Warn
+  when traffic is still flowing and the portal is merely waiting to cut
+  it off.
+- **Evidence:** the observed HTTP status.
+- **Recommendation:** open a browser and complete the portal's login or
+  terms page.
+- **Precedence: CP-1 suppresses P1 and P2**, in the scanner and in the
+  monitor alike. Both are guarded on `CAPTIVE_PORTAL` / `MON_CAPTIVE`.
+
+**Correcting the record.** This section previously argued that CP-1 was
+monitor-only by design, because "a full scan runs the exact same probe
+but doesn't need a rule for it: a detected portal already surfaces as
+`public.captive_portal` in the JSON and a warn line in the Public
+reachability section, and when the portal is actually blocking traffic
+the `ifconfig.co` fetch fails too, so P1/P2 fire anyway."
+
+That was wrong on both counts, and the stored run
+`2026-08-26T22:53:05Z` shows how:
+
+- A field in the JSON and a line in a section are not a diagnosis.
+  `status.rules[]` is what feeds `status.severity`, the exit code, the
+  GUI's "What we found" panel and the menu-bar dot. A portal reached none
+  of them.
+- "P1/P2 fire anyway" is the defect, not the mitigation. P1 says *"almost
+  certainly an outage on your ISP's side — check their status page or
+  call support."* On a hotel network that is not merely unhelpful, it
+  sends the user to phone a company whose service is working, and buries
+  the one action that would have fixed it in thirty seconds.
+
+The probe was also weaker than this section implied: it classified on the
+HTTP status alone with `curl -o /dev/null`, so a portal answering 200 with
+its own login page — the common case — was reported as "No captive
+portal." See `captive_portal_classify`.
 
 ## Rules under active development
 

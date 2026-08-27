@@ -136,13 +136,37 @@ diagnosis_run() {
     add_diag warn G3 "Your Mac is losing about ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not to the wider internet, so your internet service itself looks fine from here. It's not enough to break the connection outright, but pages can stall for a second and calls can break up. $_g3_cause"
   fi
 
+  # CP-1 — a captive portal is intercepting this network. Two literal
+  # call sites rather than one with a variable severity: every add_diag
+  # site in this tree passes its severity as a literal token, and
+  # tests/test_rules_catalog.bats extracts them by regex to prove the
+  # catalog matches the code.
+  #
+  # This rule existed for months with no scan call site at all. It lived
+  # only in lib/monitor.sh, and docs/DIAGNOSIS-RULES.md argued a scan
+  # didn't need one "because P1/P2 fire anyway". They do — and what they
+  # say is "almost certainly an outage on your ISP's side, check their
+  # status page or call support", which is exactly wrong on a hotel
+  # network and sends the user to phone a company that is working fine.
+  if [ "${CAPTIVE_PORTAL:-0}" -eq 1 ]; then
+    if [ "$PUBLIC_OK" -eq 0 ]; then
+      add_diag critical CP-1 "This network wants you to sign in before it will let you online — the check for internet access came back intercepted (HTTP ${CAPTIVE_PORTAL_CODE:-?}) rather than answered. Open a browser and load any plain http:// address; the network's sign-in or terms page should appear. Nothing else will work until you accept it. There is nothing wrong with your Mac, your router, or your internet provider."
+    else
+      add_diag warn CP-1 "This network is intercepting web requests to show a sign-in or terms page (HTTP ${CAPTIVE_PORTAL_CODE:-?}), even though traffic is currently getting through. Expect connections to break when its session expires — open a browser and complete the page to be safe."
+    fi
+  fi
+
   # P1/P2 — public unreachable. The gateway guard was `== 0` exactly until
   # G3 landed, which left a hole: an outage measured alongside 8% gateway
   # loss matched neither P1/P2 (loss was not 0) nor G1/G2 (loss was under
   # 20), so a total loss of internet produced no diagnosis at all. The
   # guard now means "the router is not the problem", not "the router is
   # flawless".
-  if [ "$PUBLIC_OK" -eq 0 ] && loss_below "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
+  #
+  # CP-1 above owns the portal case. Without this guard both fire, and P1's
+  # "call your ISP" outranks the one instruction that actually works.
+  if [ "$PUBLIC_OK" -eq 0 ] && [ "${CAPTIVE_PORTAL:-0}" -eq 0 ] \
+     && loss_below "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ "$DNS_OK" -eq 0 ]; then
       add_diag critical P1 "Your local network is working but the wider internet is unreachable, and name lookups are also failing — likely a DNS or upstream-ISP outage. Try opening http://1.1.1.1 in a browser: if it loads, the problem is DNS; if not, it's the ISP."
     else
