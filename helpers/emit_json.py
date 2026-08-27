@@ -359,6 +359,14 @@ def main() -> None:
             # contradiction rather than as the DHCP failure it is. [DH-3]
             "self_assigned_ip": os.environ.get(
                 "NETDIAG_LINK_SELF_ASSIGNED", "") == "1",
+            # Wired negotiation. All three are null on Wi-Fi, which
+            # reports no media subtype at all — a rate invented for it
+            # would fire an Ethernet rule on every wireless run.
+            # `link_mbps` below `link_max_mbps` is ETH-1; `duplex` of
+            # "half" on a full-duplex-capable port is ETH-2.
+            "link_mbps": _maybe_int("LINK_MEDIA_MBPS"),
+            "link_max_mbps": _maybe_int("LINK_MEDIA_MAX_MBPS"),
+            "duplex": _env("LINK_DUPLEX"),
             # The router the DHCP server offered, present whether or not
             # the kernel installed a route to it — so on a network that
             # withholds a route there is still an address to point a

@@ -27,6 +27,26 @@ check.
   (no link) and `N1c` (real lease, no route). New
   `interface.self_assigned_ip` in the JSON, because `ip` populated
   alongside `link_up: false` otherwise reads as a contradiction.
+- **A gigabit port running at 100 Mb/s is no longer invisible.
+  [`ETH-1`, `ETH-2`]** Nothing in netdiag read `ifconfig media`, so a
+  damaged pair in a cable — which drops a 1000BASE-T link to
+  100BASE-TX — was a 10× cap visible nowhere. The speed test reported
+  ~94 Mb/s and the user called their ISP about a gigabit plan being
+  delivered correctly. `ETH-1` compares the negotiated rate against the
+  port's advertised maximum, so it needs no threshold and stays quiet on
+  an adapter that genuinely only does 100 Mb/s.
+  `ETH-2` catches half duplex, but only on a port that advertises full
+  duplex — a failed negotiation rather than an old adapter. Both come
+  off `ifconfig -m`, whose output is a superset of the plain form, so
+  `linkstate_run` gained the capability data without a second
+  subprocess. New `interface.link_mbps`, `link_max_mbps` and `duplex`
+  in the JSON, all null on Wi-Fi.
+- **`G2` and `G3` stop blaming the router for a duplex mismatch.**
+  Collisions on a half-duplex link produce heavy gateway loss, and
+  `G2`'s headline advice was "reboot the router" — power-cycling a box
+  that works. When `ETH-2` has fired, both rules now state the loss and
+  point at the negotiation rather than offering a second, contradictory
+  fix.
 - **The service order's ranking now decides which unconfigured device
   is reported.** `linkstate_run` overwrote `LINK_DEVICE` on every active
   device, so when none held a lease the *last* one won. Invisible while

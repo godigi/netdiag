@@ -620,6 +620,134 @@ assert_not_contains() {
   [ "$MAX_SEVERITY" -eq 2 ]
 }
 
+# ── ETH-1 / ETH-2: the wired link negotiated badly ───────────────────────
+# A 10x cap invisible everywhere but one line of ifconfig, which the speed
+# test then reports as a slow ISP.
+
+eth_setup() {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="192.168.1.1" LINK_UP=1 IS_WIFI=0 PUBLIC_OK=1 PUBLIC_CHECKED=1
+  GW_LOSS="" WIFI_RSSI="" WIFI_SNR=""
+  LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+}
+
+diag_has() {
+  local want="$1" r
+  for r in "${DIAG_RULE[@]}"; do [ "$r" = "$want" ] && return 0; done
+  return 1
+}
+
+diag_text_for() {
+  local want="$1" i=0
+  for i in "${!DIAG_RULE[@]}"; do
+    [ "${DIAG_RULE[$i]}" = "$want" ] && { printf '%s' "${DIAG[$i]}"; return 0; }
+  done
+  return 1
+}
+
+@test "diagnosis: a gigabit port at 100 Mb/s fires ETH-1" {
+  eth_setup
+  LINK_MEDIA_MBPS=100 LINK_MEDIA_MAX_MBPS=1000 LINK_DUPLEX=full
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=1
+  diagnosis_run >/dev/null
+  diag_has ETH-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  assert_contains "$(diag_text_for ETH-1)" "100 Mb/s"
+  assert_contains "$(diag_text_for ETH-1)" "1000 Mb/s"
+  assert_contains "$(diag_text_for ETH-1)" "cable"
+}
+
+@test "diagnosis: a link at the port's full speed fires nothing" {
+  eth_setup
+  LINK_MEDIA_MBPS=1000 LINK_MEDIA_MAX_MBPS=1000 LINK_DUPLEX=full
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=1
+  diagnosis_run >/dev/null
+  diag_has ETH-1 && { echo "ETH-1 fired on a healthy gigabit link"; return 1; }
+  diag_has ETH-2 && { echo "ETH-2 fired on a full-duplex link"; return 1; }
+  return 0
+}
+
+@test "diagnosis: a 100 Mb/s-only adapter is not accused of being slow" {
+  # The number is the truth on this port, not a fault. This is why the
+  # rule compares two measured values instead of testing a cutoff.
+  eth_setup
+  LINK_MEDIA_MBPS=100 LINK_MEDIA_MAX_MBPS=100 LINK_DUPLEX=full
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=1
+  diagnosis_run >/dev/null
+  diag_has ETH-1 && { echo "ETH-1 fired on a port doing its maximum"; return 1; }
+  return 0
+}
+
+@test "diagnosis: half duplex on a full-duplex-capable port fires ETH-2" {
+  eth_setup
+  LINK_MEDIA_MBPS=10 LINK_MEDIA_MAX_MBPS=1000 LINK_DUPLEX=half
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=1
+  diagnosis_run >/dev/null
+  diag_has ETH-2 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  [ "$MAX_SEVERITY" -eq 2 ]
+  assert_contains "$(diag_text_for ETH-2)" "half-duplex"
+}
+
+@test "diagnosis: half duplex on a half-duplex-only port stays quiet" {
+  # An old adapter that only ever does half duplex is not a fault, and
+  # saying so would be noise.
+  eth_setup
+  LINK_MEDIA_MBPS=10 LINK_MEDIA_MAX_MBPS=10 LINK_DUPLEX=half
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
+  diagnosis_run >/dev/null
+  diag_has ETH-2 && { echo "ETH-2 fired on a port with no full-duplex mode"; return 1; }
+  return 0
+}
+
+@test "diagnosis: WiFi never fires an ethernet rule" {
+  # Wi-Fi reports no media subtype, so LINK_MEDIA_MBPS is empty. A rate
+  # invented for it would fire ETH-1 on every wireless run.
+  eth_setup
+  IS_WIFI=1 WIFI_SSID="Home"
+  LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
+  diagnosis_run >/dev/null
+  diag_has ETH-1 && { echo "ETH-1 fired on WiFi"; return 1; }
+  diag_has ETH-2 && { echo "ETH-2 fired on WiFi"; return 1; }
+  return 0
+}
+
+@test "diagnosis: with ETH-2 firing, G2 stops telling users to reboot the router" {
+  # Collisions on a half-duplex link produce heavy gateway loss. G2's
+  # headline advice would send the user to power-cycle a box that works.
+  eth_setup
+  . "$REPO/lib/thresholds.sh"
+  LINK_MEDIA_MBPS=10 LINK_MEDIA_MAX_MBPS=1000 LINK_DUPLEX=half
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=1
+  GW_LOSS=40
+  diagnosis_run >/dev/null
+  diag_has G2 || { echo "G2 did not fire; rules: ${DIAG_RULE[*]}"; return 1; }
+  assert_not_contains "$(diag_text_for G2)" "rebooting the router"
+  assert_contains "$(diag_text_for G2)" "half-duplex"
+}
+
+@test "diagnosis: without ETH-2, G2 keeps its original advice" {
+  eth_setup
+  . "$REPO/lib/thresholds.sh"
+  GW_LOSS=40
+  diagnosis_run >/dev/null
+  diag_has G2 || { echo "G2 did not fire; rules: ${DIAG_RULE[*]}"; return 1; }
+  assert_contains "$(diag_text_for G2)" "rebooting the router"
+}
+
+@test "diagnosis: with ETH-2 firing, G3 blames the negotiation" {
+  eth_setup
+  . "$REPO/lib/thresholds.sh"
+  LINK_MEDIA_MBPS=10 LINK_MEDIA_MAX_MBPS=1000 LINK_DUPLEX=half
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=1
+  GW_LOSS=10
+  diagnosis_run >/dev/null
+  diag_has G3 || { echo "G3 did not fire; rules: ${DIAG_RULE[*]}"; return 1; }
+  assert_contains "$(diag_text_for G3)" "half-duplex"
+  assert_not_contains "$(diag_text_for G3)" "reseating or swapping the cable"
+}
+
 # ── DH-3: joined, but nothing handed out an address ──────────────────────
 # The third state N1 used to swallow. A Mac associated at full signal with
 # a 169.254 self-assigned address was told it "has no network connection

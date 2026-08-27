@@ -125,6 +125,29 @@ diagnosis_run() {
     add_diag info TCP-1 "Actual connections work fine, only the \"ping\" tests fail (${GW_LOSS}% loss to the gateway) — something on the path is blocking pings but not real traffic. Common on hotel WiFi, corporate networks, and some ISPs. The network is up; don't worry about the ping numbers above."
   fi
 
+  # ETH-1 / ETH-2 — the wired link negotiated badly. Decided *before*
+  # G1/G2/G3 because a half-duplex link is a cause of gateway loss, and
+  # G2's headline advice ("reboot the router") is wrong when it is: the
+  # box is fine and the negotiation is not.
+  #
+  # Both compare two measured values rather than testing a cutoff, so
+  # neither needs a threshold: "100 Mb/s" is only a fault relative to a
+  # port that can do more, and half duplex is only a fault on a port that
+  # advertises full. On a genuinely 100 Mb/s half-duplex-only adapter both
+  # stay quiet, because there both numbers are simply the truth.
+  local _eth_half=0
+  if [ -n "${LINK_MEDIA_MBPS:-}" ] && is_numeric "${LINK_MEDIA_MBPS:-}"; then
+    if [ "${LINK_DUPLEX:-}" = "half" ] \
+       && [ "${LINK_MEDIA_FULL_DUPLEX_CAPABLE:-0}" -eq 1 ]; then
+      _eth_half=1
+      add_diag critical ETH-2 "Your ethernet connection has settled on half-duplex — it can only send or receive at any one moment, not both — even though this port supports doing both at once. That causes collisions and heavy packet loss, and it looks exactly like a failing router. It's a failed negotiation, usually because one end (a switch port, or the Mac's own settings) is pinned to a fixed speed instead of automatic. Set both ends back to automatic, and swap the cable if that doesn't take."
+    fi
+    if [ -n "${LINK_MEDIA_MAX_MBPS:-}" ] && is_numeric "${LINK_MEDIA_MAX_MBPS:-}" \
+       && [ "$LINK_MEDIA_MBPS" -lt "$LINK_MEDIA_MAX_MBPS" ]; then
+      add_diag warn ETH-1 "Your ethernet connection negotiated ${LINK_MEDIA_MBPS} Mb/s, but this port can do ${LINK_MEDIA_MAX_MBPS} Mb/s — so something is holding the link below what it's capable of, and no speed test can exceed that ceiling no matter how fast your internet plan is. A damaged or low-grade cable is the usual cause (a broken pair drops a gigabit link to a hundred), followed by a cheap dock or hub in the path. Try a different cable, and plug straight into the router if you can."
+    fi
+  fi
+
   # G1/G2/G3 — gateway loss. All three describe trouble on the connection
   # between the Mac and the router *inside the home* — never the ISP or the
   # wider internet — and say so in plain words, because a reader who
@@ -137,6 +160,12 @@ diagnosis_run() {
   elif loss_at_least "$GW_LOSS" "$THRESH_GW_LOSS_CRIT_PCT"; then
     if [ -n "$WIFI_RSSI" ] && is_numeric "$WIFI_RSSI" && [ "$WIFI_RSSI" -le "$THRESH_WIFI_RSSI_G1_DBM" ]; then
       add_diag critical G1 "Your Mac is losing ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not out on the wider internet. Your Wi-Fi signal here is weak (${WIFI_RSSI} dBm), which is almost certainly the cause. Try moving closer to the router, or switching to a closer access point if you have one."
+    elif [ "$_eth_half" -eq 1 ]; then
+      # ETH-2 already named the cause. Repeating "reboot the router" here
+      # would send the user to power-cycle a box that is working, so this
+      # branch states the loss and points at the diagnosis that explains
+      # it rather than offering a second, contradictory fix.
+      add_diag critical G2 "Your Mac is losing ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not out on the wider internet or with your provider. That is what the half-duplex ethernet link above causes, so fix the negotiation first rather than the router; collisions on a half-duplex link produce exactly this."
     else
       add_diag critical G2 "Your Mac is losing ${GW_LOSS}% of the packets it sends to your router — the box that gives you internet in your home — not out on the wider internet or with your provider. Try rebooting the router (unplug it for 30 seconds, then plug it back in) or moving closer to it; on ethernet, check the cable."
     fi
@@ -153,6 +182,8 @@ diagnosis_run() {
       _g3_cause="Your Wi-Fi signal here is weak, which is the likely cause — try moving closer to the router, or switching to a less crowded band or channel."
     elif [ "$IS_WIFI" -eq 1 ]; then
       _g3_cause="Even with a good signal, Wi-Fi interference — from microwaves, neighboring networks, or distance — is the most common cause at this level; restarting the router can help if it keeps happening."
+    elif [ "$_eth_half" -eq 1 ]; then
+      _g3_cause="The half-duplex ethernet link above is the likely cause — collisions on a half-duplex link produce exactly this — so fix the negotiation before suspecting anything else."
     else
       _g3_cause="On ethernet this usually points to the cable or the port — try reseating or swapping the cable."
     fi

@@ -26,7 +26,9 @@
 # feed fixtures. Depends on nothing; safe to source standalone.
 #
 # Writes (via linkstate_run): LINK_DEVICE, LINK_STATUS, LINK_IP,
-#                             LINK_DHCP_ROUTER, LINK_UP
+#                             LINK_DHCP_ROUTER, LINK_UP, LINK_SELF_ASSIGNED,
+#                             LINK_MEDIA_MBPS, LINK_MEDIA_MAX_MBPS,
+#                             LINK_DUPLEX, LINK_MEDIA_FULL_DUPLEX_CAPABLE
 # Entry: linkstate_run
 
 # "active" / "inactive" / "" from `ifconfig <dev>` output ($1).
@@ -71,6 +73,111 @@ linkstate_is_link_local() {
   esac
 }
 
+# ── Ethernet negotiation [ETH-1, ETH-2] ──────────────────────────────────
+#
+# A damaged pair in a cable, a cheap dock, or a switch port stuck on a
+# forced setting drops a 1000BASE-T link to 100BASE-TX — a 10x cap that
+# is invisible everywhere in netdiag except this one line of ifconfig.
+# The speed test then reports ~94 Mb/s and the user calls their ISP about
+# a gigabit plan that is being delivered correctly.
+#
+# Half duplex is the same family and worse: collisions and heavy loss,
+# which G2/G3 would otherwise report as "your router is dropping packets"
+# and send the user to reboot a box that is fine.
+#
+# Both come off `ifconfig -m <dev>`, which is a superset of plain
+# `ifconfig <dev>` — same status and inet lines, plus the `supported
+# media:` block — so linkstate_run gets the capability for free without a
+# second subprocess. `networksetup -listvalidmedia` would also answer,
+# but it takes a hardware-port name rather than a device and costs ~100ms.
+
+# Rate in Mb/s from a `media:` line in `ifconfig` output ($1), or empty.
+#
+# Shapes this must handle, all real:
+#   media: autoselect (1000baseT <full-duplex>)      negotiated gigabit
+#   media: autoselect (1000baseT <full-duplex,flow-control>)
+#   media: 100baseTX <full-duplex>                   manually pinned
+#   media: autoselect (2500Base-T <full-duplex>)     2.5 GbE, mixed case
+#   media: autoselect                                WiFi — no rate
+#   media: autoselect <full-duplex>                  virtual — no rate
+#   media: none / <unknown type>                     unplugged — no rate
+#
+# Empty for everything without a speed in it. Wi-Fi reports a bare
+# `autoselect`, and inventing a rate for it would fire an Ethernet rule
+# on every wireless run.
+#
+# The unit suffix is what distinguishes 10Gbase-T (10000) from
+# 10baseT/UTP (10), so it is matched explicitly rather than taking the
+# leading digits.
+linkstate_parse_media_rate() {
+  printf '%s\n' "$1" | awk '
+    /^[[:space:]]*media:/ {
+      line = tolower($0)
+      if (match(line, /[0-9]+g?base/)) {
+        spec = substr(line, RSTART, RLENGTH)
+        n = spec + 0
+        # "10gbase-t" → 10 × 1000; "1000baset" → 1000 as it stands.
+        print (spec ~ /gbase/) ? n * 1000 : n
+      }
+      exit
+    }'
+}
+
+# "full" | "half" | "" from a `media:` line in `ifconfig` output ($1).
+# Independent of the rate: a virtual interface states its duplex and no
+# speed, and a rate parser that also owned duplex would lose that.
+linkstate_parse_media_duplex() {
+  printf '%s\n' "$1" | awk '
+    /^[[:space:]]*media:/ {
+      line = tolower($0)
+      if (line ~ /half-duplex/) { print "half"; exit }
+      if (line ~ /full-duplex/) { print "full"; exit }
+      exit
+    }'
+}
+
+# The highest rate in Mb/s the port advertises, from the `supported
+# media:` block of `ifconfig -m <dev>` output ($1), or empty.
+#
+# This is the port's capability, which is what makes ETH-1 possible:
+# "100 Mb/s" is only a fault relative to a port that can do more, and on
+# a genuinely 100 Mb/s-only adapter it is simply the truth.
+linkstate_parse_media_max() {
+  printf '%s\n' "$1" | awk '
+    /^[[:space:]]*supported media:/ { in_block = 1; next }
+    in_block && /^[[:space:]]*media / {
+      line = tolower($0)
+      if (match(line, /[0-9]+g?base/)) {
+        spec = substr(line, RSTART, RLENGTH)
+        n = spec + 0
+        if (spec ~ /gbase/) n *= 1000
+        if (n > max) max = n
+      }
+      next
+    }
+    in_block && !/^[[:space:]]*media / { in_block = 0 }
+    END { if (max > 0) print max }'
+}
+
+# True when the `supported media:` block of `ifconfig -m <dev>` output
+# ($1) advertises any full-duplex mode.
+#
+# This is what makes ETH-2 a fault rather than an observation. A link
+# running half duplex on a port that can do full duplex is a failed
+# negotiation — usually one end pinned to a fixed setting — and it
+# produces collisions and heavy loss. A port that only ever does half
+# duplex is simply old, and saying so would be noise.
+linkstate_media_has_full_duplex() {
+  printf '%s\n' "$1" | awk '
+    /^[[:space:]]*supported media:/ { in_block = 1; next }
+    in_block && /^[[:space:]]*media / {
+      if (tolower($0) ~ /full-duplex/) { found = 1 }
+      next
+    }
+    in_block && !/^[[:space:]]*media / { in_block = 0 }
+    END { exit(found ? 0 : 1) }'
+}
+
 # The first router the DHCP server offered, from `ipconfig getpacket <dev>`
 # output ($1), or empty.
 #
@@ -106,7 +213,7 @@ linkstate_parse_service_devices() {
 # order so the fast path costs one ifconfig and nothing else.
 #
 # Sets LINK_DEVICE / LINK_STATUS / LINK_IP / LINK_DHCP_ROUTER / LINK_UP /
-# LINK_SELF_ASSIGNED.
+# LINK_SELF_ASSIGNED / LINK_MEDIA_MBPS / LINK_MEDIA_MAX_MBPS / LINK_DUPLEX.
 # LINK_UP is 1 only when a device is BOTH active AND holds a *real*
 # address: an active radio with no lease is associated but unconfigured,
 # which is a fault worth naming, not a working link — and a self-assigned
@@ -120,6 +227,8 @@ linkstate_run() {
   local preferred="${1:-}" devices dev out
   LINK_DEVICE=""; LINK_STATUS=""; LINK_IP=""; LINK_DHCP_ROUTER=""; LINK_UP=0
   LINK_SELF_ASSIGNED=0
+  LINK_MEDIA_MBPS=""; LINK_MEDIA_MAX_MBPS=""; LINK_DUPLEX=""
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
 
   devices="$preferred"
   # The service order is only read when the preferred device did not
@@ -144,15 +253,23 @@ linkstate_run() {
   # reach the end of the loop was a machine with nothing configured at
   # all, and wrong the moment 169.254 addresses started arriving here.)
   local cand_dev="" cand_status="" cand_ip="" cand_router="" cand_self=0
+  local cand_mbps="" cand_max="" cand_duplex="" cand_fd=0
   for dev in $devices; do
-    out="$(ifconfig "$dev" 2>/dev/null || true)"
+    # `-m` rather than a bare ifconfig: the output is a superset — same
+    # status and inet lines — plus the `supported media:` block ETH-1
+    # needs to know what the port is capable of. One subprocess, not two.
+    out="$(ifconfig -m "$dev" 2>/dev/null || true)"
     [ -n "$out" ] || continue
-    local dev_status dev_ip dev_router
+    local dev_status dev_ip dev_router dev_mbps dev_max dev_duplex dev_fd
     dev_status="$(linkstate_parse_ifconfig_status "$out")"
     [ "$dev_status" = "active" ] || continue
     dev_ip="$(linkstate_parse_ifconfig_ip "$out")"
     dev_router="$(linkstate_parse_dhcp_router \
       "$(ipconfig getpacket "$dev" 2>/dev/null || true)")"
+    dev_mbps="$(linkstate_parse_media_rate "$out")"
+    dev_max="$(linkstate_parse_media_max "$out")"
+    dev_duplex="$(linkstate_parse_media_duplex "$out")"
+    dev_fd=0; linkstate_media_has_full_duplex "$out" && dev_fd=1
 
     # A real lease is the best possible answer; take it and stop looking.
     if [ -n "$dev_ip" ] && ! linkstate_is_link_local "$dev_ip"; then
@@ -161,6 +278,10 @@ linkstate_run() {
       LINK_IP="$dev_ip"
       LINK_DHCP_ROUTER="$dev_router"
       LINK_SELF_ASSIGNED=0
+      LINK_MEDIA_MBPS="$dev_mbps"
+      LINK_MEDIA_MAX_MBPS="$dev_max"
+      LINK_DUPLEX="$dev_duplex"
+      LINK_MEDIA_FULL_DUPLEX_CAPABLE="$dev_fd"
       LINK_UP=1
       return 0
     fi
@@ -168,6 +289,8 @@ linkstate_run() {
     [ -z "$cand_dev" ] || continue
     cand_dev="$dev"; cand_status="$dev_status"; cand_ip="$dev_ip"
     cand_router="$dev_router"
+    cand_mbps="$dev_mbps"; cand_max="$dev_max"; cand_duplex="$dev_duplex"
+    cand_fd="$dev_fd"
     linkstate_is_link_local "$dev_ip" && cand_self=1
   done
 
@@ -180,5 +303,9 @@ linkstate_run() {
   LINK_IP="$cand_ip"
   LINK_DHCP_ROUTER="$cand_router"
   LINK_SELF_ASSIGNED="$cand_self"
+  LINK_MEDIA_MBPS="$cand_mbps"
+  LINK_MEDIA_MAX_MBPS="$cand_max"
+  LINK_DUPLEX="$cand_duplex"
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE="$cand_fd"
   return 0
 }

@@ -553,6 +553,39 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#di-2--duplicate-ip-on-the-lan",
     },
     {
+        "id": "ETH-1",
+        "title": "Ethernet link slower than the port allows",
+        "category": "lan",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Your ethernet connection negotiated a slower speed than the "
+            "port is capable of, so no speed test can exceed that "
+            "ceiling however fast your internet plan is. A damaged or "
+            "low-grade cable is the usual cause — a broken pair drops a "
+            "gigabit link to a hundred — followed by a cheap dock or hub "
+            "in the path. Try a different cable, and plug straight into "
+            "the router if you can."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#eth-1--ethernet-negotiated-below-the-ports-capability",
+    },
+    {
+        "id": "ETH-2",
+        "title": "Ethernet link stuck on half duplex",
+        "category": "lan",
+        "severity": "critical",
+        "scope": "scan",
+        "blurb": (
+            "Your ethernet connection can only send or receive at any "
+            "one moment, not both, even though the port supports doing "
+            "both at once. That causes collisions and heavy packet loss "
+            "and looks exactly like a failing router. It is a failed "
+            "negotiation, usually because one end is pinned to a fixed "
+            "speed instead of automatic."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#eth-2--ethernet-stuck-on-half-duplex",
+    },
+    {
         "id": "DH-1",
         "title": "DHCP lease expiring soon",
         "category": "dhcp",

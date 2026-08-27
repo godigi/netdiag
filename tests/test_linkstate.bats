@@ -116,6 +116,95 @@ en0
 en4" ]
 }
 
+# ── Ethernet negotiation [ETH-1, ETH-2] ──────────────────────────────────
+#
+# A damaged pair in a cable, or a cheap dock, drops a 1000BASE-T link to
+# 100BASE-TX. A 10x cap, invisible everywhere except this one line, and
+# the speed test then reads as a slow ISP.
+#
+# NOTE ON THE FIXTURES: the gigabit/100/half-duplex files are constructed
+# from macOS's documented `ifconfig -m` format, not captured — the machine
+# this was written on has no wired Ethernet to plug a bad cable into. The
+# `autoselect <full-duplex>` and `media: none` shapes below ARE real
+# captures from that machine's virtual and unplugged interfaces.
+
+@test "linkstate: a gigabit link reports 1000 Mb/s, full duplex" {
+  run linkstate_parse_media_rate "$(cat "$FIX/ifconfig_m_en5_gigabit.txt")"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1000" ] || { echo "got '$output'"; return 1; }
+  run linkstate_parse_media_duplex "$(cat "$FIX/ifconfig_m_en5_gigabit.txt")"
+  [ "$output" = "full" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: a 100BASE-TX link reports 100 Mb/s" {
+  run linkstate_parse_media_rate "$(cat "$FIX/ifconfig_m_en5_100mbit.txt")"
+  [ "$output" = "100" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: 10baseT/UTP half duplex parses as 10 and half" {
+  run linkstate_parse_media_rate "$(cat "$FIX/ifconfig_m_en5_halfduplex.txt")"
+  [ "$output" = "10" ] || { echo "got '$output'"; return 1; }
+  run linkstate_parse_media_duplex "$(cat "$FIX/ifconfig_m_en5_halfduplex.txt")"
+  [ "$output" = "half" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: the supported list yields the port's top speed" {
+  run linkstate_parse_media_max "$(cat "$FIX/ifconfig_m_en5_100mbit.txt")"
+  [ "$output" = "1000" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: WiFi's bare 'autoselect' has no negotiated rate" {
+  # Real capture. Wi-Fi reports no media subtype, and inventing one would
+  # make every wireless run fire an Ethernet rule.
+  run linkstate_parse_media_rate "$(cat "$FIX/ifconfig_en0_active.txt")"
+  [ "$output" = "" ] || { echo "got '$output'"; return 1; }
+  run linkstate_parse_media_max "$(cat "$FIX/ifconfig_en0_active.txt")"
+  [ "$output" = "" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: a virtual interface's 'autoselect <full-duplex>' has no rate" {
+  # Real capture from a Thunderbolt bridge member: duplex stated, no
+  # speed. Parsing the duplex out of this must not imply a rate.
+  local out='	media: autoselect <full-duplex>
+	status: inactive'
+  run linkstate_parse_media_rate "$out"
+  [ "$output" = "" ] || { echo "got '$output'"; return 1; }
+  run linkstate_parse_media_duplex "$out"
+  [ "$output" = "full" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: 'media: none' and '<unknown type>' yield nothing" {
+  # Both are real captures from unplugged/virtual devices here.
+  run linkstate_parse_media_rate '	media: none'
+  [ "$output" = "" ] || { echo "none gave '$output'"; return 1; }
+  run linkstate_parse_media_rate '	media: <unknown type>'
+  [ "$output" = "" ] || { echo "unknown gave '$output'"; return 1; }
+  run linkstate_parse_media_duplex '	media: none'
+  [ "$output" = "" ] || { echo "none duplex gave '$output'"; return 1; }
+}
+
+@test "linkstate: flow-control in the media options does not break the parse" {
+  # 1000baseT links commonly report <full-duplex,flow-control>.
+  run linkstate_parse_media_rate '	media: autoselect (1000baseT <full-duplex,flow-control>)'
+  [ "$output" = "1000" ] || { echo "got '$output'"; return 1; }
+  run linkstate_parse_media_duplex '	media: autoselect (1000baseT <full-duplex,flow-control>)'
+  [ "$output" = "full" ] || { echo "got '$output'"; return 1; }
+}
+
+@test "linkstate: a 2.5G/10G port parses rather than being read as 2 or 10" {
+  run linkstate_parse_media_rate '	media: autoselect (2500Base-T <full-duplex>)'
+  [ "$output" = "2500" ] || { echo "2.5G gave '$output'"; return 1; }
+  run linkstate_parse_media_rate '	media: autoselect (10Gbase-T <full-duplex>)'
+  [ "$output" = "10000" ] || { echo "10G gave '$output'"; return 1; }
+}
+
+@test "linkstate: a media line without parentheses still yields its rate" {
+  # A manually pinned link reports `media: 100baseTX <full-duplex>` with
+  # no autoselect wrapper.
+  run linkstate_parse_media_rate '	media: 100baseTX <full-duplex>'
+  [ "$output" = "100" ] || { echo "got '$output'"; return 1; }
+}
+
 # ── iface_run: the route is one input, not the only one ──────────────────
 
 iface_setup() {

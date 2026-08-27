@@ -486,6 +486,46 @@ All of the below are implemented and can fire.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
 
+### ETH-1 — Ethernet negotiated below the port's capability
+
+- Trigger: `LINK_MEDIA_MBPS < LINK_MEDIA_MAX_MBPS`, both parsed from
+  `ifconfig -m <dev>` by `lib/linkstate.sh`.
+- Severity: `warn`.
+- Evidence: the negotiated rate and the port's advertised maximum.
+- Recommendation: swap the cable; bypass any dock or hub.
+
+No threshold. This compares two measured values, so on a genuinely
+100 Mb/s-only adapter — where the negotiated rate *is* the maximum — it
+stays quiet, because there the number is simply the truth.
+
+**Why it matters.** A damaged pair in a cable, or a cheap dock, drops a
+1000BASE-T link to 100BASE-TX. It is a 10× cap invisible everywhere in
+netdiag except this one line of `ifconfig`, and the speed test then
+reports ~94 Mb/s — so the user calls their ISP about a gigabit plan that
+is being delivered correctly.
+
+### ETH-2 — Ethernet stuck on half duplex
+
+- Trigger: `LINK_DUPLEX == "half"` **and** the port's `supported media:`
+  block advertises a full-duplex mode
+  (`linkstate_media_has_full_duplex`).
+- Severity: `critical`.
+- Evidence: the negotiated media string.
+- Recommendation: set both ends back to automatic rather than a pinned
+  speed; swap the cable if that does not take.
+
+The full-duplex-capability check is what makes this a fault rather than
+an observation: a link running half duplex on a port that can do full
+duplex is a *failed negotiation*, while a port that only ever does half
+duplex is simply old and saying so would be noise.
+
+**It also corrects `G2` and `G3`.** Collisions on a half-duplex link
+produce heavy gateway packet loss, which `G2` otherwise reports with the
+headline advice "reboot the router" — sending the user to power-cycle a
+box that is working perfectly. When `ETH-2` has fired, `G2` and `G3`
+state the loss and point at the negotiation instead of offering a
+second, contradictory fix.
+
 ### DH-3 — Self-assigned address, DHCP never answered
 
 - Trigger: no default route, `LINK_SELF_ASSIGNED == 1` — the active
