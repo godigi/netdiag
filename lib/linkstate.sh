@@ -29,7 +29,8 @@
 #                             LINK_DHCP_ROUTER, LINK_UP, LINK_SELF_ASSIGNED,
 #                             LINK_MEDIA_MBPS, LINK_MEDIA_MAX_MBPS,
 #                             LINK_DUPLEX, LINK_MEDIA_FULL_DUPLEX_CAPABLE,
-#                             LINK_SERVICE, LINK_METERED
+#                             LINK_SERVICE, LINK_METERED,
+#                             LINK_METERED_CERTAIN
 # Entry: linkstate_run
 
 # "active" / "inactive" / "" from `ifconfig <dev>` output ($1).
@@ -302,14 +303,28 @@ linkstate_parse_service_devices() {
 # shellcheck disable=SC2034
 _linkstate_resolve_service() {
   local order="${1:-}"
-  LINK_SERVICE=""; LINK_METERED=0
+  LINK_SERVICE=""; LINK_METERED=0; LINK_METERED_CERTAIN=0
   [ -n "$LINK_DEVICE" ] || return 0
   [ -n "$order" ] || \
     order="$(networksetup -listnetworkserviceorder 2>/dev/null || true)"
   LINK_SERVICE="$(linkstate_service_for_device "$order" "$LINK_DEVICE")"
-  if linkstate_is_tethered_service "$LINK_SERVICE" \
-     || linkstate_is_hotspot_subnet "$LINK_IP"; then
+  # Two signals of very different strength, and MET-1 has to be able to
+  # tell them apart. The service name is macOS's own word for what this
+  # link is — "iPhone USB" is not a guess. The subnet is an inference
+  # from a documented default, and 192.168.43.0/24 is a range a home
+  # network could plausibly be using.
+  #
+  # Both skip the speed test, because the cost of being wrong about the
+  # skip is small either way. Only the certain one lets MET-1 *state*
+  # that the user is tethered; on the inference it says what it saw and
+  # why it acted, which is the difference between a hedge and a
+  # confidently wrong claim about someone's own network.
+  if linkstate_is_tethered_service "$LINK_SERVICE"; then
     LINK_METERED=1
+    LINK_METERED_CERTAIN=1
+  elif linkstate_is_hotspot_subnet "$LINK_IP"; then
+    LINK_METERED=1
+    LINK_METERED_CERTAIN=0
   fi
   return 0
 }
@@ -320,7 +335,7 @@ _linkstate_resolve_service() {
 #
 # Sets LINK_DEVICE / LINK_STATUS / LINK_IP / LINK_DHCP_ROUTER / LINK_UP /
 # LINK_SELF_ASSIGNED / LINK_MEDIA_MBPS / LINK_MEDIA_MAX_MBPS / LINK_DUPLEX /
-# LINK_SERVICE / LINK_METERED.
+# LINK_SERVICE / LINK_METERED / LINK_METERED_CERTAIN.
 # LINK_UP is 1 only when a device is BOTH active AND holds a *real*
 # address: an active radio with no lease is associated but unconfigured,
 # which is a fault worth naming, not a working link — and a self-assigned
@@ -336,7 +351,7 @@ linkstate_run() {
   LINK_SELF_ASSIGNED=0
   LINK_MEDIA_MBPS=""; LINK_MEDIA_MAX_MBPS=""; LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
-  LINK_SERVICE=""; LINK_METERED=0
+  LINK_SERVICE=""; LINK_METERED=0; LINK_METERED_CERTAIN=0
 
   devices="$preferred"
   # The service order is only read when the preferred device did not

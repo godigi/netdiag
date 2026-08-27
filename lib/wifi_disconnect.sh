@@ -30,10 +30,18 @@ wifi_disconnect_run() {
   # is condensed to "YYYY-MM-DD HH:MM:SS  <message after airportd:>",
   # truncated to 120 chars.
   if [ "$WIFI_DISCONNECT_COUNT" -gt 0 ]; then
-    info "Recent disconnect events:"
-    printf '%s\n' "$wifi_log_out" \
+    # Condense once, use twice. The report shows the last five so the
+    # 2 KB-per-line airportd dumps don't drown out everything else; the
+    # *record* keeps up to THRESH_WIFI_EVENTS_STORED of them.
+    #
+    # Storing them is the point. Three flapping episodes in this
+    # project's own history could not be diagnosed after the fact
+    # because the report truncated to five lines, nothing was stored,
+    # and macOS's log retention had rolled over long before anyone
+    # looked. A count alone says something happened; these say what.
+    local condensed
+    condensed="$(printf '%s\n' "$wifi_log_out" \
       | grep -Ei '(disassociated|deauthenticated|link[[:space:]]+down|disconnect[[:space:]]+reason|reassociating)' \
-      | tail -5 \
       | awk '{
           ts = $1 " " $2
           sub(/\..*/, "", ts)
@@ -46,9 +54,14 @@ wifi_disconnect_run() {
           }
           line = ts "  " msg
           if (length(line) > 120) line = substr(line, 1, 119) "…"
-          print "      " line
-        }' \
-      | log_pipe
+          print line
+        }')"
+    # Newest last in the log, so the tail is the most recent — the ones
+    # closest to whatever the user is looking at right now.
+    WIFI_DISCONNECT_LINES="$(printf '%s\n' "$condensed" \
+      | tail -n "$THRESH_WIFI_EVENTS_STORED")"
+    info "Recent disconnect events:"
+    printf '%s\n' "$condensed" | tail -5 | sed 's/^/      /' | log_pipe
   fi
   if [ "$WIFI_DISCONNECT_COUNT" -gt "$THRESH_WIFI_DISCONNECTS" ]; then
     warn "WiFi link is flapping ($WIFI_DISCONNECT_COUNT disconnects in ${WIFI_DISCONNECT_WINDOW_HOURS}h)."
@@ -56,5 +69,9 @@ wifi_disconnect_run() {
 
   if [ -n "${NETDIAG_PAR_VARS:-}" ]; then
     setvar WIFI_DISCONNECT_COUNT "$WIFI_DISCONNECT_COUNT"
+    # This check runs in the parallel batch, so the lines have to cross
+    # the subshell boundary the same way the count does — without this
+    # they are collected and then thrown away.
+    setvar WIFI_DISCONNECT_LINES "$WIFI_DISCONNECT_LINES"
   fi
 }

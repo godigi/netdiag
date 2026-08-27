@@ -372,6 +372,13 @@ def main() -> None:
             # test may be absent from an otherwise complete run. [MET-1]
             "service": _env("LINK_SERVICE"),
             "metered": os.environ.get("NETDIAG_LINK_METERED", "") == "1",
+            # How `metered` was decided. True when macOS named the
+            # service ("iPhone USB") — a fact. False when it was
+            # inferred from a hotspot default subnet, which a home
+            # network could also be using. MET-1 hedges its wording
+            # on this rather than asserting a guess as a fact.
+            "metered_certain": os.environ.get(
+                "NETDIAG_LINK_METERED_CERTAIN", "") == "1",
             # The router the DHCP server offered, present whether or not
             # the kernel installed a route to it — so on a network that
             # withholds a route there is still an address to point a
@@ -394,6 +401,17 @@ def main() -> None:
             "channel": _env("WIFI_CHAN"),
             "phy": _env("WIFI_PHY"),
             "tx_rate": _env("WIFI_TX"),
+            # Whether the privileged scrape ran. Without it rssi, noise,
+            # snr, channel, phy and tx_rate are *unavailable* — which is
+            # a different fact from "measured and found quiet", and until
+            # this flag existed a stored record could not tell them
+            # apart. That is why three real flapping episodes in this
+            # project's history are undiagnosable after the fact: every
+            # radio field in them is null and nothing says why.
+            "privileged": _bool("WIFI_PRIVILEGED"),
+            # True when macOS withheld the SSID from an unprivileged
+            # caller, so `ssid` is a placeholder rather than a name. [WI-1]
+            "name_hidden": _bool("WIFI_NAME_HIDDEN"),
         } if is_wifi else None),
         "gateway": {
             "ip": _env("GATEWAY"),
@@ -470,6 +488,23 @@ def main() -> None:
         "wifi_disconnects": ({
             "window_hours": _maybe_int("WIFI_DISCONNECT_WINDOW_HOURS"),
             "count": _maybe_int("WIFI_DISCONNECT_COUNT"),
+            # The condensed event lines behind the count, capped at
+            # THRESH_WIFI_EVENTS_STORED and newest last. A count says
+            # something happened; these say what — and macOS's log
+            # retention rolls over long before anyone investigates, so
+            # if they are not captured here they are gone.
+            #
+            # Dropped entirely under --redact rather than scrubbed.
+            # redact() masks known secrets by substring, and these are
+            # raw airportd log lines: they can carry a neighbouring
+            # BSSID, a MAC, or an SSID this run never recorded and so
+            # has no secret to match against. There is no allow-list
+            # that makes arbitrary log text safe to publish, and this
+            # repo's own sample-capture rule exists because of exactly
+            # that class of leak. The local record — which is never
+            # redacted, by design — keeps them.
+            "events": ([] if _bool("REDACT")
+                       else _list_lines("WIFI_DISCONNECT_LINES")),
         } if is_wifi else None),
         "speedtest": ({
             "down_mbps": _maybe_float("SPEEDTEST_DOWN_MBPS"),

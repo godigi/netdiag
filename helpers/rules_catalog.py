@@ -507,6 +507,23 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#wd-1--wifi-link-is-flapping",
     },
     {
+        "id": "WI-1",
+        "title": "macOS is withholding the network's name",
+        "category": "wifi",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "macOS isn't telling netdiag which WiFi network you're on, "
+            "so this run is filed under a generic name instead of the "
+            "real one. Nothing is broken, but history for this network "
+            "gets mixed in with every other unnamed network, making "
+            "per-network comparisons and baselines less useful. "
+            "Granting Location Services to your terminal fixes it for "
+            "future runs."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#wi-1--macos-is-withholding-the-networks-name",
+    },
+    {
         "id": "SP-1",
         "title": "WiFi is the speed cap, not your plan",
         "category": "speed",

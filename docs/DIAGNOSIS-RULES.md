@@ -486,6 +486,43 @@ All of the below are implemented and can fire.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
 
+### WI-1 — macOS is withholding the network's name
+
+- Trigger: on Wi-Fi, `WIFI_NAME_HIDDEN == 1` — `lib/wifi.sh` saw the
+  SSID come back `<redacted>` or empty.
+- Severity: `info`.
+- Evidence: none needed; the absence is the finding.
+- Recommendation: grant Location Services to the terminal.
+
+**A data-completeness fact, not a network fault**, and the reason it is
+a diagnosis rather than the log line it used to be is that the *stored*
+consequence is what bites. Every run on a nameless network is filed
+under `WiFi (SSID hidden by macOS)`, so runs on genuinely different
+networks merge into one history and a per-network baseline can end up
+comparing a café against an office.
+
+This project has three real Wi-Fi flapping episodes in its own recorded
+history — 112, 241 and 173 disassociations inside an hour — and cannot
+confirm they were even on the same network, for exactly this reason.
+The two `info` lines in `lib/wifi.sh` were suppressed in a default run,
+so nobody saw the problem until the data was already unusable.
+
+**Related instrumentation.** Two other gaps from the same investigation
+are closed alongside this rule, neither of them a rule:
+
+- `wifi.privileged` records whether the sudo-only scrape ran. Without
+  it, `rssi`, `noise`, `snr`, `channel`, `phy` and `tx_rate` being
+  `null` is ambiguous between "measured and quiet" and "never
+  measured". Every radio field in those three stored spikes is null,
+  and nothing said which — so there is no way to tell a weak-signal
+  drop from an interference drop from an AP-side problem.
+- `wifi_disconnects.events` stores the condensed event lines behind the
+  count, capped at `THRESH_WIFI_EVENTS_STORED` (50) and newest last.
+  The report still shows five, because the 2 KB-per-line `airportd`
+  dumps would drown everything else; the record keeps more. macOS's log
+  retention rolls over long before anyone investigates, so a line not
+  captured at run time is gone.
+
 ### MET-1 — Metered connection
 
 - Trigger: `LINK_METERED == 1`, set by `linkstate_run` when either the
@@ -526,8 +563,18 @@ Android — which is a heuristic and knowingly so: it misses a
 reconfigured hotspot, and a home network using `192.168.43.0/24` would
 match.
 
-That asymmetry is deliberate. A false positive costs an unrequested skip
-that is announced and overridable; a false negative costs real money.
+That asymmetry is deliberate for the *skip*. A false positive there
+costs an unrequested test that is announced and overridable; a false
+negative costs real money.
+
+It is **not** acceptable for the *claim*, which is why `MET-1` has two
+wordings and `LINK_METERED_CERTAIN` chooses between them. On the service
+name it states the fact: "You're online through \"iPhone USB\"". On the
+subnet inference it says what it saw and why it acted, and offers the
+way out — because telling someone on a home LAN that happens to use
+`192.168.43.0/24` that they are "online through a phone" would be a
+confidently wrong claim about their own network, which is the exact
+failure this whole family of work exists to remove.
 
 ### SP-1 — The wireless link is the speed cap
 

@@ -1,12 +1,12 @@
-netdiag  2026-08-27-182028
-log: /Users/bfreeman/net-diag/2026-08-27-182028.log
+netdiag  2026-08-27-201026
+log: /Users/bfreeman/net-diag/2026-08-27-201026.log
 
 ── Report ──
   ✓  Network             en0 · WiFi 5GHz ch149
-  ✓  Router              192.168.60.1 · 0% loss · 3.0 ms · ±0.6 ms jitter
+  ✓  Router              192.168.60.1 · 0% loss · 3.2 ms · ±0.8 ms jitter
   ✓  Internet            Cyber Info Provedor de Acesso LTDA ME ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 49 ms · ±0.5 ms jitter
-  ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
+  ✓  Latency             1.1.1.1 · 48 ms · ±0.5 ms jitter
+  ✓  Packet loss         0.0% to 1.1.1.1 · 5.0% to 8.8.8.8 · clean
   ✓  DNS                 working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Packet size         1500 bytes · standard
@@ -17,15 +17,19 @@ log: /Users/bfreeman/net-diag/2026-08-27-182028.log
   ·  Speed               measuring now — result prints below (~1 min)
 
 ── What we found ──
-  ⚠ Packet loss starts at hop 12 (1.1.1.1) — that hop on the path to the
-    internet is dropping packets. Hops after it usually inherit the
-    problem rather than adding their own. Whoever owns that hop (your
-    router, your ISP, or a transit network) needs to look at it.
+  · macOS isn't telling netdiag which WiFi network you're on, so this run
+    is filed under a generic name instead of the real one. Nothing is
+    broken, but history for this network gets mixed in with every other
+    unnamed network — so per-network comparisons and baselines will be
+    less useful than they should be. Granting Location Services to your
+    terminal (System Settings → Privacy & Security → Location Services)
+    fixes it for future runs.
 
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 18.2 Mbps · Up 14.2 Mbps · 6.157 ms (jitter 0.562 ms)
+  ✓ Down 19.3 Mbps · Up 13.5 Mbps · 8.276 ms (jitter 0.968 ms)
   · Server: Cyber Info Serviços de Telecomunicações Ltda
+  ⚠ Something changed since your last runs: bufferbloat inet Δ is 0.7 vs 0.1 median (×7.0 spike)
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-27-182028.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-27-201026.log

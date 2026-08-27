@@ -259,6 +259,21 @@ THRESH_SPEED_CONFIRM_RUNS=2
 # unprivileged run this rule cannot fire at all rather than guessing.
 THRESH_WIFI_GOODPUT_CEILING_PCT=45
 
+# How many condensed WiFi disconnect lines a run stores in its record.
+#
+# Not a judgement cutoff — nothing fires on it — but a bound on record
+# size, and it lives here because a number that decides what gets kept
+# is exactly the kind that drifts if it is spelled inline.
+#
+# Why store them at all: three flapping episodes in this project's own
+# history (112, 241 and 173 disassociations in an hour) could not be
+# diagnosed afterwards, because the report truncated to five lines,
+# nothing was stored, and macOS's log retention had rolled over. A count
+# says something happened; the lines say what. 50 is enough to
+# characterise an episode — the reason codes repeat — without putting a
+# 241-line dump into every record of a bad hour.
+THRESH_WIFI_EVENTS_STORED=50
+
 # ── Bufferbloat grading ──────────────────────────────────────────────────
 # Waveform/DSLReports cutoffs for added latency under load, in ms:
 # A < 5, B < 30, C < 60, D < 200, F ≥ 200. B1/B2 warn at grade C and go

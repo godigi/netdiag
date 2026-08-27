@@ -354,9 +354,19 @@ diagnosis_run() {
   # router is a phone in someone's pocket, and a background update
   # kicking off here has a bill attached.
   if [ "${LINK_METERED:-0}" -eq 1 ]; then
-    local _via="a phone or tethered device"
-    [ -n "${LINK_SERVICE:-}" ] && _via="\"$LINK_SERVICE\""
-    add_diag info MET-1 "You're online through $_via, so this connection is almost certainly metered — data here comes out of a cellular allowance and costs money by the megabyte. Two things follow. Everything else in this report describes the phone's mobile connection, not a home network, so advice about routers and cables doesn't apply. And the speed test is skipped by default here, because it would move hundreds of megabytes of your allowance; pass --speed if you want it run anyway."
+    if [ "${LINK_METERED_CERTAIN:-0}" -eq 1 ]; then
+      # macOS named the service, so this is a fact, not a guess.
+      local _via="a phone or tethered device"
+      [ -n "${LINK_SERVICE:-}" ] && _via="\"$LINK_SERVICE\""
+      add_diag info MET-1 "You're online through $_via, so this connection is almost certainly metered — data here comes out of a cellular allowance and costs money by the megabyte. Two things follow. Everything else in this report describes the phone's mobile connection, not a home network, so advice about routers and cables doesn't apply. And the speed test is skipped by default here, because it would move hundreds of megabytes of your allowance; pass --speed if you want it run anyway."
+    else
+      # Inferred from the address range alone. 192.168.43.0/24 is the
+      # Android hotspot default, but it is also a range an ordinary home
+      # network could be using — so this says what was observed and why
+      # it acted, rather than telling the user a fact about their own
+      # network that may be false.
+      add_diag info MET-1 "This network hands out addresses in a range phones use for their personal hotspot (${LINK_IP:-the local range}), so netdiag has treated it as metered and skipped the speed test — that test moves hundreds of megabytes, which is worth avoiding on a cellular allowance. If this is actually your home or office network, nothing is wrong: run with --speed to test it normally."
+    fi
   fi
 
   # SP-1 — the wireless link is the cap, not the internet plan.
@@ -377,6 +387,23 @@ diagnosis_run() {
      && pct_at_least "${SPEEDTEST_DOWN_MBPS:-}" "${WIFI_TX:-}" \
                      "$THRESH_WIFI_GOODPUT_CEILING_PCT"; then
     add_diag info SP-1 "Your download speed (${SPEEDTEST_DOWN_MBPS} Mbps) is about as fast as this WiFi connection can physically carry — the link between your Mac and the router negotiated ${WIFI_TX} Mbps, and real-world throughput is always well below that headline figure. So this number is the ceiling of your *wireless* connection, not of your internet plan: a faster plan would not change it. To see what your connection can really do, plug in with an ethernet cable, or move closer to the router and prefer the 5 GHz or 6 GHz band."
+  fi
+
+  # WI-1 — macOS is withholding the network's name.
+  #
+  # A data-completeness fact, not a network fault, and it is here rather
+  # than as a log line because the *stored* consequence is what bites.
+  # Every run on a nameless network is filed under "WiFi (SSID hidden by
+  # macOS)", so runs on genuinely different networks merge into one
+  # history and per-network baselines compare a café against an office.
+  #
+  # This project has three real WiFi-flapping episodes in its own
+  # history — 112, 241 and 173 disassociations in an hour — and cannot
+  # confirm they were even on the same network, for exactly this reason.
+  # The existing `info` lines in lib/wifi.sh are suppressed in a default
+  # run, so nobody saw them until the data was already unusable.
+  if [ "$IS_WIFI" -eq 1 ] && [ "${WIFI_NAME_HIDDEN:-0}" -eq 1 ]; then
+    add_diag info WI-1 "macOS isn't telling netdiag which WiFi network you're on, so this run is filed under a generic name instead of the real one. Nothing is broken, but history for this network gets mixed in with every other unnamed network — so per-network comparisons and baselines will be less useful than they should be. Granting Location Services to your terminal (System Settings → Privacy & Security → Location Services) fixes it for future runs."
   fi
 
   # WD-1 — WiFi flapping.

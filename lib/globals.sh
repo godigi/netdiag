@@ -35,6 +35,7 @@ LINK_DUPLEX=""           # full | half | "" [ETH-2]
 LINK_MEDIA_FULL_DUPLEX_CAPABLE=0  # 1 = port advertises full duplex [ETH-2]
 LINK_SERVICE=""          # macOS service name carrying the link [MET-1]
 LINK_METERED=0           # 1 = tethered / hotspot; data costs money [MET-1]
+LINK_METERED_CERTAIN=0   # 1 = macOS named it; 0 = inferred from subnet [MET-1]
 
 # WiFi (lib/wifi.sh, lib/wifi_scan.sh, lib/wifi_disconnect.sh)
 IS_WIFI=0
@@ -58,6 +59,9 @@ WIFI_SCAN_NEIGHBOR_COUNT=0
 WIFI_SCAN_CURRENT_CHANNEL_NEIGHBORS=0
 WIFI_DISCONNECT_COUNT=0
 WIFI_DISCONNECT_WINDOW_HOURS=1
+WIFI_DISCONNECT_LINES=""  # condensed event lines, stored in the record
+WIFI_PRIVILEGED=0        # 1 = the sudo-only radio fields were readable
+WIFI_NAME_HIDDEN=0       # 1 = macOS withheld the SSID [WI-1]
 
 # VPN (lib/vpn.sh)
 VPN_ACTIVE=0

@@ -620,11 +620,55 @@ assert_not_contains() {
   [ "$MAX_SEVERITY" -eq 2 ]
 }
 
+# ── WI-1: macOS is withholding the network's name ────────────────────────
+#
+# A data-completeness rule. Three real flapping episodes in this project's
+# own history (112, 241 and 173 disassociations in an hour) cannot be
+# confirmed to have been on the same network, because all three are filed
+# under "WiFi (SSID hidden by macOS)".
+
+@test "diagnosis: a hidden SSID fires WI-1 as info" {
+  sp_setup
+  WIFI_NAME_HIDDEN=1
+  diagnosis_run >/dev/null
+  diag_has WI-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  [ "$MAX_SEVERITY" -eq 0 ] || { echo "WI-1 moved the exit code"; return 1; }
+  assert_contains "$(diag_text_for WI-1)" "Location Services"
+}
+
+@test "diagnosis: WI-1 explains the consequence, not just the permission" {
+  # The point is not "grant a permission"; it is that history for this
+  # network merges with every other unnamed one.
+  sp_setup
+  WIFI_NAME_HIDDEN=1
+  diagnosis_run >/dev/null
+  assert_contains "$(diag_text_for WI-1)" "history"
+  # And it says so without implying a fault: the rule reports a gap in
+  # what netdiag can record, not a problem with the network.
+  assert_contains "$(diag_text_for WI-1)" "Nothing is broken"
+}
+
+@test "diagnosis: a named network does not fire WI-1" {
+  sp_setup
+  WIFI_NAME_HIDDEN=0 WIFI_SSID="Home"
+  diagnosis_run >/dev/null
+  diag_has WI-1 && { echo "WI-1 fired on a named network"; return 1; }
+  return 0
+}
+
+@test "diagnosis: WI-1 is a WiFi rule and never fires on ethernet" {
+  sp_setup
+  IS_WIFI=0 WIFI_NAME_HIDDEN=1
+  diagnosis_run >/dev/null
+  diag_has WI-1 && { echo "WI-1 fired on a wired link"; return 1; }
+  return 0
+}
+
 # ── MET-1: this connection costs money by the megabyte ───────────────────
 
 @test "diagnosis: a metered link fires MET-1 as info" {
   sp_setup
-  LINK_METERED=1 LINK_SERVICE="iPhone USB"
+  LINK_METERED=1 LINK_METERED_CERTAIN=1 LINK_SERVICE="iPhone USB"
   diagnosis_run >/dev/null
   diag_has MET-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
   [ "$MAX_SEVERITY" -eq 0 ] || { echo "MET-1 moved the exit code"; return 1; }
@@ -636,14 +680,14 @@ assert_not_contains() {
   # The point of firing it even when the speed test was skipped: every
   # other recommendation in the report is wrong on a tethered link.
   sp_setup
-  LINK_METERED=1 LINK_SERVICE="iPhone USB"
+  LINK_METERED=1 LINK_METERED_CERTAIN=1 LINK_SERVICE="iPhone USB"
   diagnosis_run >/dev/null
   assert_contains "$(diag_text_for MET-1)" "routers and cables"
 }
 
 @test "diagnosis: an ordinary link does not fire MET-1" {
   sp_setup
-  LINK_METERED=0 LINK_SERVICE="Wi-Fi"
+  LINK_METERED=0 LINK_SERVICE="Wi-Fi" LINK_METERED_CERTAIN=0
   diagnosis_run >/dev/null
   diag_has MET-1 && { echo "MET-1 fired on an unmetered link"; return 1; }
   return 0
@@ -651,10 +695,36 @@ assert_not_contains() {
 
 @test "diagnosis: MET-1 still names the link with no service name" {
   sp_setup
-  LINK_METERED=1 LINK_SERVICE=""
+  LINK_METERED=1 LINK_METERED_CERTAIN=1 LINK_SERVICE=""
   diagnosis_run >/dev/null
   diag_has MET-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
   assert_contains "$(diag_text_for MET-1)" "tethered device"
+}
+
+@test "diagnosis: an inferred metered link hedges instead of asserting" {
+  # 192.168.43.0/24 is the Android hotspot default AND a range an
+  # ordinary home network could use. Telling that user "You're online
+  # through a phone" would be a confidently wrong claim about their own
+  # network — the exact failure this whole batch of work is about.
+  sp_setup
+  LINK_METERED=1 LINK_METERED_CERTAIN=0 LINK_SERVICE="Wi-Fi"
+  LINK_IP="192.168.43.10"
+  diagnosis_run >/dev/null
+  diag_has MET-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  local t; t="$(diag_text_for MET-1)"
+  assert_not_contains "$t" "You're online through"
+  assert_contains "$t" "192.168.43.10"
+  # It must offer the way out, and say plainly that nothing is wrong if
+  # the guess was wrong.
+  assert_contains "$t" "--speed"
+  assert_contains "$t" "home or office network"
+}
+
+@test "diagnosis: the certain and inferred wordings are mutually exclusive" {
+  sp_setup
+  LINK_METERED=1 LINK_METERED_CERTAIN=1 LINK_SERVICE="iPhone USB"
+  diagnosis_run >/dev/null
+  assert_not_contains "$(diag_text_for MET-1)" "range phones use"
 }
 
 # ── pct_at_least: the arithmetic SP-1 rests on ───────────────────────────
@@ -718,7 +788,9 @@ sp_setup() {
   WIFI_TX="" SPEEDTEST_DOWN_MBPS=""
   LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
-  LINK_METERED=0 LINK_SERVICE="Wi-Fi"
+  LINK_METERED=0 LINK_SERVICE="Wi-Fi" LINK_METERED_CERTAIN=0
+  WIFI_NAME_HIDDEN=0 WIFI_PRIVILEGED=0 WIFI_DISCONNECT_COUNT=0
+  EXPERT=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
 }
 
@@ -780,7 +852,9 @@ eth_setup() {
   GW_LOSS="" WIFI_RSSI="" WIFI_SNR=""
   LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
   LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
-  LINK_METERED=0 LINK_SERVICE="Wi-Fi"
+  LINK_METERED=0 LINK_SERVICE="Wi-Fi" LINK_METERED_CERTAIN=0
+  WIFI_NAME_HIDDEN=0 WIFI_PRIVILEGED=0 WIFI_DISCONNECT_COUNT=0
+  EXPERT=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
 }
 

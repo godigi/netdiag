@@ -6,6 +6,67 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — enough detail to diagnose the *next* Wi-Fi flapping episode
+
+Closes the instrumentation gap left by an investigation that ended
+"not reproducible". Three real episodes sit in this project's own
+history — 112, 241 and 173 disassociations inside a single hour — and
+none of them can be diagnosed after the fact. Not because the counting
+was wrong (it was checked and is sound) but because nothing captured
+what was happening while it happened, and macOS's log retention rolled
+over long before anyone looked.
+
+Three changes, none of which would have helped those three, all of
+which will help the next one:
+
+- **`WI-1`** fires when macOS withholds the SSID. The two `info` lines
+  that used to say this are suppressed in a default run, so nobody saw
+  them — and the *stored* consequence is what bites: every run on a
+  nameless network is filed under `WiFi (SSID hidden by macOS)`, so
+  runs on genuinely different networks merge into one history. All
+  three episodes are filed that way, and it cannot even be confirmed
+  they were on the same network.
+- **`wifi.privileged`** records whether the sudo-only scrape ran.
+  Without it, `rssi`/`noise`/`snr`/`channel`/`phy`/`tx_rate` coming
+  back `null` is ambiguous between "measured and quiet" and "never
+  measured" — and every radio field in those three stored spikes is
+  `null`, which is why a weak-signal drop cannot be told apart from an
+  interference drop or an AP-side problem.
+- **`wifi_disconnects.events`** stores the condensed log lines behind
+  the count, capped at the new `THRESH_WIFI_EVENTS_STORED` (50) and
+  newest last. The report still prints five, because the 2 KB-per-line
+  `airportd` dumps would drown out everything else; the record keeps
+  more. Dropped entirely under `--redact` rather than scrubbed — they
+  are raw log text that can carry a neighbouring BSSID or an SSID this
+  run never recorded, so there is no secret to match against and no
+  allow-list that makes arbitrary log text safe to publish.
+
+`WI-1` fires on the author's own machine, so it is visible in the
+re-captured `examples/sample-output.txt` — which is the point: the
+condition that made three episodes undiagnosable is present right now
+and was, until this release, invisible.
+
+**`MET-1` no longer states a guess as a fact.** Its two detection
+signals are of very different strength, and the first version of the
+rule used one wording for both. On a home LAN that happens to use
+`192.168.43.0/24` — the Android hotspot default, but also an ordinary
+private range — it would have told the user "You're online through a
+phone or tethered device", which is a confidently wrong claim about
+their own network and exactly the failure this whole batch of work
+exists to remove. New `LINK_METERED_CERTAIN` splits the two: on the
+macOS service name the rule states the fact, and on the subnet
+inference it says what it saw, why it skipped the test, and that
+nothing is wrong if the guess was wrong. Both still skip the speed
+test, because the cost of being wrong about the *skip* is small in
+either direction. Surfaced as `interface.metered_certain`.
+
+Also corrected in `docs/JSON-SCHEMA.md`: `speedtest` was documented as
+`null` unless `--speed` was passed, which stopped being true in v0.6.0
+when the speed test became a default. And in `CLAUDE.md`: the note
+about `--redact` keeping the ISP name cited `TELEFONICA BRASIL S.A` as
+what the sample shows, which has not been true since the author's ISP
+changed.
+
 ### Changed — the speed test no longer spends your cellular data
 
 **Behaviour change.** `--speed` runs by default, moves hundreds of

@@ -46,6 +46,18 @@ wifi_run() {
       wdutil_out="$(with_timeout 5 sudo -n wdutil info 2>/dev/null || true)"
     fi
 
+    # Whether the privileged scrape happened at all. Without it RSSI,
+    # noise, SNR, channel, PHY and tx rate are *unavailable*, which is a
+    # different fact from "measured and found quiet" — and until this
+    # flag existed the record could not tell the two apart. That is
+    # exactly why the three WiFi-flapping episodes in the project's own
+    # history (112, 241 and 173 disassociations in an hour) are
+    # undiagnosable after the fact: every radio field in those stored
+    # spikes is null, and nothing says whether that meant silence or an
+    # unprivileged run.
+    WIFI_PRIVILEGED=0
+    [ -n "$wdutil_out" ] && WIFI_PRIVILEGED=1
+
     if [ -n "$wdutil_out" ]; then
       local rssi noise chan tx phy w_ssid w_bssid
       # One parse for the whole scrape — see wifi_common.sh.
@@ -104,6 +116,13 @@ wifi_run() {
     # terminal has been granted Location Services. Surface that as a hint
     # the one time it actually matters.
     if [ "$WIFI_SSID" = "<redacted>" ] || [ -z "$WIFI_SSID" ]; then
+      # Recorded as well as printed. These two `info` lines are
+      # suppressed in a default run, and the *stored* consequence is the
+      # one that bites: every run on this network is filed under
+      # "WiFi (SSID hidden by macOS)", so runs on genuinely different
+      # networks become indistinguishable in history. WI-1 is what makes
+      # that visible to the user; this flag is what tells it to fire.
+      WIFI_NAME_HIDDEN=1
       info "SSID/BSSID hidden by macOS — grant Terminal 'Location Services' permission"
       info "(System Settings → Privacy & Security → Location Services → Terminal)."
     fi

@@ -462,3 +462,87 @@ _write_speed_history() {
   # table — so the advice stays actionable in a shared report.
   printf '%s' "$output" | grep -q '10.125.128.1'
 }
+
+# ── NET.4 instrumentation: telling "quiet" from "not measured" ───────────
+#
+# Three real WiFi-flapping episodes in this project's history (112, 241
+# and 173 disassociations in an hour) are undiagnosable after the fact:
+# every radio field in the stored records is null, and nothing recorded
+# whether that meant a quiet link or an unprivileged run. macOS's log
+# retention had rolled over long before anyone looked.
+
+@test "emit_json: wifi.privileged distinguishes 'not measured' from 'quiet'" {
+  run env NETDIAG_IS_WIFI=1 NETDIAG_WIFI_PRIVILEGED=0 \
+    python3 "$REPO/helpers/emit_json.py"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+w = json.load(sys.stdin)['wifi']
+assert w['privileged'] is False, w
+assert w['rssi'] is None, w
+"
+  run env NETDIAG_IS_WIFI=1 NETDIAG_WIFI_PRIVILEGED=1 NETDIAG_WIFI_RSSI=-52 \
+    python3 "$REPO/helpers/emit_json.py"
+  printf '%s' "$output" | python3 -c "
+import json, sys
+w = json.load(sys.stdin)['wifi']
+assert w['privileged'] is True, w
+assert w['rssi'] == -52, w
+"
+}
+
+@test "emit_json: wifi.name_hidden marks a placeholder SSID as one" {
+  run env NETDIAG_IS_WIFI=1 NETDIAG_WIFI_NAME_HIDDEN=1 \
+    python3 "$REPO/helpers/emit_json.py"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+assert json.load(sys.stdin)['wifi']['name_hidden'] is True
+"
+}
+
+@test "emit_json: the disconnect lines behind the count are stored" {
+  run env NETDIAG_IS_WIFI=1 NETDIAG_WIFI_DISCONNECT_COUNT=2 \
+    NETDIAG_WIFI_DISCONNECT_LINES=$'2026-01-01 00:00:01  disassociated\n2026-01-01 00:00:09  link down' \
+    python3 "$REPO/helpers/emit_json.py"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)['wifi_disconnects']
+assert d['count'] == 2, d
+assert len(d['events']) == 2, d
+assert 'disassociated' in d['events'][0], d
+assert 'link down' in d['events'][1], d
+"
+}
+
+@test "emit_json: --redact drops the disconnect lines rather than scrubbing them" {
+  # They are raw airportd log text and can carry a neighbouring BSSID or
+  # an SSID this run never recorded — so there is no secret to match
+  # against and no allow-list that makes arbitrary log text publishable.
+  # The count survives; the lines do not.
+  run env NETDIAG_IS_WIFI=1 NETDIAG_REDACT=1 NETDIAG_WIFI_DISCONNECT_COUNT=2 \
+    NETDIAG_WIFI_DISCONNECT_LINES=$'2026-01-01 00:00:01  disassociated from 11:22:33:44:55:66' \
+    python3 "$REPO/helpers/emit_json.py"
+  [ "$status" -eq 0 ]
+  case "$output" in
+    *"11:22:33:44:55:66"*) echo "a MAC survived --redact"; return 1 ;;
+  esac
+  printf '%s' "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)['wifi_disconnects']
+assert d['events'] == [], d
+assert d['count'] == 2, d   # the count is not identifying, and is the point
+"
+}
+
+@test "emit_json: no disconnect lines yields an empty list, not null" {
+  # [] means 'ran and found nothing'; null would mean 'never ran'. The
+  # schema's whole convention rests on that distinction.
+  run env NETDIAG_IS_WIFI=1 NETDIAG_WIFI_DISCONNECT_COUNT=0 \
+    python3 "$REPO/helpers/emit_json.py"
+  printf '%s' "$output" | python3 -c "
+import json, sys
+assert json.load(sys.stdin)['wifi_disconnects']['events'] == []
+"
+}
