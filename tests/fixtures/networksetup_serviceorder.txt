@@ -1,0 +1,13 @@
+An asterisk (*) denotes that a network service is disabled.
+(1) XREAL One Pro
+(Hardware Port: XREAL One Pro, Device: en5)
+
+(2) Thunderbolt Bridge
+(Hardware Port: Thunderbolt Bridge, Device: bridge0)
+
+(3) Wi-Fi
+(Hardware Port: Wi-Fi, Device: en0)
+
+(4) iPhone USB
+(Hardware Port: iPhone USB, Device: en4)
+

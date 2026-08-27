@@ -1,0 +1,25 @@
+op = BOOTREPLY
+htype = 1
+flags = 0x0
+hlen = 6
+hops = 0
+xid = 0x807ce711
+secs = 0
+ciaddr = 0.0.0.0
+yiaddr = 10.125.129.35
+siaddr = 10.125.128.1
+giaddr = 0.0.0.0
+chaddr = 5a:7e:c3:4:c9:da
+sname =
+file =
+options:
+Options count is 9
+dhcp_message_type (uint8): ACK 0x5
+server_identifier (ip): 10.125.128.1
+lease_time (uint32): 0x15180
+renewal_t1_time_value (uint32): 0xa8c0
+rebinding_t2_time_value (uint32): 0x12750
+subnet_mask (ip): 255.255.254.0
+domain_name_server (ip_mult): {10.125.128.1, 10.125.128.2}
+router (ip_mult): {10.125.128.1}
+end (none):
