@@ -114,7 +114,7 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 # itself. Unset it before anything downstream can read it.
 unset NETDIAG_RUN_ID
 
-NETDIAG_VERSION="0.10.0"
+NETDIAG_VERSION="0.11.0"
 
 _require_python3() {
   if ! command -v python3 >/dev/null 2>&1; then
