@@ -620,6 +620,117 @@ assert_not_contains() {
   [ "$MAX_SEVERITY" -eq 2 ]
 }
 
+# ── pct_at_least: the arithmetic SP-1 rests on ───────────────────────────
+
+@test "pct_at_least: 58% of the PHY rate clears a 45% cutoff" {
+  # A gigabit plan over a 130 Mb/s link measures about 75.
+  run pct_at_least 75 130 45
+  [ "$status" -eq 0 ]
+}
+
+@test "pct_at_least: 38% does not clear it" {
+  # A 50 Mb/s plan over the same link. The user's ISP really is the cap.
+  run pct_at_least 50 130 45
+  [ "$status" -ne 0 ]
+}
+
+@test "pct_at_least: exactly the cutoff counts as reaching it" {
+  run pct_at_least 45 100 45
+  [ "$status" -eq 0 ]
+}
+
+@test "pct_at_least: an unmeasured value never satisfies the comparison" {
+  run pct_at_least "" 130 45
+  [ "$status" -ne 0 ]
+  run pct_at_least 75 "" 45
+  [ "$status" -ne 0 ]
+  run pct_at_least 75 130 ""
+  [ "$status" -ne 0 ]
+}
+
+@test "pct_at_least: a zero or negative total is refused, not divided by" {
+  run pct_at_least 75 0 45
+  [ "$status" -ne 0 ]
+  run pct_at_least 75 -10 45
+  [ "$status" -ne 0 ]
+}
+
+@test "pct_at_least: floats on either side compare numerically" {
+  run pct_at_least 94.32 130.5 45
+  [ "$status" -eq 0 ]
+  run pct_at_least 9.4 130.5 45
+  [ "$status" -ne 0 ]
+}
+
+@test "pct_at_least: a non-numeric value is refused rather than string-compared" {
+  # The failure this guards: awk silently degrades to a string compare
+  # and produces a confidently wrong answer.
+  run pct_at_least "fast" 130 45
+  [ "$status" -ne 0 ]
+}
+
+# ── SP-1: the wireless link is the cap, not the plan ─────────────────────
+
+sp_setup() {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  # shellcheck source=../lib/thresholds.sh
+  . "$REPO/lib/thresholds.sh"
+  GATEWAY="192.168.1.1" LINK_UP=1 IS_WIFI=1 PUBLIC_OK=1 PUBLIC_CHECKED=1
+  GW_LOSS="" WIFI_RSSI="" WIFI_SNR="" WIFI_SSID="Home"
+  WIFI_TX="" SPEEDTEST_DOWN_MBPS=""
+  LINK_MEDIA_MBPS="" LINK_MEDIA_MAX_MBPS="" LINK_DUPLEX=""
+  LINK_MEDIA_FULL_DUPLEX_CAPABLE=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+}
+
+@test "diagnosis: a download at the WiFi ceiling fires SP-1 as info" {
+  sp_setup
+  WIFI_TX=130 SPEEDTEST_DOWN_MBPS=75
+  diagnosis_run >/dev/null
+  diag_has SP-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  # info must not move the exit code — nothing here is broken.
+  [ "$MAX_SEVERITY" -eq 0 ] || { echo "MAX_SEVERITY=$MAX_SEVERITY"; return 1; }
+  assert_contains "$(diag_text_for SP-1)" "130"
+  assert_contains "$(diag_text_for SP-1)" "75"
+  assert_contains "$(diag_text_for SP-1)" "ethernet"
+}
+
+@test "diagnosis: a genuinely slow plan is not blamed on the WiFi" {
+  # 50 of a possible 130 is 38%. The link has headroom; the ISP is the
+  # cap. Claiming otherwise sends the user to buy a router they don't need.
+  sp_setup
+  WIFI_TX=130 SPEEDTEST_DOWN_MBPS=50
+  diagnosis_run >/dev/null
+  diag_has SP-1 && { echo "SP-1 fired with 92 Mbps of headroom"; return 1; }
+  return 0
+}
+
+@test "diagnosis: SP-1 cannot fire without the privileged tx rate" {
+  # WIFI_TX needs sudo. Guessing an explanation is worse than none.
+  sp_setup
+  WIFI_TX="" SPEEDTEST_DOWN_MBPS=75
+  diagnosis_run >/dev/null
+  diag_has SP-1 && { echo "SP-1 fired without a PHY rate"; return 1; }
+  return 0
+}
+
+@test "diagnosis: SP-1 stays quiet when no speed test ran" {
+  sp_setup
+  WIFI_TX=130 SPEEDTEST_DOWN_MBPS=""
+  diagnosis_run >/dev/null
+  diag_has SP-1 && { echo "SP-1 fired with no speed result"; return 1; }
+  return 0
+}
+
+@test "diagnosis: SP-1 is a WiFi rule and never fires on ethernet" {
+  sp_setup
+  IS_WIFI=0 WIFI_TX=130 SPEEDTEST_DOWN_MBPS=75
+  diagnosis_run >/dev/null
+  diag_has SP-1 && { echo "SP-1 fired on a wired link"; return 1; }
+  return 0
+}
+
 # ── ETH-1 / ETH-2: the wired link negotiated badly ───────────────────────
 # A 10x cap invisible everywhere but one line of ifconfig, which the speed
 # test then reports as a slow ISP.

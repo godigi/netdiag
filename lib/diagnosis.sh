@@ -346,6 +346,26 @@ diagnosis_run() {
   fi
 
 
+  # SP-1 — the wireless link is the cap, not the internet plan.
+  #
+  # The most common wrong conclusion a user draws from this report:
+  # "netdiag says 75 Mb/s, I pay for 500, my ISP is cheating me." When
+  # the Wi-Fi link itself negotiated 130 Mb/s, 75 is the *most* that link
+  # can carry and no ISP could deliver more through it.
+  #
+  # Both numbers were already being collected and nothing joined them.
+  # WIFI_TX needs sudo, so on an unprivileged run this stays silent
+  # rather than guessing — an explanation offered on a guess is worse
+  # than no explanation.
+  #
+  # info, not warn: nothing here is broken. It reframes a number the user
+  # is about to misread, which is a different job from reporting a fault.
+  if [ "$IS_WIFI" -eq 1 ] \
+     && pct_at_least "${SPEEDTEST_DOWN_MBPS:-}" "${WIFI_TX:-}" \
+                     "$THRESH_WIFI_GOODPUT_CEILING_PCT"; then
+    add_diag info SP-1 "Your download speed (${SPEEDTEST_DOWN_MBPS} Mbps) is about as fast as this WiFi connection can physically carry — the link between your Mac and the router negotiated ${WIFI_TX} Mbps, and real-world throughput is always well below that headline figure. So this number is the ceiling of your *wireless* connection, not of your internet plan: a faster plan would not change it. To see what your connection can really do, plug in with an ethernet cable, or move closer to the router and prefer the 5 GHz or 6 GHz band."
+  fi
+
   # WD-1 — WiFi flapping.
   if [ "$IS_WIFI" -eq 1 ] && [ "$WIFI_DISCONNECT_COUNT" -gt "$THRESH_WIFI_DISCONNECTS" ]; then
     add_diag warn WD-1 "Your WiFi keeps dropping and reconnecting (${WIFI_DISCONNECT_COUNT} times in the past hour). Common causes: weak signal at your desk, your Mac bouncing between two routers / mesh nodes that overlap, or a router firmware bug. If you have multiple WiFi points, check whether they're set up as a proper mesh."

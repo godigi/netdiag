@@ -507,6 +507,23 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#wd-1--wifi-link-is-flapping",
     },
     {
+        "id": "SP-1",
+        "title": "WiFi is the speed cap, not your plan",
+        "category": "speed",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "Your download speed is about as fast as this WiFi "
+            "connection can physically carry, so the measured number is "
+            "the ceiling of your wireless link rather than of your "
+            "internet plan — a faster plan would not change it. Plug in "
+            "with an ethernet cable, or move closer to the router and "
+            "prefer the higher-frequency band, to see what the "
+            "connection can really do."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#sp-1--the-wireless-link-is-the-speed-cap",
+    },
+    {
         "id": "NT-1",
         "title": "System clock drifted",
         "category": "clock",

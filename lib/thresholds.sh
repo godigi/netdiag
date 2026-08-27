@@ -237,6 +237,28 @@ THRESH_COMPARE_TAIL_PCTL=10
 THRESH_SPEED_DROP_FACTOR=0.5
 THRESH_SPEED_CONFIRM_RUNS=2
 
+# SP-1 — when a measured download is close enough to the Wi-Fi link's own
+# PHY rate that the *wireless* leg, not the internet plan, is the cap.
+# Expressed as a percentage of WIFI_TX.
+#
+# Why a percentage and not a margin: real TCP goodput over 802.11 is
+# roughly half to two-thirds of the negotiated PHY rate, and always well
+# under it — the rest goes to preamble, inter-frame spacing, ACKs and
+# contention. So "download ≈ PHY rate" never happens on a healthy link,
+# and waiting for it would mean the rule never fires.
+#
+# 45 is deliberately below that 50–65% band rather than inside it. The
+# expensive mistake here is a false positive — telling someone their
+# Wi-Fi is the bottleneck when their ISP is genuinely slow sends them to
+# buy a router they do not need. Worked through: a 50 Mb/s plan over a
+# 130 Mb/s link is 38% and stays quiet; a gigabit plan over that same
+# link measures ~75 Mb/s, or 58%, and fires, which is correct — 130 Mb/s
+# of PHY cannot carry more than that.
+#
+# Needs sudo. WIFI_TX comes from the privileged Wi-Fi fields, so on an
+# unprivileged run this rule cannot fire at all rather than guessing.
+THRESH_WIFI_GOODPUT_CEILING_PCT=45
+
 # ── Bufferbloat grading ──────────────────────────────────────────────────
 # Waveform/DSLReports cutoffs for added latency under load, in ms:
 # A < 5, B < 30, C < 60, D < 200, F ≥ 200. B1/B2 warn at grade C and go

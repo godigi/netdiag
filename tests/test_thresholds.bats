@@ -46,7 +46,7 @@ setup() {
            THRESH_BUFFERBLOAT_D_MS THRESH_COMPARE_MIN_SAMPLES \
            THRESH_COMPARE_TAIL_PCTL THRESH_MON_LOSS_CONFIRM_CYCLES \
            THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS \
-           THRESH_MTR_HOP_LOSS_PCT; do
+           THRESH_MTR_HOP_LOSS_PCT THRESH_WIFI_GOODPUT_CEILING_PCT; do
     [ -n "${!v:-}" ] || { echo "undefined threshold: $v"; return 1; }
   done
 }

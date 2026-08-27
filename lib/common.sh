@@ -477,6 +477,21 @@ loss_at_least() {
   awk -v v="$1" -v t="$2" 'BEGIN{exit !(v + 0 >= t + 0)}'
 }
 
+# True when $1 is at least $3 percent of $2. All three may be floats.
+#
+# Kept here rather than inline so the arithmetic exists once: the 100 is
+# the percent scale, not a cutoff, and the cutoff itself always arrives
+# as $3 from lib/thresholds.sh. Returns false unless all three are real
+# numbers and $2 is positive — an unmeasured value must never satisfy a
+# comparison, and dividing by a zero PHY rate would.
+pct_at_least() {
+  is_numeric "${1:-}" || return 1
+  is_numeric "${2:-}" || return 1
+  is_numeric "${3:-}" || return 1
+  awk -v v="$1" -v total="$2" -v pct="$3" \
+    'BEGIN{ if (total + 0 <= 0) exit 1; exit !(v + 0 >= (total + 0) * (pct + 0) / 100) }'
+}
+
 # True when $1 was measured AND is < $2. Distinct from ! loss_at_least,
 # which is also true for an unmeasured value — a rule that needs "the
 # gateway is provably clean" must not fire when the gateway was never

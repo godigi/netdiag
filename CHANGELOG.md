@@ -27,6 +27,20 @@ check.
   (no link) and `N1c` (real lease, no route). New
   `interface.self_assigned_ip` in the JSON, because `ip` populated
   alongside `link_up: false` otherwise reads as a contradiction.
+- **A slow speed test over Wi-Fi is now attributed to the Wi-Fi.
+  [`SP-1`]** The most common wrong conclusion a user draws from this
+  report: "netdiag says 75 Mb/s, I pay for 500, my ISP is cheating me."
+  When the Wi-Fi link negotiated 130 Mb/s, 75 is the *most* that link
+  can carry. Both numbers were already being collected — `WIFI_TX` and
+  `SPEEDTEST_DOWN_MBPS` — and nothing joined them; `lib/diagnosis.sh`
+  did not read the speed result at all. `info` rather than `warn`,
+  because nothing is broken: it reframes a number the user is about to
+  misread. New `THRESH_WIFI_GOODPUT_CEILING_PCT`, set to 45 —
+  deliberately below the 50–65% band real 802.11 goodput occupies,
+  because the expensive mistake is a false positive that sends someone
+  to buy a router they do not need. Needs sudo, since `WIFI_TX` is a
+  privileged field; without it the rule stays silent rather than
+  guessing.
 - **A gigabit port running at 100 Mb/s is no longer invisible.
   [`ETH-1`, `ETH-2`]** Nothing in netdiag read `ifconfig media`, so a
   damaged pair in a cable — which drops a 1000BASE-T link to

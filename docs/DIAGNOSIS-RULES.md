@@ -486,6 +486,37 @@ All of the below are implemented and can fire.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
 
+### SP-1 — The wireless link is the speed cap
+
+- Trigger: on Wi-Fi, `SPEEDTEST_DOWN_MBPS >= WIFI_TX ×
+  THRESH_WIFI_GOODPUT_CEILING_PCT / 100`, via `pct_at_least`.
+- Severity: `info`.
+- Evidence: the measured download and the negotiated PHY rate.
+- Recommendation: use ethernet, or move closer and prefer 5/6 GHz.
+
+**The wrong conclusion it prevents.** "netdiag says 75 Mb/s, I pay for
+500, my ISP is cheating me" — when the Wi-Fi link negotiated 130 Mb/s,
+75 is the *most* that link can carry and no plan could deliver more
+through it. Both numbers were already collected and nothing joined
+them.
+
+**Why a percentage rather than a margin.** Real TCP goodput over 802.11
+is roughly half to two-thirds of the negotiated PHY rate and always well
+under it — preamble, inter-frame spacing, ACKs and contention take the
+rest. "Download ≈ PHY rate" never happens on a healthy link, so waiting
+for it would mean the rule never fires.
+
+`THRESH_WIFI_GOODPUT_CEILING_PCT` is 45, deliberately *below* that
+50–65% band rather than inside it, because the expensive mistake is a
+false positive: telling a user their Wi-Fi is the bottleneck when their
+ISP is genuinely slow sends them to buy a router they do not need. A
+50 Mb/s plan over a 130 Mb/s link is 38% and stays quiet; a gigabit plan
+over the same link measures ~75 Mb/s, or 58%, and fires.
+
+**Needs sudo.** `WIFI_TX` is one of the privileged Wi-Fi fields, so on
+an unprivileged run this rule cannot fire at all. That is deliberate —
+an explanation offered on a guess is worse than no explanation.
+
 ### ETH-1 — Ethernet negotiated below the port's capability
 
 - Trigger: `LINK_MEDIA_MBPS < LINK_MEDIA_MAX_MBPS`, both parsed from
