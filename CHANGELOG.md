@@ -64,17 +64,32 @@ WiFi at full signal being told it had no network connection at all.
   `N1c`'s "try http://…" advice actionable in a shared report; the SSID
   `N1c` interpolates into its own prose is masked by the existing scrub.
 
-**Test-suite finding, fixed for the new tests only.** A failing `[[ ... ]]`
-does **not** abort a bats test on bats-core 1.14 — bash does not run the
-`ERR` trap bats installs for conditional constructs — so any `[[ ]]` that
-is not the last statement in a test body is silently a no-op. This was
-caught when a new test asserting `CP-1` fires passed against an
-implementation that did not yet emit `CP-1`. The new tests in
-`tests/test_parse.bats` now assert through `assert_contains` /
-`assert_not_contains` helper functions, whose failure *does* abort. The
-same pattern appears roughly 250 times across the 18 existing `.bats`
-files and has **not** been swept — those assertions may not be testing
-what they read as.
+### Fixed — 171 test assertions that could never fail
+
+A failing `[[ ... ]]` does **not** abort a bats test on bats-core 1.14:
+bats reports failures through the `ERR` trap, and bash does not run that
+trap for conditional constructs. So any `[[ ]]` that was not the *last*
+statement in a test body was silently a no-op — it evaluated, its result
+was discarded, and the test passed regardless.
+
+Caught when a newly written test asserting that `CP-1` fires passed
+against an implementation that did not yet emit `CP-1` at all.
+
+Every standalone `[[ ... ]]` assertion across the 18 `.bats` files — 171
+of them — now carries `|| return 1`, which does abort. The ~10 that
+already used `|| { echo …; return 1; }`, and the `fired()` / `not_fired()`
+helper functions (a failing *function call* aborts correctly), were
+already sound and are untouched. New assertions in `tests/test_parse.bats`
+go through `assert_contains` / `assert_not_contains` helpers that print
+expected-vs-actual on failure.
+
+**All 583 tests still pass after the conversion**, so nothing was hiding
+behind the silence — but the assertions are load-bearing from here.
+Demonstrated with a paired mutation on a non-terminal assertion in
+`tests/test_monitor.bats`: falsifying it reports `not ok` with the
+`|| return 1` and `ok` without it, same line, same expression.
+
+Watch for this when adding tests: `[ ]` aborts, `[[ ]]` does not.
 
 ### Added
 

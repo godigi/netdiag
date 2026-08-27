@@ -75,7 +75,7 @@ declared_names() {
   printf '\nrun_timed brand_new brand_new_run\n' >> "$BATS_TEST_TMPDIR/planted"
   NETDIAG="$BATS_TEST_TMPDIR/planted"
   run wrapper_names
-  [[ "$output" == *"brand_new"* ]]
+  [[ "$output" == *"brand_new"* ]] || return 1
   local missing
   missing="$(comm -23 <(wrapper_names) <(declared_names))"
   [ "$missing" = "brand_new" ]
@@ -87,14 +87,14 @@ declared_names() {
   # symmetry tests above cannot see: both sides stay consistent while the
   # UI lists phases that will never report.
   run progress_plan_phases mtu-only
-  [[ "$output" != *speedtest* ]]
-  [[ "$output" == *mtu* ]]
+  [[ "$output" != *speedtest* ]] || return 1
+  [[ "$output" == *mtu* ]] || return 1
   run progress_plan_phases speed-only
-  [[ "$output" != *traceroute* ]]
-  [[ "$output" == *speedtest* ]]
+  [[ "$output" != *traceroute* ]] || return 1
+  [[ "$output" == *speedtest* ]] || return 1
   run progress_plan_phases wifi-only
-  [[ "$output" != *public* ]]
-  [[ "$output" == *wifi_scan* ]]
+  [[ "$output" != *public* ]] || return 1
+  [[ "$output" == *wifi_scan* ]] || return 1
 }
 
 @test "a plan event stays well under PIPE_BUF" {
@@ -181,8 +181,8 @@ for line in sys.stdin:
   noop() { return 0; }
   local out
   out="$(run_timed thing noop 3>&1 >/dev/null)"
-  [[ "$(printf '%s\n' "$out" | head -1)" == '{"t":"phase","name":"thing","state":"start"}' ]]
-  [[ "$(printf '%s\n' "$out" | tail -1)" == *'"state":"done","rc":0'* ]]
+  [[ "$(printf '%s\n' "$out" | head -1)" == '{"t":"phase","name":"thing","state":"start"}' ]] || return 1
+  [[ "$(printf '%s\n' "$out" | tail -1)" == *'"state":"done","rc":0'* ]] || return 1
 }
 
 @test "run_timed reports the check's own exit status in rc" {
@@ -192,7 +192,7 @@ for line in sys.stdin:
   # `|| true` because bats runs under set -e and the point of the test is a
   # check that failed.
   out="$(run_timed thing failer 3>&1 >/dev/null || true)"
-  [[ "$out" == *'"rc":7'* ]]
+  [[ "$out" == *'"rc":7'* ]] || return 1
 }
 
 @test "a check that calls progress_skip emits skip and never done" {
@@ -200,8 +200,8 @@ for line in sys.stdin:
   skipper() { progress_skip "--quick"; return 0; }
   local out
   out="$(run_timed bufferbloat skipper 3>&1 >/dev/null)"
-  [[ "$out" == *'"state":"skip","why":"--quick"'* ]]
-  [[ "$out" != *'"state":"done"'* ]]
+  [[ "$out" == *'"state":"skip","why":"--quick"'* ]] || return 1
+  [[ "$out" != *'"state":"done"'* ]] || return 1
 }
 
 @test "a skip does not leak into the next phase" {
@@ -213,7 +213,7 @@ for line in sys.stdin:
   worker()  { return 0; }
   local out
   out="$( { run_timed bufferbloat skipper; run_timed mtu worker; } 3>&1 >/dev/null )"
-  [[ "$out" == *'{"t":"phase","name":"mtu","state":"done"'* ]]
+  [[ "$out" == *'{"t":"phase","name":"mtu","state":"done"'* ]] || return 1
 }
 
 @test "run_timed still records its timing row and preserves exit status" {
@@ -225,7 +225,7 @@ for line in sys.stdin:
   local rc=0
   run_timed phaseA failer || rc=$?
   [ "$rc" -eq 3 ]
-  [[ "$TIMING_LINES" == "phaseA|"* ]]
+  [[ "$TIMING_LINES" == "phaseA|"* ]] || return 1
 }
 
 @test "a parallel check announces itself from inside its own subshell" {
@@ -236,9 +236,9 @@ for line in sys.stdin:
   parallel_thing() { say "buffered"; return 0; }
   local out
   out="$( { launch_parallel pthing parallel_thing; collect_parallel; } 3>&1 >/dev/null )"
-  [[ "$out" == *'{"t":"phase","name":"pthing","state":"start"}'* ]]
-  [[ "$out" == *'"name":"pthing","state":"done","rc":0'* ]]
-  [[ "$out" != *buffered* ]]
+  [[ "$out" == *'{"t":"phase","name":"pthing","state":"start"}'* ]] || return 1
+  [[ "$out" == *'"name":"pthing","state":"done","rc":0'* ]] || return 1
+  [[ "$out" != *buffered* ]] || return 1
 }
 
 @test "parallel events are never interleaved mid-line" {
@@ -288,7 +288,7 @@ assert n == 16, f"expected 16 events, got {n}"
   out="$(speedtest_translate_line \
     '{"type":"ping","internalIp":"2001:db8::1","progress":"2001:db8::1","ping":{"latency":"2001:db8::2","progress":0.4}}' \
     3>&1 >/dev/null)"
-  [[ "$out" != *2001:db8* ]]
+  [[ "$out" != *2001:db8* ]] || return 1
   [ "$out" = '{"t":"speed","stage":"ping","progress":0.4,"mbps":null,"ms":null}' ]
 }
 
@@ -338,14 +338,14 @@ assert n == 16, f"expected 16 events, got {n}"
 @test "--progress and --speed-only are documented in --help" {
   run "$NETDIAG" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--progress"* ]]
-  [[ "$output" == *"--speed-only"* ]]
+  [[ "$output" == *"--progress"* ]] || return 1
+  [[ "$output" == *"--speed-only"* ]] || return 1
 }
 
 @test "--speed-only with --no-speed is a usage error, and exits 3 not 2" {
   run "$NETDIAG" --speed-only --no-speed
   [ "$status" -eq 3 ]
-  [[ "$output" == *"conflict"* ]]
+  [[ "$output" == *"conflict"* ]] || return 1
 }
 
 @test "--json --progress still puts exactly one object on stdout" {

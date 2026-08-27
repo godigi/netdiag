@@ -24,49 +24,49 @@ setup() {
 @test "unknown flag exits 3 (script error), not 2" {
   run "$NETDIAG" --definitely-not-a-flag
   [ "$status" -eq 3 ]
-  [[ "$output" == *"unknown flag"* ]]
+  [[ "$output" == *"unknown flag"* ]] || return 1
 }
 
 @test "two positional TARGETs exit 3" {
   run "$NETDIAG" example.com example.net
   [ "$status" -eq 3 ]
-  [[ "$output" == *"only one TARGET"* ]]
+  [[ "$output" == *"only one TARGET"* ]] || return 1
 }
 
 @test "--log without a path exits 3" {
   run "$NETDIAG" --log
   [ "$status" -eq 3 ]
-  [[ "$output" == *"expects a path"* ]]
+  [[ "$output" == *"expects a path"* ]] || return 1
 }
 
 @test "--watch rejects a non-numeric interval before starting a loop" {
   run "$NETDIAG" --watch=abc
   [ "$status" -eq 3 ]
-  [[ "$output" == *"--watch expects"* ]]
+  [[ "$output" == *"--watch expects"* ]] || return 1
 }
 
 @test "--watch rejects a zero interval before starting a loop" {
   run "$NETDIAG" --watch=0
   [ "$status" -eq 3 ]
-  [[ "$output" == *"--watch expects"* ]]
+  [[ "$output" == *"--watch expects"* ]] || return 1
 }
 
 @test "--summary rejects a non-numeric window with the script-error status" {
   run env HOME="$BATS_TEST_TMPDIR" "$NETDIAG" --summary=abc
   [ "$status" -eq 3 ]
-  [[ "$output" == *"--summary expects"* ]]
+  [[ "$output" == *"--summary expects"* ]] || return 1
 }
 
 @test "--mtu-only with --quick is rejected as a conflict" {
   run "$NETDIAG" --mtu-only --quick
   [ "$status" -eq 3 ]
-  [[ "$output" == *"conflict"* ]]
+  [[ "$output" == *"conflict"* ]] || return 1
 }
 
 @test "stacking two --*-only flags is rejected as mutually exclusive" {
   run "$NETDIAG" --wifi-only --dns-only
   [ "$status" -eq 3 ]
-  [[ "$output" == *"mutually exclusive"* ]]
+  [[ "$output" == *"mutually exclusive"* ]] || return 1
 }
 
 # ── CLI surface matches the documented contract ──────────────────────────

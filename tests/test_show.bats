@@ -142,8 +142,8 @@ assert run['ts'] == '2026-01-01T00:00:00Z', run['ts']
   # unquoted --show=…#… is a pattern and fails with "no matches found".
   rec "$LIVE" 2026-01-01T00:00:00Z "$NET"
   run ids
-  [[ "$output" != *"#"* ]]
-  [[ "$output" == *"."* ]]
+  [[ "$output" != *"#"* ]] || return 1
+  [[ "$output" == *"."* ]] || return 1
 }
 
 # ── Addressing one run ───────────────────────────────────────────────────
@@ -188,8 +188,8 @@ assert run['ts'] == '2026-01-01T00:00:00Z', run['ts']
   second="$(ids | tail -1)"
   run show 2026-01-01T00:00:00Z
   [ "$status" -eq 3 ]
-  [[ "$output" == *"$first"* ]]
-  [[ "$output" == *"$second"* ]]
+  [[ "$output" == *"$first"* ]] || return 1
+  [[ "$output" == *"$second"* ]] || return 1
 }
 
 @test "an unknown id exits 3" {
@@ -435,8 +435,8 @@ assert 'id' not in d['run'], 'the id is metadata about the record, not part of i
   run sget 2026-01-21T00:00:00Z comparison.metrics.gateway_rtt_ms.median
   [ "$output" = "10.5" ]
   run sget 2026-01-21T00:00:00Z comparison.metrics.gateway_rtt_ms.summary
-  [[ "$output" == *"Not measured in this check"* ]]
-  [[ "$output" == *"10.5 ms"* ]]
+  [[ "$output" == *"Not measured in this check"* ]] || return 1
+  [[ "$output" == *"10.5 ms"* ]] || return 1
 }
 
 @test "every verdict in the closed set is reachable" {
@@ -524,7 +524,7 @@ assert set(m) == {'value','median','p10','p90','percentile','n',
   as_home
   run bash -c "HOME='$TMP' '$REPO/bin/netdiag' --show 2026-01-05T00:00:00Z"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"position":5'* ]]
+  [[ "$output" == *'"position":5'* ]] || return 1
 }
 
 @test "netdiag --show with no id exits 3, not 2" {
@@ -532,7 +532,7 @@ assert set(m) == {'value','median','p10','p90','percentile','n',
   # broken network.
   run bash -c "HOME='$TMP' '$REPO/bin/netdiag' --show"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"expects a run id"* ]]
+  [[ "$output" == *"expects a run id"* ]] || return 1
   run bash -c "HOME='$TMP' '$REPO/bin/netdiag' --show="
   [ "$status" -eq 3 ]
 }
@@ -557,5 +557,5 @@ assert set(m) == {'value','median','p10','p90','percentile','n',
 @test "--show is documented in --help" {
   run "$REPO/bin/netdiag" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--show"* ]]
+  [[ "$output" == *"--show"* ]] || return 1
 }

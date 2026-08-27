@@ -196,7 +196,7 @@ _write_history() {
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq_get compared_runs)" = "5" ]
-  [[ "$output" == *"gateway RTT"* ]]
+  [[ "$output" == *"gateway RTT"* ]] || return 1
 }
 
 @test "baseline: history from other networks is skipped, not compared" {
@@ -233,7 +233,7 @@ _write_history() {
   printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":40.0}}' > "$cur"
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur" --n 10
   [ "$(printf '%s' "$output" | jq_get compared_runs)" = "5" ]
-  [[ "$output" == *"gateway RTT"* ]]
+  [[ "$output" == *"gateway RTT"* ]] || return 1
 }
 
 @test "baseline: a run with no network identity is not compared" {
@@ -278,8 +278,8 @@ _write_speed_history() {
   run env -u THRESH_SPEED_DROP_FACTOR -u THRESH_SPEED_CONFIRM_RUNS \
     python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"THRESH_SPEED_DROP_FACTOR"* ]]
-  [[ "$output" == *"lib/thresholds.sh"* ]]
+  [[ "$output" == *"THRESH_SPEED_DROP_FACTOR"* ]] || return 1
+  [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
 @test "baseline: a single slow speedtest run is not reported" {
@@ -303,7 +303,7 @@ _write_speed_history() {
   printf '{"network":{"id":"wifi:ssid=Home"},"speedtest":{"down_mbps":35}}' > "$cur"
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"speedtest down"* ]]
+  [[ "$output" == *"speedtest down"* ]] || return 1
 }
 
 @test "baseline: a slow run following a normal one is not reported" {
@@ -334,7 +334,7 @@ _write_speed_history() {
 @test "emit_json redact: scrubs values interpolated into diagnosis prose" {
   run emit NETDIAG_REDACT=1 NETDIAG_PUB_IP=203.0.113.42 \
            NETDIAG_DIAGNOSIS_LINES='warn|P2|No reply at 203.0.113.42 today.'
-  [[ "$output" != *"203.0.113.42"* ]]
+  [[ "$output" != *"203.0.113.42"* ]] || return 1
   [ "$(printf '%s' "$output" | jq_get diagnosis.0.summary)" = '"No reply at [redacted] today."' ]
 }
 
@@ -349,8 +349,8 @@ _write_speed_history() {
            NETDIAG_WIFI_SSID=BrianHomeNet NETDIAG_GW_MAC='aa:bb:cc:dd:ee:01' \
            NETDIAG_NETWORK_ID='wifi:ssid=BrianHomeNet,mac=aa:bb:cc:dd:ee:01' \
            NETDIAG_NETWORK_LABEL=BrianHomeNet
-  [[ "$output" != *"BrianHomeNet"* ]]
-  [[ "$output" != *"aa:bb:cc:dd:ee:01"* ]]
+  [[ "$output" != *"BrianHomeNet"* ]] || return 1
+  [[ "$output" != *"aa:bb:cc:dd:ee:01"* ]] || return 1
   # The composite keeps its readable shape so the scoping stays debuggable.
   [ "$(printf '%s' "$output" | jq_get network.id)" = '"wifi:ssid=[redacted],mac=[redacted]"' ]
 }

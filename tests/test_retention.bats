@@ -141,5 +141,5 @@ seed_history() {
   run grep -c 'build_json_private > "$json_tmp"' "$REPO/lib/output.sh"
   [ "$output" -eq 2 ]
   run grep -n 'baseline.jsonl' "$REPO/lib/output.sh"
-  [[ "$output" == *'$json_tmp'* ]] || [[ "$output" == *'json_tmp'* ]]
+  [[ "$output" == *'$json_tmp'* ]] || [[ "$output" == *'json_tmp'* ]] || return 1
 }

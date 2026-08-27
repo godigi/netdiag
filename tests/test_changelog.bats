@@ -57,7 +57,7 @@ require_tags() {
   # empty string: empty notes would publish a blank Release and look fine.
   run python3 "$SECTION" --file "$CHANGELOG" --version 9.9.9
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no '## [9.9.9]'"* ]]
+  [[ "$output" == *"no '## [9.9.9]'"* ]] || return 1
 }
 
 @test "changelog_section keeps the link-ref footer out of the oldest section" {
@@ -66,8 +66,8 @@ require_tags() {
   # release notes.
   run python3 "$SECTION" --file "$CHANGELOG" --version 0.1.0
   [ "$status" -eq 0 ]
-  [[ "$output" != *"https://github.com"* ]]
-  [[ "$output" != *"<!--"* ]]
+  [[ "$output" != *"https://github.com"* ]] || return 1
+  [[ "$output" != *"<!--"* ]] || return 1
 }
 
 # ── The file's structure ─────────────────────────────────────────────────

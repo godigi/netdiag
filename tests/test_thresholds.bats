@@ -100,8 +100,8 @@ setup() {
     python3 "$REPO/helpers/history.py" --history "$BATS_TEST_TMPDIR/baseline.jsonl" \
     --show 2026-01-01T00:00:00Z
   [ "$status" -eq 3 ]
-  [[ "$output" == *"THRESH_COMPARE_MIN_SAMPLES"* ]]
-  [[ "$output" == *"lib/thresholds.sh"* ]]
+  [[ "$output" == *"THRESH_COMPARE_MIN_SAMPLES"* ]] || return 1
+  [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
 @test "the comparison tail leaves a middle band" {
@@ -124,8 +124,8 @@ setup() {
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
   local rules=" ${DIAG_RULE[*]} "
-  [[ "$rules" == *" G2 "* ]]
-  [[ "$rules" != *" G3 "* ]]
+  [[ "$rules" == *" G2 "* ]] || return 1
+  [[ "$rules" != *" G3 "* ]] || return 1
 }
 
 @test "at 10% gateway loss, G3 fires as warn while G2 stays quiet" {
@@ -135,8 +135,8 @@ setup() {
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
   local rules=" ${DIAG_RULE[*]} "
-  [[ "$rules" == *" G3 "* ]]
-  [[ "$rules" != *" G2 "* ]]
+  [[ "$rules" == *" G3 "* ]] || return 1
+  [[ "$rules" != *" G2 "* ]] || return 1
 }
 
 @test "raising a threshold in one place changes the rule that reads it" {
@@ -149,8 +149,8 @@ setup() {
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
   local rules=" ${DIAG_RULE[*]} "
-  [[ "$rules" != *" G2 "* ]]
-  [[ "$rules" == *" G3 "* ]]
+  [[ "$rules" != *" G2 "* ]] || return 1
+  [[ "$rules" == *" G3 "* ]] || return 1
 }
 
 @test "weak WiFi signal emits W1 even without gateway loss" {
@@ -161,7 +161,7 @@ setup() {
   GW_LOSS=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]} " == *" W1 "* ]]
+  [[ " ${DIAG_RULE[*]} " == *" W1 "* ]] || return 1
 }
 
 @test "low WiFi SNR emits W2" {
@@ -172,7 +172,7 @@ setup() {
   GW_LOSS=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]} " == *" W2 "* ]]
+  [[ " ${DIAG_RULE[*]} " == *" W2 "* ]] || return 1
 }
 
 @test "a crowded WiFi channel emits WS-1" {
@@ -183,7 +183,7 @@ setup() {
   GW_LOSS=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]} " == *" WS-1 "* ]]
+  [[ " ${DIAG_RULE[*]} " == *" WS-1 "* ]] || return 1
 }
 
 # ── grade_bufferbloat reads the same table ───────────────────────────────

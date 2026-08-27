@@ -240,8 +240,8 @@ summarise_judged() {
   run env -u LOSS_WARN_PCT -u LOSS_CRIT_PCT \
     python3 "$REPO/helpers/summary.py" --history "$STORE" --window 24
   [ "$status" -eq 3 ]
-  [[ "$output" == *"LOSS_WARN_PCT"* ]]
-  [[ "$output" == *"lib/thresholds.sh"* ]]
+  [[ "$output" == *"LOSS_WARN_PCT"* ]] || return 1
+  [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
 @test "netdiag --summary passes the cutoffs through" {

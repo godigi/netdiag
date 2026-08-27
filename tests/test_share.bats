@@ -156,7 +156,7 @@ share() { python3 "$REPO/helpers/share.py" < "$RUN"; }
 @test "--share is documented in --help" {
   run "$REPO/bin/netdiag" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--share"* ]]
+  [[ "$output" == *"--share"* ]] || return 1
 }
 
 @test "--share=- rejects malformed input as a usage error" {

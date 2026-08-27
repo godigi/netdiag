@@ -71,7 +71,7 @@ sev_of() {
   healthy_baseline
   INET_LOSS=40 INET_LOSS_ALT=40
   run diagnosis_run
-  [[ "$output" != *"Nothing obviously wrong"* ]]
+  [[ "$output" != *"Nothing obviously wrong"* ]] || return 1
 }
 
 # ── False-positive guards ────────────────────────────────────────────────
@@ -195,8 +195,8 @@ sev_of() {
   # never printed within with_timeout 6 and the loss window came back empty.
   run with_timeout 6 ping -q -c "$MONITOR_PING_COUNT" -i "$MONITOR_PING_INTERVAL" \
     -W "$PING_REPLY_WAIT_MS" 192.0.2.1
-  [[ "$output" == *"$MONITOR_PING_COUNT packets transmitted"* ]]
-  [[ "$output" == *"100.0% packet loss"* ]]
+  [[ "$output" == *"$MONITOR_PING_COUNT packets transmitted"* ]] || return 1
+  [[ "$output" == *"100.0% packet loss"* ]] || return 1
 }
 
 @test "a probe that reports 100% loss folds to 100, not to unmeasured" {
@@ -218,8 +218,8 @@ sev_of() {
   # count and interval drift apart, the transmitted count stops matching.
   run ping -c "$LOSS_PROBE_COUNT" -i "$LOSS_PROBE_INTERVAL" 127.0.0.1
   [ "$status" -eq 0 ]
-  [[ "$output" == *"$LOSS_PROBE_COUNT packets transmitted"* ]]
-  [[ "$output" == *"0.0% packet loss"* ]]
+  [[ "$output" == *"$LOSS_PROBE_COUNT packets transmitted"* ]] || return 1
+  [[ "$output" == *"0.0% packet loss"* ]] || return 1
 }
 
 # ── ICMP-1: upstream ping filtering vs a real outage ─────────────────────
@@ -290,7 +290,7 @@ sev_of() {
   INET_LOSS=12.5 INET_LOSS_ALT=12.5
   run diagnosis_run
   [ "$status" -eq 0 ]
-  [[ "$output" != *"integer expression expected"* ]]
+  [[ "$output" != *"integer expression expected"* ]] || return 1
 }
 
 # ── G3: the gateway warn band ────────────────────────────────────────────
@@ -472,7 +472,7 @@ EOF
 @test "a fully healthy network still reports nothing wrong and exits 0" {
   healthy_baseline
   run diagnosis_run
-  [[ "$output" == *"Nothing obviously wrong"* ]]
+  [[ "$output" == *"Nothing obviously wrong"* ]] || return 1
   diagnosis_run >/dev/null
   [ "$MAX_SEVERITY" -eq 0 ]
 }

@@ -92,10 +92,10 @@ spin() {
 @test "bin/netdiag clears the spinner from its EXIT trap" {
   run grep -n "progress_spin_stop" "$REPO/bin/netdiag"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"_netdiag_on_exit"* || "$output" == *"spin_stop"* ]]
+  [[ "$output" == *"_netdiag_on_exit"* || "$output" == *"spin_stop"* ]] || return 1
   # The trap body itself must reference it, so Ctrl-C can't strand a spinner.
   run awk '/^_netdiag_on_exit\(\)/,/^}/' "$REPO/bin/netdiag"
-  [[ "$output" == *"progress_spin_stop"* ]]
+  [[ "$output" == *"progress_spin_stop"* ]] || return 1
 }
 
 # ── 2. DHCP-vs-system DNS override detection ─────────────────────────────
@@ -145,7 +145,7 @@ spin() {
   run gateway_run
   [ "$status" -eq 0 ]
   [ -z "$GW_LOSS" ]
-  [[ "$output" != *"100% loss"* ]]
+  [[ "$output" != *"100% loss"* ]] || return 1
 }
 
 @test "load-sensitive ping probes do not use macOS ping's whole-run deadline" {
@@ -184,7 +184,7 @@ spin() {
   SYS_RES="fe80::1298:5fff:fe91:2f00%en0"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " != *" DH-2 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " != *" DH-2 "* ]] || return 1
 }
 
 @test "DH-2 still fires when the resolver really was replaced" {
@@ -196,7 +196,7 @@ spin() {
   SYS_RES="1.1.1.1"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " == *" DH-2 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " == *" DH-2 "* ]] || return 1
 }
 
 # ── 3. ping6 flags and unknown-vs-broken IPv6 ────────────────────────────
@@ -207,13 +207,13 @@ spin() {
   # hostname and ping6 died with "nodename nor servname provided".
   run ping6 -c 2 -i 0.2 ::1
   [ "$status" -eq 0 ]
-  [[ "$output" == *"packet loss"* ]]
+  [[ "$output" == *"packet loss"* ]] || return 1
 }
 
 @test "lib/ipv6.sh does not pass -W to ping6" {
   run grep -n "ping6 " "$REPO/lib/ipv6.sh"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"-W"* ]]
+  [[ "$output" != *"-W"* ]] || return 1
 }
 
 @test "ipv6_parse_ping_loss reads the loss percentage" {
@@ -241,7 +241,7 @@ spin() {
   IPV6_AVAILABLE=1 IPV6_PING_LOSS="" IPV6_AAAA_OK=1 IPV6_TCP_OK=1
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " != *" V6-1 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " != *" V6-1 "* ]] || return 1
 }
 
 @test "V6-1 still fires on genuinely lossy IPv6" {
@@ -252,7 +252,7 @@ spin() {
   IPV6_AVAILABLE=1 IPV6_PING_LOSS="100" IPV6_AAAA_OK=1 IPV6_TCP_OK=1
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " == *" V6-1 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " == *" V6-1 "* ]] || return 1
 }
 
 @test "D3 fires when primary DNS latency exceeds threshold" {
@@ -260,7 +260,7 @@ spin() {
   GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 SYS_RES="192.168.15.1" SYS_RES_MS=300
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " == *" D3 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " == *" D3 "* ]] || return 1
 }
 
 @test "D3 stays silent when primary DNS latency is fast" {
@@ -268,7 +268,7 @@ spin() {
   GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 SYS_RES="1.1.1.1" SYS_RES_MS=25
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " != *" D3 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " != *" D3 "* ]] || return 1
 }
 
 @test "D4 fires when DNS NXDOMAIN is hijacked to an IP" {
@@ -276,7 +276,7 @@ spin() {
   GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 SYS_RES="192.168.15.1" DNS_NXDOMAIN_HIJACK_IP="198.105.254.11"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " == *" D4 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " == *" D4 "* ]] || return 1
 }
 
 @test "V6-2 fires when configured IPv6 DNS resolver is unresponsive" {
@@ -284,5 +284,5 @@ spin() {
   GATEWAY=192.168.15.1 PUBLIC_OK=1 DNS_OK=1 IPV6_DNS_FAIL="2001:4860:4860::8888"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " == *" V6-2 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " == *" V6-2 "* ]] || return 1
 }

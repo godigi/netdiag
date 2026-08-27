@@ -27,7 +27,7 @@ setup() {
 @test "--version is documented in --help" {
   run "$NETDIAG" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--version"* ]]
+  [[ "$output" == *"--version"* ]] || return 1
 }
 
 # ── --capabilities: shape ────────────────────────────────────────────────
@@ -38,7 +38,7 @@ setup() {
   printf '%s' "$output" | python3 -m json.tool >/dev/null
   # One compact line, like every machine-consumed sibling output — a
   # pretty-printed document would also parse, so pin the actual contract.
-  [[ "$output" != *$'\n'* ]]
+  [[ "$output" != *$'\n'* ]] || return 1
 }
 
 @test "--capabilities writes nothing under HOME — no log, no history append" {
@@ -50,7 +50,7 @@ setup() {
 @test "--capabilities is documented in --help" {
   run "$NETDIAG" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--capabilities"* ]]
+  [[ "$output" == *"--capabilities"* ]] || return 1
 }
 
 # ── --capabilities: content ──────────────────────────────────────────────

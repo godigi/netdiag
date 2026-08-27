@@ -27,7 +27,7 @@ setup() {
   printf '%s' "$output" | python3 -m json.tool >/dev/null
   # One compact line, like --capabilities and every other machine-consumed
   # sibling output.
-  [[ "$output" != *$'\n'* ]]
+  [[ "$output" != *$'\n'* ]] || return 1
 }
 
 @test "--rules-catalog writes nothing under HOME — no log, no history append" {
@@ -39,7 +39,7 @@ setup() {
 @test "--rules-catalog is documented in --help" {
   run "$NETDIAG" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--rules-catalog"* ]]
+  [[ "$output" == *"--rules-catalog"* ]] || return 1
 }
 
 @test "--rules-catalog appears in --capabilities features" {

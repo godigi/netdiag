@@ -200,17 +200,17 @@ _speedtest_sh_function_body() {
   # A bare `*jq*` grep is brittle — an innocent comment mentioning jq
   # would flip this red. Match the specific gates instead, same as the
   # speedtest_run test below.
-  [[ "$body" != *"command -v jq"* ]]
-  [[ "$body" != *"jq -e"* ]]
-  [[ "$body" != *"jq -r"* ]]
+  [[ "$body" != *"command -v jq"* ]] || return 1
+  [[ "$body" != *"jq -e"* ]] || return 1
+  [[ "$body" != *"jq -r"* ]] || return 1
 }
 
 @test "speedtest_run's own body has no jq gate left (parsing moved to the helper)" {
   body="$(_speedtest_sh_function_body speedtest_run)"
   [ -n "$body" ]
-  [[ "$body" != *"command -v jq"* ]]
-  [[ "$body" != *"jq -e"* ]]
-  [[ "$body" != *"jq -r"* ]]
+  [[ "$body" != *"command -v jq"* ]] || return 1
+  [[ "$body" != *"jq -e"* ]] || return 1
+  [[ "$body" != *"jq -r"* ]] || return 1
 }
 
 # ── _speedtest_parse_result(): the real shell function ───────────────────

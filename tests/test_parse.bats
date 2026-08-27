@@ -35,8 +35,8 @@ setup() {
   GATEWAY=""
   run diagnosis_run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no network connection at all"* ]]
-  [[ "$output" != *"Nothing obviously wrong"* ]]
+  [[ "$output" == *"no network connection at all"* ]] || return 1
+  [[ "$output" != *"Nothing obviously wrong"* ]] || return 1
 
   # Re-run in-process so the accumulator side effects are visible.
   GATEWAY=""
@@ -169,7 +169,7 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
   [ "$first_n" = "1" ]
   # First IP should look like an IPv4 address.
   first_ip="$(printf '%s\n' "$parsed" | head -1 | cut -d'|' -f2)"
-  [[ "$first_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+  [[ "$first_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
 }
 
 @test "_parse_trace_lines: keeps traceroute's own hop numbers across a timeout" {
@@ -227,8 +227,8 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
   MTR_FIRST_LOSSY_HOP=""
   tsv="$(jq -r '.report.hubs[] | [.count, .host, (.["Loss%"]|tostring), (.Avg|tostring)] | @tsv' < "$FIX/mtr.json")"
   parse_mtr_tsv <<<"$tsv"
-  [[ "$MTR_FIRST_LOSSY_HOP" == *"hop 4"* ]]
-  [[ "$MTR_FIRST_LOSSY_HOP" == *"203.0.113.5"* ]]
+  [[ "$MTR_FIRST_LOSSY_HOP" == *"hop 4"* ]] || return 1
+  [[ "$MTR_FIRST_LOSSY_HOP" == *"203.0.113.5"* ]] || return 1
 }
 
 @test "parse_mtr_tsv: rate-limited middle hops with clean destination → empty" {
@@ -258,7 +258,7 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
 3	1.1.1.1	0.0	18.0
 TSV
   [ -z "$MTR_FIRST_LOSSY_HOP" ]
-  [[ "$PER_HOP_LINES" == *"1|192.168.1.1||"* ]]
+  [[ "$PER_HOP_LINES" == *"1|192.168.1.1||"* ]] || return 1
 }
 
 # ── ARP duplicate detection (inline awk, no library function yet) ────────
@@ -268,7 +268,7 @@ TSV
                       ip = $2; gsub(/[()]/, "", ip); print ip, $4
                     }' "$FIX/arp_dup.txt" | sort -u)"
   duplicates="$(printf '%s\n' "$arp_pairs" | awk '{print $1}' | uniq -d | tr '\n' ' ')"
-  [[ "$duplicates" == *"192.168.50.10"* ]]
+  [[ "$duplicates" == *"192.168.50.10"* ]] || return 1
 }
 
 @test "ARP parser: clean fixture has no duplicates" {
@@ -329,7 +329,7 @@ TSV
   # Four RFC1918 hops before the first public address.
   count="$(printf '%s' "$chain" | awk '{print NF}')"
   [ "$count" -eq 4 ]
-  [[ "$chain" == "192.168.50.1 192.168.1.254 10.166.41.210 10.166.41.209" ]]
+  [[ "$chain" == "192.168.50.1 192.168.1.254 10.166.41.210 10.166.41.209" ]] || return 1
 }
 
 @test "_wan_count_rfc1918_chain: single RFC1918 hop → no double-NAT" {
@@ -403,11 +403,11 @@ TSV
   WIFI_BSSID="aa:bb:cc:dd:ee:01"; PUB_CITY="Sometown"
   LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC=""
   result="$(_redact_line "Host BrianHomeNet (203.0.113.42) in Sometown via aa:bb:cc:dd:ee:01")"
-  [[ "$result" != *"203.0.113.42"* ]]
-  [[ "$result" != *"BrianHomeNet"* ]]
-  [[ "$result" != *"Sometown"* ]]
-  [[ "$result" != *"aa:bb:cc:dd:ee:01"* ]]
-  [[ "$result" == *"[redacted]"* ]]
+  [[ "$result" != *"203.0.113.42"* ]] || return 1
+  [[ "$result" != *"BrianHomeNet"* ]] || return 1
+  [[ "$result" != *"Sometown"* ]] || return 1
+  [[ "$result" != *"aa:bb:cc:dd:ee:01"* ]] || return 1
+  [[ "$result" == *"[redacted]"* ]] || return 1
 }
 
 @test "_redact_line: leaves private addresses and ISP name alone" {
@@ -432,7 +432,7 @@ TSV
   PUB_IP="203.0.113.42"; WIFI_SSID=""; WIFI_BSSID=""; PUB_CITY=""
   LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC=""
   out="$(say "Public IP: 203.0.113.42")"
-  [[ "$out" != *"203.0.113.42"* ]]
+  [[ "$out" != *"203.0.113.42"* ]] || return 1
   # The on-disk log is the user's own copy and keeps the real value.
   grep -q '203.0.113.42' "$tmplog"
 }
@@ -451,7 +451,7 @@ TSV
   GATEWAY="192.168.1.1"; PUBLIC_OK=0; GW_LOSS=""; PUBLIC_CHECKED=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   run diagnosis_run
-  [[ "$output" != *"nothing on the public internet responded"* ]]
+  [[ "$output" != *"nothing on the public internet responded"* ]] || return 1
 }
 
 @test "diagnosis: N1b still fires when public was measured and failed" {
@@ -470,7 +470,7 @@ TSV
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   run diagnosis_run
   # It used to hardcode "--mtu-only" regardless of which focus was active.
-  [[ "$output" != *"without --mtu-only"* ]]
+  [[ "$output" != *"without --mtu-only"* ]] || return 1
 }
 
 @test "headline: link medium is omitted when the WiFi check never ran" {
@@ -479,8 +479,8 @@ TSV
   # --mtu-only state: iface_run ran, wifi_run did not, so IS_WIFI is still 0.
   FOCUS="mtu"; INTERFACE="en0"; IS_WIFI=0; WIFI_CHECKED=0
   run headline_run
-  [[ "$output" == *"en0"* ]]
-  [[ "$output" != *"wired"* ]]
+  [[ "$output" == *"en0"* ]] || return 1
+  [[ "$output" != *"wired"* ]] || return 1
 }
 
 @test "headline: still says wired when the WiFi check ran and found no WiFi" {
@@ -488,7 +488,7 @@ TSV
   . "$REPO/lib/headline.sh"
   FOCUS="mtu"; INTERFACE="en0"; IS_WIFI=0; WIFI_CHECKED=1
   run headline_run
-  [[ "$output" == *"wired"* ]]
+  [[ "$output" == *"wired"* ]] || return 1
 }
 
 @test "_redact_line: masks the IPv6 link-local gateway" {
@@ -498,8 +498,8 @@ TSV
   LOCAL_IP=""; IPV6_GLOBAL_ADDR=""; GW_MAC="10:98:5f:91:2f:0"
   IPV6_GATEWAY="fe80::1298:5fff:fe91:2f00%en0"
   result="$(_redact_line "System resolver: fe80::1298:5fff:fe91:2f00%en0")"
-  [[ "$result" != *"fe91:2f00"* ]]
-  [[ "$result" == *"[redacted]"* ]]
+  [[ "$result" != *"fe91:2f00"* ]] || return 1
+  [[ "$result" == *"[redacted]"* ]] || return 1
 }
 
 # ── VPN-1 ────────────────────────────────────────────────────────────────
@@ -514,7 +514,7 @@ TSV
   VPN_ACTIVE=1; VPN_TYPE="tailscale"; VPN_NAME="tailscale (macbook)"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " == *" VPN-1 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " == *" VPN-1 "* ]] || return 1
 }
 
 @test "diagnosis: VPN-1 is info severity, so it cannot change the exit code" {
@@ -540,7 +540,7 @@ TSV
   VPN_ACTIVE=1; VPN_TYPE="tailscale"; VPN_NAME="tailscale (macbook)"
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   run diagnosis_run
-  [[ "$output" == *"tailscale (macbook)"* ]]
+  [[ "$output" == *"tailscale (macbook)"* ]] || return 1
 }
 
 @test "diagnosis: VPN-1 stays quiet with no VPN" {
@@ -549,7 +549,7 @@ TSV
   GATEWAY="192.168.1.1"; VPN_ACTIVE=0
   DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
   diagnosis_run >/dev/null
-  [[ " ${DIAG_RULE[*]:-} " != *" VPN-1 "* ]]
+  [[ " ${DIAG_RULE[*]:-} " != *" VPN-1 "* ]] || return 1
 }
 
 

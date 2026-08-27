@@ -86,7 +86,7 @@ scanner_rules() {
   local m s; m="$(monitor_rules)"; reset_state
   MON_GW_LOSS=25 GW_LOSS=25; s="$(scanner_rules)"
   [ "$m" = "$s" ]
-  [[ "$m" == *"G2"* ]]
+  [[ "$m" == *"G2"* ]] || return 1
 }
 
 @test "parity: loss in the warn band produces G3 on both" {
@@ -101,7 +101,7 @@ scanner_rules() {
   _mon_rules
   local m; m="$(monitor_rules)"; reset_state; MON_GW_LOSS=15 GW_LOSS=15
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"G3"* ]]
+  [[ "$m" == *"G3"* ]] || return 1
 }
 
 @test "parity: on an ICMP-filtering network both name TCP-1 and neither names G2" {
@@ -116,10 +116,10 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state
   MON_GW_LOSS=100 GW_LOSS=100
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"TCP-1"* ]]
-  [[ "$m" != *"G1"* ]]
-  [[ "$m" != *"G2"* ]]
-  [[ "$m" != *"G3"* ]]
+  [[ "$m" == *"TCP-1"* ]] || return 1
+  [[ "$m" != *"G1"* ]] || return 1
+  [[ "$m" != *"G2"* ]] || return 1
+  [[ "$m" != *"G3"* ]] || return 1
 }
 
 @test "parity: heavy gateway loss with TCP also failing still names G2 on both" {
@@ -130,8 +130,8 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state
   MON_GW_LOSS=100 GW_LOSS=100 MON_TCP_OK=0 TCP_REACH_ANY_OK=0
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"G2"* ]]
-  [[ "$m" != *"TCP-1"* ]]
+  [[ "$m" == *"G2"* ]] || return 1
+  [[ "$m" != *"TCP-1"* ]] || return 1
 }
 
 @test "an ICMP-filtering network is not a critical severity" {
@@ -154,28 +154,28 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state
   MON_PUBLIC_OK=0 PUBLIC_OK=0 MON_DNS_OK=0 DNS_OK=0
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"P1"* ]]
+  [[ "$m" == *"P1"* ]] || return 1
 }
 
 @test "parity: internet down with DNS working is P2 on both" {
   reset_state; MON_PUBLIC_OK=0 PUBLIC_OK=0
   local m; m="$(monitor_rules)"; reset_state; MON_PUBLIC_OK=0 PUBLIC_OK=0
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"P2"* ]]
+  [[ "$m" == *"P2"* ]] || return 1
 }
 
 @test "parity: DNS failing while the internet is reachable is D1 on both" {
   reset_state; MON_DNS_OK=0 DNS_OK=0
   local m; m="$(monitor_rules)"; reset_state; MON_DNS_OK=0 DNS_OK=0
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"D1"* ]]
+  [[ "$m" == *"D1"* ]] || return 1
 }
 
 @test "parity: an active VPN is VPN-1 on both" {
   reset_state; MON_VPN_ACTIVE=1 VPN_ACTIVE=1
   local m; m="$(monitor_rules)"; reset_state; MON_VPN_ACTIVE=1 VPN_ACTIVE=1
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"VPN-1"* ]]
+  [[ "$m" == *"VPN-1"* ]] || return 1
 }
 
 @test "parity: gateway loss with weak WiFi names G1 on both, not G2" {
@@ -183,8 +183,8 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state
   MON_GW_LOSS=25 GW_LOSS=25 MON_WIFI_RSSI=-85 WIFI_RSSI=-85
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"G1"* ]]
-  [[ "$m" != *"G2"* ]]
+  [[ "$m" == *"G1"* ]] || return 1
+  [[ "$m" != *"G2"* ]] || return 1
 }
 
 @test "parity: severe internet loss over a clean router is L1 on both" {
@@ -192,15 +192,15 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state
   MON_INET_LOSS=25 MON_INET_LOSS_ALT=25 INET_LOSS=25 INET_LOSS_ALT=25
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"L1"* ]]
+  [[ "$m" == *"L1"* ]] || return 1
 }
 
 @test "monitor does not make L1 critical from one lossy internet target" {
   reset_state; MON_INET_LOSS=25 MON_INET_LOSS_ALT=0
   _mon_rules
   _mon_rules
-  [[ "$(monitor_rules)" == *"L2"* ]]
-  [[ "$(monitor_rules)" != *"L1"* ]]
+  [[ "$(monitor_rules)" == *"L2"* ]] || return 1
+  [[ "$(monitor_rules)" != *"L1"* ]] || return 1
 }
 
 @test "parity: moderate internet loss is L2 on both" {
@@ -211,7 +211,7 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state
   MON_INET_LOSS=15 INET_LOSS=15 INET_LOSS_ALT=15
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"L2"* ]]
+  [[ "$m" == *"L2"* ]] || return 1
 }
 
 @test "parity: total ping loss on a working link is ICMP-1 on both, not L1" {
@@ -219,8 +219,8 @@ scanner_rules() {
   local m; m="$(monitor_rules)"; reset_state
   MON_INET_LOSS=100 MON_INET_LOSS_ALT=100 INET_LOSS=100 INET_LOSS_ALT=100
   [ "$m" = "$(scanner_rules)" ]
-  [[ "$m" == *"ICMP-1"* ]]
-  [[ "$m" != *"L1"* ]]
+  [[ "$m" == *"ICMP-1"* ]] || return 1
+  [[ "$m" != *"L1"* ]] || return 1
 }
 
 @test "parity: no default route is N1 on both" {
@@ -271,7 +271,7 @@ scanner_rules() {
   netdiag_mktemp_dir test-registry
   local d="$NETDIAG_TMP_DIR"
   [ -d "$d" ]
-  [[ "$_NETDIAG_TMP_DIRS" == *"$d"* ]]
+  [[ "$_NETDIAG_TMP_DIRS" == *"$d"* ]] || return 1
   netdiag_tmp_forget "$d"
   [ -z "$_NETDIAG_TMP_DIRS" ]
   rm -rf "$d"
@@ -338,20 +338,20 @@ scanner_rules() {
 @test "loss confirmation: one cycle of warn-band gateway loss produces no G3" {
   reset_state; MON_GW_LOSS=10
   _mon_rules
-  [[ "$MON_RULES" != *"G3"* ]]
+  [[ "$MON_RULES" != *"G3"* ]] || return 1
 }
 
 @test "loss confirmation: two consecutive cycles of warn-band gateway loss produce G3" {
   reset_state; MON_GW_LOSS=10
   _mon_rules
   _mon_rules
-  [[ "$MON_RULES" == *"G3"* ]]
+  [[ "$MON_RULES" == *"G3"* ]] || return 1
 }
 
 @test "loss confirmation: one cycle of critical gateway loss fires G2 immediately" {
   reset_state; MON_GW_LOSS=25
   _mon_rules
-  [[ "$MON_RULES" == *"G2"* ]]
+  [[ "$MON_RULES" == *"G2"* ]] || return 1
 }
 
 @test "loss confirmation: a clean cycle between two blips resets the streak" {
@@ -361,7 +361,7 @@ scanner_rules() {
   _mon_rules
   MON_GW_LOSS=10
   _mon_rules
-  [[ "$MON_RULES" != *"G3"* ]]
+  [[ "$MON_RULES" != *"G3"* ]] || return 1
 }
 
 # ── Internet-probe loss quantum ───────────────────────────────────────────
@@ -461,9 +461,9 @@ ping_summary() {
   # launch, on a working connection.
   reset_state; MON_PUBLIC_OK="" MON_DNS_OK=""
   _mon_rules
-  [[ "$MON_RULES" != *"P1"* ]]
-  [[ "$MON_RULES" != *"P2"* ]]
-  [[ "$MON_RULES" != *"D1"* ]]
+  [[ "$MON_RULES" != *"P1"* ]] || return 1
+  [[ "$MON_RULES" != *"P2"* ]] || return 1
+  [[ "$MON_RULES" != *"D1"* ]] || return 1
 }
 
 @test "a fast HTTPS failure is reported even when the slow public probe is stale" {
@@ -472,15 +472,15 @@ ping_summary() {
   # once it has produced a result.
   reset_state; MON_WEB_OK=0 MON_PUBLIC_OK=1
   _mon_rules
-  [[ "$MON_RULES" == *"P2"* ]]
+  [[ "$MON_RULES" == *"P2"* ]] || return 1
   [ "$MON_MEASUREMENT_STATE" = "measured" ]
 }
 
 @test "a current HTTPS success replaces a stale public failure" {
   reset_state; MON_WEB_OK=1 MON_PUBLIC_OK=0
   _mon_rules
-  [[ "$MON_RULES" != *"P1"* ]]
-  [[ "$MON_RULES" != *"P2"* ]]
+  [[ "$MON_RULES" != *"P1"* ]] || return 1
+  [[ "$MON_RULES" != *"P2"* ]] || return 1
   [ "$MON_MEASUREMENT_STATE" = "measured" ]
 }
 
@@ -498,7 +498,7 @@ ping_summary() {
   reset_state; MON_GW_LOSS=100 MON_GW_RTT="" MON_TCP_OK=0
   _mon_rules
   [ "$MON_MEASUREMENT_STATE" = "measured" ]
-  [[ "$MON_RULES" == *"G2"* ]]
+  [[ "$MON_RULES" == *"G2"* ]] || return 1
 }
 
 @test "curl's 000 is not evidence that anything answered" {
@@ -525,15 +525,15 @@ ping_summary() {
 @test "an unmeasured gateway loss does not fire a loss rule" {
   reset_state; MON_GW_LOSS=""
   _mon_rules
-  [[ "$MON_RULES" != *"G1"* ]]
-  [[ "$MON_RULES" != *"G2"* ]]
-  [[ "$MON_RULES" != *"G3"* ]]
+  [[ "$MON_RULES" != *"G1"* ]] || return 1
+  [[ "$MON_RULES" != *"G2"* ]] || return 1
+  [[ "$MON_RULES" != *"G3"* ]] || return 1
 }
 
 @test "an unmeasured RSSI does not fire W1" {
   reset_state; MON_WIFI_RSSI=""
   _mon_rules
-  [[ "$MON_RULES" != *"W1"* ]]
+  [[ "$MON_RULES" != *"W1"* ]] || return 1
 }
 
 # ── Sample shape ─────────────────────────────────────────────────────────
@@ -887,25 +887,25 @@ assert ch[0]['summary'] == 'Network interface changed: en0 → en5'
 @test "--monitor with a non-numeric interval exits 3, not 2" {
   run "$REPO/bin/netdiag" --monitor --monitor-fast-interval abc
   [ "$status" -eq 3 ]
-  [[ "$output" == *"whole number of seconds"* ]]
+  [[ "$output" == *"whole number of seconds"* ]] || return 1
 }
 
 @test "--monitor with a zero interval exits 3" {
   run "$REPO/bin/netdiag" --monitor --monitor-medium-interval 0
   [ "$status" -eq 3 ]
-  [[ "$output" == *"at least 1 second"* ]]
+  [[ "$output" == *"at least 1 second"* ]] || return 1
 }
 
 @test "a monitor interval flag with no value exits 3" {
   run "$REPO/bin/netdiag" --monitor --monitor-slow-interval
   [ "$status" -eq 3 ]
-  [[ "$output" == *"expects a value"* ]]
+  [[ "$output" == *"expects a value"* ]] || return 1
 }
 
 @test "the --monitor-*=VALUE form is accepted" {
   run "$REPO/bin/netdiag" --monitor --monitor-fast-interval=nope
   [ "$status" -eq 3 ]
-  [[ "$output" == *"whole number of seconds"* ]]
+  [[ "$output" == *"whole number of seconds"* ]] || return 1
 }
 
 @test "--monitor-count is validated too" {

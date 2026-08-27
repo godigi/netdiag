@@ -23,7 +23,7 @@ setup() {
   printf '%s' "$output" | python3 -m json.tool >/dev/null
   # One compact line, like --rules-catalog and every other machine-consumed
   # sibling output.
-  [[ "$output" != *$'\n'* ]]
+  [[ "$output" != *$'\n'* ]] || return 1
 }
 
 @test "--signal-scale writes nothing under HOME — no log, no history append" {
@@ -35,7 +35,7 @@ setup() {
 @test "--signal-scale is documented in --help" {
   run "$NETDIAG" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--signal-scale"* ]]
+  [[ "$output" == *"--signal-scale"* ]] || return 1
 }
 
 @test "--signal-scale appears in --capabilities features" {
@@ -173,8 +173,8 @@ assert by_label['Excellent'] == -40, by_label
   run env -u THRESH_WIFI_RSSI_EXCELLENT_DBM THRESH_WIFI_RSSI_G1_DBM=-70 \
       THRESH_WIFI_RSSI_WEAK_DBM=-75 python3 "$HELPERS/signal_scale.py"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"THRESH_WIFI_RSSI_EXCELLENT_DBM"* ]]
-  [[ "$output" == *"lib/thresholds.sh"* ]]
+  [[ "$output" == *"THRESH_WIFI_RSSI_EXCELLENT_DBM"* ]] || return 1
+  [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
 @test "helper refuses to run without THRESH_WIFI_RSSI_G1_DBM" {
@@ -183,14 +183,14 @@ assert by_label['Excellent'] == -40, by_label
   run env -u THRESH_WIFI_RSSI_G1_DBM THRESH_WIFI_RSSI_EXCELLENT_DBM=-55 \
       THRESH_WIFI_RSSI_WEAK_DBM=-75 python3 "$HELPERS/signal_scale.py"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"THRESH_WIFI_RSSI_G1_DBM"* ]]
+  [[ "$output" == *"THRESH_WIFI_RSSI_G1_DBM"* ]] || return 1
 }
 
 @test "helper refuses to run without THRESH_WIFI_RSSI_WEAK_DBM" {
   run env -u THRESH_WIFI_RSSI_WEAK_DBM THRESH_WIFI_RSSI_EXCELLENT_DBM=-55 \
       THRESH_WIFI_RSSI_G1_DBM=-70 python3 "$HELPERS/signal_scale.py"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"THRESH_WIFI_RSSI_WEAK_DBM"* ]]
+  [[ "$output" == *"THRESH_WIFI_RSSI_WEAK_DBM"* ]] || return 1
 }
 
 @test "a non-numeric threshold is refused, not silently coerced" {
@@ -198,7 +198,7 @@ assert by_label['Excellent'] == -40, by_label
       THRESH_WIFI_RSSI_G1_DBM=-70 THRESH_WIFI_RSSI_WEAK_DBM=-75 \
       python3 "$HELPERS/signal_scale.py"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"THRESH_WIFI_RSSI_EXCELLENT_DBM"* ]]
+  [[ "$output" == *"THRESH_WIFI_RSSI_EXCELLENT_DBM"* ]] || return 1
 }
 
 # ── Unknown-flag behavior is unaffected ──────────────────────────────────

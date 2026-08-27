@@ -244,7 +244,7 @@ print(history.group_key({'network': {'id': '$NETWORK_ID'}})[0])")"
   run hget counts.networks
   [ "$output" = "2" ]
   run hpy 'import json,sys; print(sorted(n["id"] for n in json.load(sys.stdin)["networks"]))'
-  [[ "$output" == *"unknown"* ]]
+  [[ "$output" == *"unknown"* ]] || return 1
 }
 
 # ── The bridge heuristic ─────────────────────────────────────────────────
@@ -521,8 +521,8 @@ print(sorted(s))'
   run env -u THRESH_COMPARE_MIN_SAMPLES -u THRESH_COMPARE_TAIL_PCTL \
     python3 "$HELPERS/history.py" --history "$LIVE"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"THRESH_COMPARE_MIN_SAMPLES"* ]]
-  [[ "$output" == *"lib/thresholds.sh"* ]]
+  [[ "$output" == *"THRESH_COMPARE_MIN_SAMPLES"* ]] || return 1
+  [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
 @test "--limit keeps the most recent runs" {
@@ -615,11 +615,11 @@ print(sorted(s))'
 @test "--history with a non-numeric limit exits 3, not 2" {
   run bash -c "HOME='$TMP' '$REPO/bin/netdiag' --history=soon"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"expects a run count"* ]]
+  [[ "$output" == *"expects a run count"* ]] || return 1
 }
 
 @test "--history is documented in --help" {
   run "$REPO/bin/netdiag" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--history"* ]]
+  [[ "$output" == *"--history"* ]] || return 1
 }
