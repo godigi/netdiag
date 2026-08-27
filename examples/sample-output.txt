@@ -1,39 +1,31 @@
-netdiag  2026-08-12-001537
-log: /Users/bfreeman/net-diag/2026-08-12-001537.log
+netdiag  2026-08-27-182028
+log: /Users/bfreeman/net-diag/2026-08-27-182028.log
 
 ── Report ──
-  ⚠  Packet size         1480 bytes · below standard · some sites may hang
-  ⚠  WiFi channel        crowded · 6 neighbouring networks
-
-  ✓  Network             en0 · WiFi 5GHz ch52
-  ✓  Router              192.168.15.1 · 0% loss · 7.6 ms · ±4.3 ms jitter
-  ✓  Internet            TELEFONICA BRASIL S.A ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 55 ms · ±1.2 ms jitter
+  ✓  Network             en0 · WiFi 5GHz ch149
+  ✓  Router              192.168.60.1 · 0% loss · 3.0 ms · ±0.6 ms jitter
+  ✓  Internet            Cyber Info Provedor de Acesso LTDA ME ([redacted], Brazil)
+  ✓  Latency             1.1.1.1 · 49 ms · ±0.5 ms jitter
   ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
   ✓  DNS                 working
-  ✓  IPv6                working
   ✓  Bufferbloat         grade A/A · clean under load
+  ✓  Packet size         1500 bytes · standard
   ✓  Router config       UPnP disabled (safer default)
   ✓  Hosts file          clean (only macOS defaults)
   ·  VPN                 not active
+  ·  IPv6                not available (IPv4-only network)
   ·  Speed               measuring now — result prints below (~1 min)
 
 ── What we found ──
-  ⚠ Some websites load fine and others hang forever loading — your network
-    is silently dropping packets above 1480 bytes. Usually caused by a
-    VPN, a tunneled connection, or a DSL link. Try disconnecting any VPN;
-    if it persists, ask your ISP or check your router's WAN-MTU /
-    MSS-clamping setting.
-
-  ⚠ Your WiFi channel (52) is shared with 6 neighbouring networks — they
-    all interfere with each other. Switch to a less-crowded channel in
-    your router's WiFi settings (good 5 GHz choices most routers don't
-    pick automatically: 149, 153, 157, 161).
+  ⚠ Packet loss starts at hop 12 (1.1.1.1) — that hop on the path to the
+    internet is dropping packets. Hops after it usually inherit the
+    problem rather than adding their own. Whoever owns that hop (your
+    router, your ISP, or a transit network) needs to look at it.
 
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 415.6 Mbps · Up 237.6 Mbps · 7.825 ms (jitter 1.712 ms)
-  · Server: Full Telecom
+  ✓ Down 18.2 Mbps · Up 14.2 Mbps · 6.157 ms (jitter 0.562 ms)
+  · Server: Cyber Info Serviços de Telecomunicações Ltda
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-12-001537.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-27-182028.log

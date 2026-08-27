@@ -345,6 +345,18 @@ def main() -> None:
             "gateway": _env("GATEWAY"),
             "gateway_mac": _env("GW_MAC"),
             "type": "wifi" if is_wifi else "wired",
+            # Association state, deliberately separate from `gateway`
+            # above. `gateway` answers "is there a default route"; these
+            # answer "is this Mac joined to anything", and conflating the
+            # two is what made N1 tell users on hotel WiFi that their WiFi
+            # was off. See lib/linkstate.sh and DIAGNOSIS-RULES.md#n1c.
+            "link_status": _env("LINK_STATUS"),
+            "link_up": os.environ.get("NETDIAG_LINK_UP", "") == "1",
+            # The router the DHCP server offered, present whether or not
+            # the kernel installed a route to it — so on a network that
+            # withholds a route there is still an address to point a
+            # browser at.
+            "dhcp_router": _env("LINK_DHCP_ROUTER"),
         },
         # Scopes baseline history. Two runs are only comparable when their
         # network.id matches — see helpers/baseline.py and lib/netid.sh.

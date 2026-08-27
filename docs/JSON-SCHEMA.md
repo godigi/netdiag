@@ -29,7 +29,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `timestamp` | string | ISO 8601, UTC |
 | `run_mode` | string | how much of the battery this run attempted — see below |
 | `run_id` | string \| null | the id `netdiag --history`/`--show` will use for this same run — see below |
-| `interface` | object | active interface, IP, gateway, gateway MAC, `type` (`wifi`/`wired`) |
+| `interface` | object | `name`, `ip`, `gateway`, `gateway_mac`, `type` (`wifi`/`wired`), `link_status`, `link_up`, `dhcp_router`. `gateway` is the default route's gateway and is `null` when there is no default route. `link_status` is `ifconfig`'s own word (`"active"` / `"inactive"` / `null`) and `link_up` is `true` when an active device also holds an address — together they answer "is this Mac joined to anything", which is a *different question* from `gateway`, and conflating the two is what made `N1` tell users on hotel WiFi that their WiFi was off (see `DIAGNOSIS-RULES.md#n1c--joined-with-no-route-out`). `dhcp_router` is the router the DHCP server offered, present whether or not the kernel installed a route to it. |
 | `network` | object | `id` + human `label` identifying which network this is — scopes the baseline |
 | `wifi` | object | SSID, BSSID, security; `rssi`/`noise`/`snr`/`channel`/`phy`/`tx_rate` are `null` without `sudo` |
 | `gateway` | object | `ip`, `loss_pct`, `rtt_avg_ms`, `rtt_jitter_ms` |
@@ -833,7 +833,7 @@ from stdin or the store.
 | `public.isp` | kept, deliberately | names a provider, not a person — needed to reason about the fault |
 | `public.asn` | kept, deliberately | same reason as `isp` |
 | `public.country` / `public.country_iso` | kept, deliberately | two characters is too short to substring-replace safely without corrupting unrelated text |
-| RFC1918 addresses (e.g. `gateway.ip`) | kept, deliberately | identify nobody, and blanking them would gut the router/NAT rows |
+| RFC1918 addresses (e.g. `gateway.ip`, `interface.gateway`, `interface.dhcp_router`) | kept, deliberately | identify nobody, and blanking them would gut the router/NAT rows. `interface.dhcp_router` is the same class of value as `interface.gateway` and follows the same rule — which also keeps `N1c`'s "try http://…" advice actionable in a shared report |
 | `network.id` / `network.label` | kept, deliberately | composites of values already masked above (`wifi:ssid=[redacted],mac=[redacted]`) — the parts that identify anything are already gone |
 
 Longest-secret-first ordering and a 3-character minimum are part of the

@@ -6,6 +6,76 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — link state, captive portals, and a green dot over a red row
+
+Four defects, all reachable from one screenshot of a Mac sitting on hotel
+WiFi at full signal being told it had no network connection at all.
+
+- **A missing default route no longer erases the interface.** `lib/iface.sh`
+  derived both `INTERFACE` and `GATEWAY` from a single
+  `route -n get default`, and `lib/wifi.sh`, `lib/dhcp.sh` and
+  `lib/netid.sh` all gate on `INTERFACE` — so one absent route took the
+  SSID, the signal, the lease and the network identity with it, and `N1`
+  went on to state that the Mac "isn't joined to a WiFi network", a claim
+  nothing in the run had checked and one the same report contradicted
+  three lines higher. New `lib/linkstate.sh` answers association, address
+  and DHCP router from `ifconfig` and `ipconfig getpacket`, none of which
+  consults the routing table.
+- **`N1` split into `N1` and `N1c`.** `N1` is now genuinely nothing joined.
+  `N1c` is joined-and-addressed with no route out — it names the network,
+  leads with the sign-in page because that is overwhelmingly the cause,
+  and quotes the DHCP router as somewhere to point a browser. It claims no
+  portal it has not detected: with no route the canary is unreachable, so
+  there is nothing to detect and `N1c` says only what was observed.
+- **The route is re-read once before it is called missing.** Six of twelve
+  consecutive stored runs fired `N1` under network id `unknown` while runs
+  two minutes either side were filed against a live gateway on the same
+  network. A route drops for a moment during a DHCP renewal or a WiFi
+  roam; a single unlucky read turned that into the most alarming verdict
+  netdiag can produce plus a junk history entry. New
+  `THRESH_ROUTE_RECHECK_DELAY_S`; `lib/netid.sh` also falls back to the
+  DHCP-offered router so these runs stop filing under `unknown`.
+- **`CP-1` fires in a scan.** It previously existed only in
+  `lib/monitor.sh`; `lib/public.sh` set `CAPTIVE_PORTAL` and printed a warn
+  line but never called `add_diag`, so a portal never reached
+  `status.rules[]`, the exit code, or the GUI. `P1` spoke in its place —
+  *"almost certainly an outage on your ISP's side, check their status page
+  or call support"* — on networks whose fix was a browser. `CP-1` now
+  suppresses `P1`/`P2` in the scanner and the monitor alike, and is
+  critical when nothing is getting through, warn when traffic still flows.
+  `docs/DIAGNOSIS-RULES.md` carried the argument for the old behaviour;
+  that section has been corrected in place rather than quietly deleted.
+- **Portals that answer 200 are detected.** `captive_portal_classify`
+  classified on the HTTP status alone and both callers passed
+  `curl -o /dev/null`, so a hotel splash page returning 200 with its login
+  HTML — the common case — was reported as "No captive portal". The body
+  is now compared against Apple's literal success page, the way Apple's
+  own check does it, and 511 is recognised. A 200 with no body captured
+  classifies `unknown` rather than `ok`: silence beats a guess.
+- **"0 of 6 resolvers OK" no longer renders with a green dot.** `D1`
+  required `public.ok == true`, so total resolver failure on a downed
+  network fired no `dns`-category rule and `RunReportView`'s DNS row
+  stayed green beside its own red value. New `D2` covers the total case.
+  No Swift changed: per CLAUDE.md the GUI holds no diagnostic logic, so
+  the missing piece was a rule, not a renderer.
+- **New JSON fields** `interface.link_status`, `interface.link_up` and
+  `interface.dhcp_router` (`docs/JSON-SCHEMA.md`). `dhcp_router` is kept
+  under `--redact` like every other RFC1918 address, which also keeps
+  `N1c`'s "try http://…" advice actionable in a shared report; the SSID
+  `N1c` interpolates into its own prose is masked by the existing scrub.
+
+**Test-suite finding, fixed for the new tests only.** A failing `[[ ... ]]`
+does **not** abort a bats test on bats-core 1.14 — bash does not run the
+`ERR` trap bats installs for conditional constructs — so any `[[ ]]` that
+is not the last statement in a test body is silently a no-op. This was
+caught when a new test asserting `CP-1` fires passed against an
+implementation that did not yet emit `CP-1`. The new tests in
+`tests/test_parse.bats` now assert through `assert_contains` /
+`assert_not_contains` helper functions, whose failure *does* abort. The
+same pattern appears roughly 250 times across the 18 existing `.bats`
+files and has **not** been swept — those assertions may not be testing
+what they read as.
+
 ### Added
 
 - **`Depth.full` — the app's "run every check" depth — had zero call

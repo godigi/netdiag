@@ -424,3 +424,41 @@ _write_speed_history() {
   [ "$(captive_portal_classify '' '')" = "unknown" ]
   [ "$(captive_portal_classify 000 '')" = "unknown" ]
 }
+
+@test "emit_json: interface carries link state independent of the route" {
+  run emit NETDIAG_INTERFACE=en0 \
+           NETDIAG_LOCAL_IP=10.125.129.35 \
+           NETDIAG_GATEWAY= \
+           NETDIAG_LINK_STATUS=active \
+           NETDIAG_LINK_UP=1 \
+           NETDIAG_LINK_DHCP_ROUTER=10.125.128.1
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq_get interface.link_up)" = 'true' ]
+  [ "$(printf '%s' "$output" | jq_get interface.link_status)" = '"active"' ]
+  [ "$(printf '%s' "$output" | jq_get interface.dhcp_router)" = '"10.125.128.1"' ]
+  [ "$(printf '%s' "$output" | jq_get interface.gateway)" = 'null' ]
+}
+
+@test "emit_json: link_up is false, not null, when nothing is joined" {
+  # A boolean either way: "we looked and nothing was joined" is a fact,
+  # and a consumer must not have to distinguish it from "never checked".
+  run emit
+  [ "$(printf '%s' "$output" | jq_get interface.link_up)" = 'false' ]
+}
+
+@test "emit_json: --redact masks the SSID inside N1c's own prose" {
+  # N1c interpolates the SSID into its summary. _scrub exists precisely
+  # so a value masked in its own field can't survive inside prose.
+  run emit NETDIAG_REDACT=1 NETDIAG_IS_WIFI=1 NETDIAG_WIFI_SSID=Mercure \
+           NETDIAG_LINK_UP=1 NETDIAG_LINK_DHCP_ROUTER=10.125.128.1 \
+           NETDIAG_DIAGNOSIS_LINES='critical|N1c|You'"'"'re connected to the WiFi network "Mercure" and it gave your Mac an address, but no way out. Try http://10.125.128.1 in a browser.'
+  [ "$status" -eq 0 ]
+  # `! grep -q`, not `grep -qv`: the latter passes as soon as ANY line
+  # lacks the string, which on a multi-line JSON body is always true.
+  if printf '%s' "$output" | grep -q 'Mercure'; then
+    echo "SSID leaked into redacted output"; return 1
+  fi
+  # The RFC1918 router is kept by policy — see JSON-SCHEMA.md's redaction
+  # table — so the advice stays actionable in a shared report.
+  printf '%s' "$output" | grep -q '10.125.128.1'
+}
