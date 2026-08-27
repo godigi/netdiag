@@ -224,6 +224,10 @@ scanner_rules() {
 }
 
 @test "parity: no default route is N1 on both" {
+  # LINK_UP is deliberately left at its zero default: this is the
+  # "nothing joined" case. The joined-but-routeless case is N1c, which is
+  # scan-only — the monitor has no lib/linkstate.sh view — and so is
+  # outside MONITOR_VOCABULARY by design.
   reset_state; MON_LINK_UP=0 GATEWAY=""
   local m; m="$(monitor_rules)"; reset_state; MON_LINK_UP=0 GATEWAY=""
   [ "$m" = "$(scanner_rules)" ]

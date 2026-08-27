@@ -106,11 +106,11 @@ RULES: list[dict[str, str]] = [
         "severity": "critical",
         "scope": "both",
         "blurb": (
-            "There is no default route at all — your Mac isn't joined "
-            "to a WiFi network and has no working ethernet link. Nothing "
-            "else can be diagnosed until basic connectivity exists. Turn "
-            "WiFi on and pick a network, or check that the ethernet cable "
-            "is seated at both ends."
+            "Nothing is joined: no WiFi network is associated and no "
+            "ethernet cable is carrying a link. Nothing else can be "
+            "diagnosed until basic connectivity exists. Turn WiFi on and "
+            "pick a network, or check that the ethernet cable is seated "
+            "at both ends."
         ),
         "doc": "DIAGNOSIS-RULES.md#n1--no-network-at-all",
     },
@@ -128,6 +128,22 @@ RULES: list[dict[str, str]] = [
             "out whether the problem is the router, the ISP, or DNS."
         ),
         "doc": "DIAGNOSIS-RULES.md#n1b--router-present-nothing-public-responds",
+    },
+    {
+        "id": "N1c",
+        "title": "Joined to a network with no route out",
+        "category": "router",
+        "severity": "critical",
+        "scope": "scan",
+        "blurb": (
+            "Your Mac is associated and holds an address from this "
+            "network, but the network has given it no route to the "
+            "internet. Hotel, airport, café and office WiFi usually "
+            "withhold one until you open a browser and pass a sign-in or "
+            "terms page. Failing that, the network handed out an address "
+            "without a working route, which only its owner can fix."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#n1c--joined-with-no-route-out",
     },
     {
         "id": "W1",

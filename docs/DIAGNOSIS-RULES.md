@@ -34,7 +34,8 @@ engine is a future step; for now they're listed verbatim for traceability.
 
 ### N1 — No network at all
 
-**Fires when:** `GATEWAY` is empty (no default route).
+**Fires when:** `GATEWAY` is empty **and** `LINK_UP` is 0 — no default
+route, and no active interface holding an address.
 
 **Severity:** critical.
 
@@ -46,9 +47,50 @@ because each rule's guard (`[ -n "$GW_LOSS" ]` and friends) short-circuited
 on the missing data. N1 is the floor: it fires first, states the obvious,
 and makes the exit code 2.
 
+**The `LINK_UP` condition is load-bearing and was added after the fact.**
+N1 originally fired on the missing route alone and told the user their Mac
+"isn't joined to a WiFi network and has no working ethernet link" — a
+claim nothing in the run had checked, and one the same report contradicted
+three lines higher by printing the SSID and the signal strength. See N1c.
+
 A second, narrower branch covers focused runs: `--mtu-only` skips the
 gateway section, so `PUBLIC_OK=0` with an empty `GW_LOSS` can't reach P1
-or P2. That branch points the user at a full run rather than guessing.
+or P2. That branch — N1b, documented in full further down — points the
+user at a full run rather than guessing.
+
+### N1c — Joined with no route out
+
+**Fires when:** `GATEWAY` is empty **and** `LINK_UP` is 1 — an active
+interface holding an address, with no default route.
+
+**Severity:** critical. The network is unusable, which is what critical
+means; the fact that the fix may be thirty seconds in a browser doesn't
+make the current state any less broken.
+
+**Evidence:** the SSID (or "ethernet"), and `LINK_DHCP_ROUTER` when the
+DHCP server offered one.
+
+**Recommendation:** open a browser and pass the network's sign-in page,
+starting at `http://<LINK_DHCP_ROUTER>`.
+
+**Rationale.** "Address but no route" is a real and distinct network
+state, and the overwhelmingly most common cause of it is a captive portal
+that hasn't been passed. N1c leads with that rather than enumerating
+causes evenly, because it is also the only cause the user can act on
+without finding the network's owner.
+
+**N1c never claims a portal was detected.** It cannot: with no default
+route the canary at `captive.apple.com` is unreachable, so there is
+nothing to detect. It says what was observed — joined, addressed, no
+route — and then says what to try. CP-1 is the rule that gets to assert a
+portal, and only when the probe confirms one.
+
+**Why the DHCP router is quoted rather than the (absent) gateway.**
+`ipconfig getpacket` carries the router option whether or not the kernel
+installed a route to it, so on exactly the networks where N1c fires there
+is still a concrete address to point a browser at. `lib/linkstate.sh`
+parses it; `lib/netid.sh` also uses it as a last-resort identity so these
+runs stop filing under the synthetic "unknown" network.
 
 ### W1 — Weak WiFi signal
 

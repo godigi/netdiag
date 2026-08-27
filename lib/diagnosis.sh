@@ -17,13 +17,41 @@
 diagnosis_run() {
   hdr "What we found"
 
-  # N1 — no usable network at all. Every rule below keys off a measurement
+  # N1 / N1c — no usable network. Every rule below keys off a measurement
   # that only exists once there IS a link, so without this the most basic
   # failure mode (WiFi off, cable unplugged) fired zero rules and the run
   # ended with "Nothing obviously wrong — your network looks healthy" and
   # exit 0, on a machine with no network whatsoever.
-  if [ -z "$GATEWAY" ]; then
-    add_diag critical N1 "Your Mac has no network connection at all — there's no default route, which means it isn't joined to a WiFi network and has no working ethernet link. Turn WiFi on and pick a network, or check that the ethernet cable is seated at both ends. Nothing else can be diagnosed until this is fixed."
+  #
+  # The split exists because those two sentences describe opposite
+  # situations and N1 used to say the first one in both. "No default
+  # route" was read as "nothing is connected", so a Mac sitting on a hotel
+  # network at a strong signal with a valid DHCP lease was told it "isn't
+  # joined to a WiFi network and has no working ethernet link" — while the
+  # same report, three lines higher, printed the SSID and the signal
+  # strength. LINK_UP (lib/linkstate.sh) is what tells them apart.
+  #
+  # N1c leads with the sign-in page rather than listing causes evenly,
+  # because among networks that hand out an address and withhold a route
+  # the portal is far and away the most common, and it is the only cause
+  # with an action the user can take right now. The other causes follow in
+  # the same sentence — the rule states what was observed, then what to
+  # try, and never claims a portal was detected. CP-1 below is the rule
+  # that gets to make that claim, and only when the probe confirms it.
+  if [ -z "$GATEWAY" ] && [ "${LINK_UP:-0}" -eq 1 ]; then
+    local _where _router_hint
+    if [ "${IS_WIFI:-0}" -eq 1 ] && [ -n "${WIFI_SSID:-}" ] && [ "$WIFI_SSID" != "<redacted>" ]; then
+      _where="You're connected to the WiFi network \"$WIFI_SSID\""
+    elif [ "${IS_WIFI:-0}" -eq 1 ]; then
+      _where="You're connected to WiFi"
+    else
+      _where="Your ethernet cable is connected"
+    fi
+    _router_hint="ask the network's owner"
+    [ -n "${LINK_DHCP_ROUTER:-}" ] && _router_hint="try http://${LINK_DHCP_ROUTER} in a browser"
+    add_diag critical N1c "$_where and it gave your Mac an address, but no way out to the internet. Networks in hotels, airports, cafés and offices usually do this until you open a browser and pass their sign-in or terms page — so start there: $_router_hint. If there's no sign-in page, the network handed out an address without a working route, and only its owner can fix that."
+  elif [ -z "$GATEWAY" ]; then
+    add_diag critical N1 "Your Mac has no network connection at all — nothing is joined and no cable is carrying a link. Turn WiFi on and pick a network, or check that the ethernet cable is seated at both ends. Nothing else can be diagnosed until this is fixed."
   elif [ "${PUBLIC_CHECKED:-0}" -eq 1 ] && [ "$PUBLIC_OK" -eq 0 ] && [ -z "$GW_LOSS" ]; then
     # Reachable only from a focused run (--mtu-only), where the gateway
     # section is skipped so P1/P2 below can't evaluate. PUBLIC_CHECKED

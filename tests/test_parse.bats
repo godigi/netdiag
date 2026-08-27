@@ -551,3 +551,53 @@ TSV
   diagnosis_run >/dev/null
   [[ " ${DIAG_RULE[*]:-} " != *" VPN-1 "* ]]
 }
+
+# ── N1c: joined, addressed, no route out ─────────────────────────────────
+# N1 originally fired on the missing route alone and told the user their
+# Mac "isn't joined to a WiFi network" — a claim nothing in the run had
+# checked, and one the same report contradicted three lines higher by
+# printing the SSID and the signal strength.
+
+@test "diagnosis: joined with no route is N1c, and does not claim WiFi is off" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=1 IS_WIFI=1 WIFI_SSID="Mercure" WIFI_RSSI=-44
+  LINK_DHCP_ROUTER="10.125.128.1"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "${DIAG_RULE[0]}" = "N1c" ]
+  [ "$MAX_SEVERITY" -eq 2 ]
+  [[ "${DIAG[0]}" == *"Mercure"* ]]
+  [[ "${DIAG[0]}" == *"10.125.128.1"* ]]
+  [[ "${DIAG[0]}" != *"isn't joined to a WiFi network"* ]]
+}
+
+@test "diagnosis: joined with no route on ethernet names no SSID" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=1 IS_WIFI=0 LINK_DHCP_ROUTER="192.168.1.1"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "${DIAG_RULE[0]}" = "N1c" ]
+  [[ "${DIAG[0]}" == *"192.168.1.1"* ]]
+}
+
+@test "diagnosis: nothing joined is still N1, not N1c" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "${DIAG_RULE[0]}" = "N1" ]
+  [ "$MAX_SEVERITY" -eq 2 ]
+}
+
+@test "diagnosis: N1c and N1 are mutually exclusive" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=1 IS_WIFI=1 WIFI_SSID="Mercure"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  local joined=" ${DIAG_RULE[*]} "
+  [[ "$joined" != *" N1 "* ]]
+}
