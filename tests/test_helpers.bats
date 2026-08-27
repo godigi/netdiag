@@ -8,6 +8,7 @@
 setup() {
   REPO="${BATS_TEST_DIRNAME}/.."
   HELPERS="$REPO/helpers"
+  FIX="${BATS_TEST_DIRNAME}/fixtures"
   TMP="$BATS_TEST_TMPDIR"
   # helpers/baseline.py refuses to run without THRESH_SPEED_DROP_FACTOR /
   # THRESH_SPEED_CONFIRM_RUNS (lib/thresholds.sh), the same way
@@ -374,4 +375,52 @@ _write_speed_history() {
   # stores.
   run emit NETDIAG_REDACT=1 NETDIAG_RUN_ID=2026-01-01T00:00:00Z.deadbeef
   [ "$(printf '%s' "$output" | jq_get run_id)" = "null" ]
+}
+
+# ── captive_portal_classify: status alone is not enough ──────────────────
+# The probe used to pass `curl -o /dev/null` and classify on the HTTP
+# status only: 3xx portal, 2xx ok. Apple's own captive check compares the
+# BODY against a literal success page, because a portal that answers 200
+# with its login HTML is both extremely common and, on status alone,
+# indistinguishable from a clean network. netdiag reported "No captive
+# portal" on exactly those networks.
+
+@test "captive: a redirect is a portal regardless of body" {
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  [ "$(captive_portal_classify 302 '')" = "portal" ]
+  [ "$(captive_portal_classify 307 'anything')" = "portal" ]
+}
+
+@test "captive: 511 Network Authentication Required is a portal" {
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  [ "$(captive_portal_classify 511 '')" = "portal" ]
+}
+
+@test "captive: 200 with Apple's success page is clean" {
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  [ "$(captive_portal_classify 200 "$(cat "$FIX/captive_apple_success.txt")")" = "ok" ]
+}
+
+@test "captive: 200 with a login page is a portal" {
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  [ "$(captive_portal_classify 200 "$(cat "$FIX/captive_apple_portal.txt")")" = "portal" ]
+}
+
+@test "captive: 200 with no body read is unknown, not ok" {
+  # Silence beats a guess: an empty body means the probe could not read
+  # one, not that the network is clean.
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  [ "$(captive_portal_classify 200 '')" = "unknown" ]
+}
+
+@test "captive: a probe that never answered is unknown" {
+  # shellcheck source=../lib/common.sh
+  . "$REPO/lib/common.sh"
+  [ "$(captive_portal_classify '' '')" = "unknown" ]
+  [ "$(captive_portal_classify 000 '')" = "unknown" ]
 }

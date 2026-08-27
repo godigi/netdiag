@@ -1,0 +1,5 @@
+<!DOCTYPE html>
+<html><head><title>Mercure Guest WiFi</title></head>
+<body><h1>Welcome</h1><form action="/login" method="post">
+<input name="room"><input name="surname"><button>Connect</button>
+</form></body></html>

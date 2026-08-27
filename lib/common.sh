@@ -417,12 +417,40 @@ add_diag() {
 # scan, lib/monitor.sh between scans) so they cannot disagree about what
 # the answer means. $1 is curl's %{http_code}; prints ok | portal | unknown.
 # A failed probe is unknown, never "no portal" — silence beats a guess.
+# Classify a captive-portal canary probe. $1 = HTTP status, $2 = response
+# body. Prints "ok" | "portal" | "unknown".
+#
+# The body is load-bearing, not decorative. This used to classify on the
+# status alone — 3xx portal, 2xx ok — and both callers passed
+# `curl -o /dev/null`, so a portal that answers 200 OK with its own login
+# page (a hotel splash, a terms-of-service checkbox: the common case, not
+# an edge case) was reported to the user as "No captive portal."
+#
+# Apple's own captive check works the same way this now does: request the
+# canary, and treat anything that is not the literal success page as an
+# interception. The marker below is the whole of that page's title element
+# and is stable across every macOS release netdiag supports.
+#
+# "unknown" on an unreadable body is deliberate: a 200 with nothing
+# captured means the probe failed to read a body, not that the network is
+# clean, and silence beats a confident wrong answer. Callers already treat
+# unknown as "say nothing".
+CAPTIVE_CANARY_MARKER='<TITLE>Success</TITLE>'
 captive_portal_classify() {
-  case "${1:-}" in
-    2[0-9][0-9])        printf 'ok' ;;
-    3[0-9][0-9])        printf 'portal' ;;
-    *)                  printf 'unknown' ;;
+  local http_status="${1:-}" body="${2:-}"
+  case "$http_status" in
+    511)                printf 'portal'; return ;;
+    3[0-9][0-9])        printf 'portal'; return ;;
+    2[0-9][0-9])        ;;
+    *)                  printf 'unknown'; return ;;
   esac
+  if [ -z "$body" ]; then
+    printf 'unknown'
+  elif printf '%s' "$body" | grep -qiF "$CAPTIVE_CANARY_MARKER"; then
+    printf 'ok'
+  else
+    printf 'portal'
+  fi
 }
 
 # ── Loss-percentage predicates ───────────────────────────────────────────

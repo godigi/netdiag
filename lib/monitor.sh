@@ -545,11 +545,15 @@ _mon_probe_public() {
   else
     MON_PUBLIC_OK=0
   fi
-  local captive
-  captive="$(curl -s -m 3 -o /dev/null -w '%{http_code}' \
+  # Body captured for the same reason lib/public.sh captures it: a portal
+  # that answers 200 with its login page is invisible in the status alone.
+  local captive_raw captive_code captive_body
+  captive_raw="$(curl -s -m 3 -w '\n%{http_code}' \
     http://captive.apple.com/hotspot-detect.html 2>/dev/null || true)"
+  captive_code="${captive_raw##*$'\n'}"
+  captive_body="${captive_raw%$'\n'*}"
   # Same classifier lib/public.sh uses — see lib/common.sh.
-  case "$(captive_portal_classify "$captive")" in
+  case "$(captive_portal_classify "$captive_code" "$captive_body")" in
     ok)     MON_CAPTIVE=0 ;;
     portal) MON_CAPTIVE=1 ;;
     *)      MON_CAPTIVE="" ;;

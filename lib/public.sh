@@ -4,7 +4,8 @@
 #
 # Reads:  TARGET
 # Writes: PUBLIC_OK, PUB_IP, PUB_ASN, PUB_ISP, PUB_CITY, PUB_CC,
-#         CAPTIVE_PORTAL, TARGET_PING_LOSS, TARGET_PING_RTT
+#         CAPTIVE_PORTAL, CAPTIVE_PORTAL_CODE, TARGET_PING_LOSS,
+#         TARGET_PING_RTT
 # Entry:  public_run
 
 # Writes PUBLIC_OK, PUB_*, CAPTIVE_PORTAL, TARGET_PING_* — all read in
@@ -13,7 +14,7 @@
 public_run() {
   hdr "Public reachability"
   PUBLIC_CHECKED=1
-  local pub_out captive
+  local pub_out
   pub_out="$(curl -4 -s -m 4 https://ifconfig.co/json 2>/dev/null || curl -s -m 4 https://ifconfig.co/json 2>/dev/null)"
   if [ -n "$pub_out" ]; then
     PUBLIC_OK=1
@@ -33,17 +34,26 @@ public_run() {
     bad "Could not reach ifconfig.co — no internet, captive portal, or DNS broken."
   fi
 
-  # Captive portal sniff
-  captive="$(curl -s -m 3 -o /dev/null -w '%{http_code} %{redirect_url}' http://captive.apple.com/hotspot-detect.html 2>/dev/null)"
+  # Captive portal sniff. The body is captured, not discarded: a portal
+  # answering 200 with its login page is the common case and is invisible
+  # in the status alone — see captive_portal_classify in lib/common.sh.
+  # No -L: a followed redirect lands on the portal's own 200 and erases
+  # the evidence.
+  local captive_raw captive_code captive_body
+  captive_raw="$(curl -s -m 3 -w '\n%{http_code}' \
+    http://captive.apple.com/hotspot-detect.html 2>/dev/null)"
+  captive_code="${captive_raw##*$'\n'}"
+  captive_body="${captive_raw%$'\n'*}"
   # One classifier shared with the live monitor — see lib/common.sh — so a
   # scan and a between-scans sample cannot disagree about what the answer
   # means. A probe that never answered classifies "unknown" and stays
   # silent here: silence beats a guess.
-  case "$(captive_portal_classify "${captive%% *}")" in
+  case "$(captive_portal_classify "$captive_code" "$captive_body")" in
     ok)     ok "No captive portal." ;;
     portal)
       CAPTIVE_PORTAL=1
-      warn "Captive portal detected (HTTP $captive) — log in via browser."
+      CAPTIVE_PORTAL_CODE="$captive_code"
+      warn "Captive portal detected (HTTP $captive_code) — log in via browser."
       ;;
   esac
 
