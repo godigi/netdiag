@@ -486,6 +486,44 @@ All of the below are implemented and can fire.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
 
+### DH-3 — Self-assigned address, DHCP never answered
+
+- Trigger: no default route, `LINK_SELF_ASSIGNED == 1` — the active
+  device's only IPv4 address is in `169.254.0.0/16`. Set by
+  `lib/linkstate.sh::linkstate_run` via `linkstate_is_link_local`.
+- Severity: `critical`.
+- Evidence: the interface, the SSID where there is one, and the
+  self-assigned address itself.
+- Recommendation: rejoin the network (or replug the cable) so the Mac
+  asks again; restart the router if that does not take.
+
+**Why this is its own rule.** macOS assigns a `169.254` address when it
+asks a network for one and nothing answers. It is the OS reporting the
+*absence* of a lease — but it arrives on the same `ifconfig` `inet` line
+as a real one, so `linkstate_parse_ifconfig_ip` returned it and
+`linkstate_run` set `LINK_UP=1` and stopped searching. A total DHCP
+failure was therefore recorded as a healthy, configured link.
+
+It sits between the two rules it used to be confused with, and is a
+third thing from both:
+
+| | link | address | route |
+|---|---|---|---|
+| `N1` | none | — | — |
+| **`DH-3`** | **yes** | **self-assigned** | **none** |
+| `N1c` | yes | real lease | none |
+
+Before this rule existed the case fell through to `N1`, which told a
+user sitting on Wi-Fi at full signal that their Mac "has no network
+connection at all — nothing is joined". The cause and the fix are both
+entirely different from `N1`'s, so the wrong rule sent them to check a
+cable that was fine.
+
+`linkstate_run` also stopped preferring the *last* active device over
+the first when nothing is configured; with self-assigned addresses now
+reaching that path, the service order's ranking is what decides, since
+it is macOS's own statement of which link the user thinks they are on.
+
 ## Rules added in v0.3.0 — NAT / WAN topology
 
 ### WAN-1 — Outbound traffic load-balanced across multiple ISPs

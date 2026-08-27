@@ -620,6 +620,67 @@ assert_not_contains() {
   [ "$MAX_SEVERITY" -eq 2 ]
 }
 
+# ── DH-3: joined, but nothing handed out an address ──────────────────────
+# The third state N1 used to swallow. A Mac associated at full signal with
+# a 169.254 self-assigned address was told it "has no network connection
+# at all — nothing is joined", which is both false and a different fix.
+
+@test "diagnosis: a self-assigned address is DH-3, not N1" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=0 LINK_SELF_ASSIGNED=1 LINK_IP="169.254.211.7"
+  IS_WIFI=1 WIFI_SSID="Mercure"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "${DIAG_RULE[0]}" = "DH-3" ] || { echo "fired ${DIAG_RULE[0]}"; return 1; }
+  [ "$MAX_SEVERITY" -eq 2 ]
+  assert_contains "${DIAG[0]}" "Mercure"
+  assert_contains "${DIAG[0]}" "169.254.211.7"
+  assert_not_contains "${DIAG[0]}" "no network connection at all"
+}
+
+@test "diagnosis: DH-3 on ethernet talks about the cable, not WiFi" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=0 LINK_SELF_ASSIGNED=1 LINK_IP="169.254.9.9" IS_WIFI=0
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "${DIAG_RULE[0]}" = "DH-3" ] || { echo "fired ${DIAG_RULE[0]}"; return 1; }
+  assert_contains "${DIAG[0]}" "ethernet cable"
+  assert_not_contains "${DIAG[0]}" "WiFi off and on"
+}
+
+@test "diagnosis: DH-3 does not displace N1c when there is a real lease" {
+  # A real lease with no route is still the captive-portal case. DH-3 must
+  # not steal it just because both lack a gateway.
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="" LINK_UP=1 LINK_SELF_ASSIGNED=0 IS_WIFI=1 WIFI_SSID="Mercure"
+  LINK_DHCP_ROUTER="10.125.128.1"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  [ "${DIAG_RULE[0]}" = "N1c" ] || { echo "fired ${DIAG_RULE[0]}"; return 1; }
+}
+
+@test "diagnosis: DH-3, N1c and N1 are mutually exclusive" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  local seen
+  for state in "1 0" "0 1" "0 0"; do
+    # shellcheck disable=SC2086
+    set -- $state
+    GATEWAY="" LINK_UP="$1" LINK_SELF_ASSIGNED="$2" IS_WIFI=1
+    LINK_IP="169.254.1.1"
+    DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+    diagnosis_run >/dev/null
+    seen=0
+    for r in "${DIAG_RULE[@]}"; do
+      case "$r" in N1|N1c|DH-3) seen=$((seen + 1)) ;; esac
+    done
+    [ "$seen" -eq 1 ] || { echo "LINK_UP=$1 LINK_SELF_ASSIGNED=$2 fired $seen of the three"; return 1; }
+  done
+}
+
 @test "diagnosis: N1c and N1 are mutually exclusive" {
   # shellcheck source=../lib/diagnosis.sh
   . "$REPO/lib/diagnosis.sh"

@@ -568,6 +568,22 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#dh-1--dhcp-lease-expires-within-1-hour",
     },
     {
+        "id": "DH-3",
+        "title": "No address handed out — Mac assigned its own",
+        "category": "dhcp",
+        "severity": "critical",
+        "scope": "scan",
+        "blurb": (
+            "Your Mac is joined to this network but the network never "
+            "gave it an address, so it assigned itself a placeholder one "
+            "that cannot reach anything. Usually the router's address "
+            "service is down, out of addresses, or still starting up "
+            "after a reboot. Rejoining the network makes your Mac ask "
+            "again; failing that, restart the router."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#dh-3--self-assigned-address-dhcp-never-answered",
+    },
+    {
         "id": "DH-2",
         "title": "DHCP DNS overridden",
         "category": "dhcp",

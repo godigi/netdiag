@@ -352,6 +352,13 @@ def main() -> None:
             # was off. See lib/linkstate.sh and DIAGNOSIS-RULES.md#n1c.
             "link_status": _env("LINK_STATUS"),
             "link_up": os.environ.get("NETDIAG_LINK_UP", "") == "1",
+            # True when the only IPv4 address on the link is a 169.254
+            # one macOS assigned itself because no DHCP server answered.
+            # A third state, not a flavour of link_up: `ip` is populated
+            # and `link_up` is false, which without this flag reads as a
+            # contradiction rather than as the DHCP failure it is. [DH-3]
+            "self_assigned_ip": os.environ.get(
+                "NETDIAG_LINK_SELF_ASSIGNED", "") == "1",
             # The router the DHCP server offered, present whether or not
             # the kernel installed a route to it — so on a network that
             # withholds a route there is still an address to point a

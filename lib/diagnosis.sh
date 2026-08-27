@@ -50,6 +50,29 @@ diagnosis_run() {
     _router_hint="ask the network's owner"
     [ -n "${LINK_DHCP_ROUTER:-}" ] && _router_hint="try http://${LINK_DHCP_ROUTER} in a browser"
     add_diag critical N1c "$_where and it gave your Mac an address, but no way out to the internet. Networks in hotels, airports, cafés and offices usually do this until you open a browser and pass their sign-in or terms page — so start there: $_router_hint. If there's no sign-in page, the network handed out an address without a working route, and only its owner can fix that."
+  elif [ -z "$GATEWAY" ] && [ "${LINK_SELF_ASSIGNED:-0}" -eq 1 ]; then
+    # DH-3 — joined, but nothing answered the request for an address, so
+    # macOS made one up. It sits between N1c and N1 and is a third thing
+    # from both: N1c has a real lease and no route, N1 has no link at all,
+    # and this has a link and no lease.
+    #
+    # Before LINK_SELF_ASSIGNED existed this fell through to N1 and told
+    # the user their Mac "has no network connection at all — nothing is
+    # joined", on a machine that is associated at full signal. The cause
+    # and the fix are both entirely different, so the wrong rule here
+    # sends the user to check a cable that is fine.
+    local _joined _fix
+    if [ "${IS_WIFI:-0}" -eq 1 ] && [ -n "${WIFI_SSID:-}" ] && [ "$WIFI_SSID" != "<redacted>" ]; then
+      _joined="Your Mac is connected to the WiFi network \"$WIFI_SSID\""
+      _fix="Turning WiFi off and on again, or forgetting and rejoining the network, makes your Mac ask again"
+    elif [ "${IS_WIFI:-0}" -eq 1 ]; then
+      _joined="Your Mac is connected to WiFi"
+      _fix="Turning WiFi off and on again makes your Mac ask for an address again"
+    else
+      _joined="Your ethernet cable is carrying a link"
+      _fix="Unplugging and replugging the cable makes your Mac ask for an address again"
+    fi
+    add_diag critical DH-3 "$_joined, but the network never gave it an address — so your Mac assigned itself a placeholder one (${LINK_IP:-a self-assigned address}) that can't reach anything. This is almost always the router's address service (DHCP) being down, out of addresses, or still starting up after a reboot. $_fix; if that doesn't work, restart the router. Nothing will work until the network hands out a real address."
   elif [ -z "$GATEWAY" ]; then
     add_diag critical N1 "Your Mac has no network connection at all — nothing is joined and no cable is carrying a link. Turn WiFi on and pick a network, or check that the ethernet cable is seated at both ends. Nothing else can be diagnosed until this is fixed."
   elif [ "${PUBLIC_CHECKED:-0}" -eq 1 ] && [ "$PUBLIC_OK" -eq 0 ] && [ -z "$GW_LOSS" ]; then

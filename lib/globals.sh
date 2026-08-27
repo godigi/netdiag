@@ -27,7 +27,8 @@ LINK_DEVICE=""           # active device, found without the routing table
 LINK_STATUS=""           # ifconfig's own word: active | inactive | ""
 LINK_IP=""               # IPv4 address on LINK_DEVICE
 LINK_DHCP_ROUTER=""      # router the DHCP server offered, route or no route
-LINK_UP=0                # 1 = active device holding an address
+LINK_UP=0                # 1 = active device holding a real address
+LINK_SELF_ASSIGNED=0     # 1 = active, but the only address is 169.254 [DH-3]
 
 # WiFi (lib/wifi.sh, lib/wifi_scan.sh, lib/wifi_disconnect.sh)
 IS_WIFI=0

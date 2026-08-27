@@ -6,6 +6,35 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — Tier 1: link facts netdiag was reporting wrongly
+
+The first items from `docs/design/networks-we-cannot-yet-describe.md`.
+Each is an existing rule firing on data that did not mean what the rule
+thought, so each removes a *confident wrong answer* rather than adding a
+check.
+
+- **A self-assigned address is no longer a healthy link. [`DH-3`]**
+  macOS assigns a `169.254.x.x` address when it asks a network for one
+  and nothing answers — the OS reporting the *absence* of a lease. It
+  arrives on the same `ifconfig` `inet` line as a real one, so
+  `linkstate_parse_ifconfig_ip` returned it, `linkstate_run` set
+  `LINK_UP=1` and stopped searching, and a total DHCP failure was
+  recorded as a configured link. The case then fell through to `N1`,
+  which told a user sitting on Wi-Fi at full signal that their Mac "has
+  no network connection at all — nothing is joined": false, and a
+  different fix from the real one. New `DH-3` names it — joined, no
+  lease, placeholder address — and is a third state from both `N1`
+  (no link) and `N1c` (real lease, no route). New
+  `interface.self_assigned_ip` in the JSON, because `ip` populated
+  alongside `link_up: false` otherwise reads as a contradiction.
+- **The service order's ranking now decides which unconfigured device
+  is reported.** `linkstate_run` overwrote `LINK_DEVICE` on every active
+  device, so when none held a lease the *last* one won. Invisible while
+  the only way to reach the end of that loop was a machine with nothing
+  configured at all; wrong the moment self-assigned addresses started
+  arriving there. The walk now keeps the first such candidate and still
+  prefers any later device holding a real lease over all of them.
+
 ### Docs — twenty networks netdiag cannot yet describe
 
 New `docs/design/networks-we-cannot-yet-describe.md`. Nothing implemented;

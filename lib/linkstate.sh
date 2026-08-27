@@ -39,8 +39,36 @@ linkstate_parse_ifconfig_status() {
 
 # The IPv4 address from `ifconfig <dev>` output ($1), or empty.
 # Anchored on "inet" as a whole word so the inet6 line can never match.
+#
+# Reports what is on the wire, including a self-assigned 169.254 address.
+# Judging it is linkstate_is_link_local's job and the caller's decision:
+# a parser that silently dropped the address would leave DH-3 unable to
+# say which interface failed and what it made up instead.
 linkstate_parse_ifconfig_ip() {
   printf '%s\n' "$1" | awk '$1=="inet"{print $2; exit}'
+}
+
+# True when $1 is an IPv4 link-local (self-assigned) address, 169.254/16.
+#
+# macOS assigns one of these when it asks a network for an address and
+# nothing answers. It is the OS reporting the *absence* of a lease, but it
+# arrives on the same `inet` line as a real one — so treating "has an
+# inet address" as "is configured" turns a total DHCP failure into a
+# healthy link. That is precisely what happened: linkstate_run set
+# LINK_UP=1 and returned on the first active device, and the report went
+# on to describe a configured network that could not reach anything, with
+# no cause named.
+#
+# Empty is deliberately *not* link-local. No address at all is a distinct
+# state — N1's "nothing joined" — and collapsing the two would lose it.
+#
+# Matched on the dotted octets rather than a string prefix, so 169.255.x,
+# 168.254.x and 16.9.254.x stay the ordinary public addresses they are.
+linkstate_is_link_local() {
+  case "${1:-}" in
+    169.254.*.*) return 0 ;;
+    *)           return 1 ;;
+  esac
 }
 
 # The first router the DHCP server offered, from `ipconfig getpacket <dev>`
@@ -77,16 +105,21 @@ linkstate_parse_service_devices() {
 # route's interface, when there is one) — checked before the service
 # order so the fast path costs one ifconfig and nothing else.
 #
-# Sets LINK_DEVICE / LINK_STATUS / LINK_IP / LINK_DHCP_ROUTER / LINK_UP.
-# LINK_UP is 1 only when a device is BOTH active AND holds an address:
-# an active radio with no lease is associated but unconfigured, which is
-# a fault worth naming, not a working link.
+# Sets LINK_DEVICE / LINK_STATUS / LINK_IP / LINK_DHCP_ROUTER / LINK_UP /
+# LINK_SELF_ASSIGNED.
+# LINK_UP is 1 only when a device is BOTH active AND holds a *real*
+# address: an active radio with no lease is associated but unconfigured,
+# which is a fault worth naming, not a working link — and a self-assigned
+# 169.254 address is the same fault wearing an address, so it does not
+# count either. LINK_SELF_ASSIGNED records which of those two it was, so
+# DH-3 can tell "nothing answered DHCP" from "no address at all".
 #
 # Writes globals read by lib/iface.sh, lib/diagnosis.sh and emit_json.py.
 # shellcheck disable=SC2034
 linkstate_run() {
   local preferred="${1:-}" devices dev out
   LINK_DEVICE=""; LINK_STATUS=""; LINK_IP=""; LINK_DHCP_ROUTER=""; LINK_UP=0
+  LINK_SELF_ASSIGNED=0
 
   devices="$preferred"
   # The service order is only read when the preferred device did not
@@ -97,27 +130,55 @@ linkstate_run() {
       "$(networksetup -listnetworkserviceorder 2>/dev/null || true)")"
   fi
 
+  # The best unconfigured candidate seen so far, held aside rather than
+  # written straight to LINK_*. An active device with no usable address is
+  # still the best answer we have if nothing better turns up — "associated
+  # but not configured" is exactly the failure N1c and DH-3 describe — but
+  # it must not displace a later device that actually holds a lease.
+  #
+  # Only the FIRST such device is kept. `devices` is macOS's own priority
+  # ranking, so when several are equally unconfigured the highest-ranked
+  # one is the one the user thinks they are on. (Before self-assigned
+  # addresses were recognised this loop overwrote LINK_DEVICE on every
+  # active device, so the *last* one won — invisible while the only way to
+  # reach the end of the loop was a machine with nothing configured at
+  # all, and wrong the moment 169.254 addresses started arriving here.)
+  local cand_dev="" cand_status="" cand_ip="" cand_router="" cand_self=0
   for dev in $devices; do
     out="$(ifconfig "$dev" 2>/dev/null || true)"
     [ -n "$out" ] || continue
-    local dev_status dev_ip
+    local dev_status dev_ip dev_router
     dev_status="$(linkstate_parse_ifconfig_status "$out")"
     [ "$dev_status" = "active" ] || continue
     dev_ip="$(linkstate_parse_ifconfig_ip "$out")"
-    LINK_DEVICE="$dev"
-    LINK_STATUS="$dev_status"
-    LINK_IP="$dev_ip"
-    LINK_DHCP_ROUTER="$(linkstate_parse_dhcp_router \
+    dev_router="$(linkstate_parse_dhcp_router \
       "$(ipconfig getpacket "$dev" 2>/dev/null || true)")"
-    # An active device with an address ends the search. An active device
-    # without one is remembered — it is still the best candidate we have,
-    # and "associated but no address" is exactly the DHCP failure the
-    # N1c rule needs to be able to describe — but the loop keeps looking
-    # in case a later service is fully configured.
-    if [ -n "$dev_ip" ]; then
+
+    # A real lease is the best possible answer; take it and stop looking.
+    if [ -n "$dev_ip" ] && ! linkstate_is_link_local "$dev_ip"; then
+      LINK_DEVICE="$dev"
+      LINK_STATUS="$dev_status"
+      LINK_IP="$dev_ip"
+      LINK_DHCP_ROUTER="$dev_router"
+      LINK_SELF_ASSIGNED=0
       LINK_UP=1
       return 0
     fi
+
+    [ -z "$cand_dev" ] || continue
+    cand_dev="$dev"; cand_status="$dev_status"; cand_ip="$dev_ip"
+    cand_router="$dev_router"
+    linkstate_is_link_local "$dev_ip" && cand_self=1
   done
+
+  # Nothing held a lease. Report the best candidate, with LINK_UP left at
+  # 0: a self-assigned address is macOS announcing that no DHCP server
+  # answered, not connectivity, and calling it a configured link is how a
+  # total DHCP failure came to be reported as a healthy network.
+  LINK_DEVICE="$cand_dev"
+  LINK_STATUS="$cand_status"
+  LINK_IP="$cand_ip"
+  LINK_DHCP_ROUTER="$cand_router"
+  LINK_SELF_ASSIGNED="$cand_self"
   return 0
 }
