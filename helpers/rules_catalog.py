@@ -322,6 +322,22 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#d1--partial-dns-internet-reachable",
     },
     {
+        "id": "D2",
+        "title": "No name lookups working at all",
+        "category": "dns",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "Every DNS server your Mac tried failed to answer, and the "
+            "wider internet is unreachable too — so this is most likely a "
+            "symptom of the connection being down rather than a DNS fault "
+            "in its own right. Fix the connection first. If lookups still "
+            "fail once it is back, switch your DNS to Cloudflare or "
+            "Google in System Settings."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#d2--no-name-lookups-working-at-all",
+    },
+    {
         "id": "D3",
         "title": "DNS server sluggish",
         "category": "dns",

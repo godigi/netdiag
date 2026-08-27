@@ -174,9 +174,23 @@ diagnosis_run() {
     fi
   fi
 
-  # D1 — partial DNS, internet reachable. DNS_LINES proves the check ran;
+  # D1 / D2 — name resolution is failing. DNS_LINES proves the check ran;
   # without it a skipped-DNS run would accuse a healthy resolver.
-  if [ -n "$DNS_LINES" ] && [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
+  #
+  # D1 is the partial case and requires the internet to be up, because its
+  # whole content is "everything else works, so it's your resolver". D2 is
+  # the total case and requires nothing of the sort — which is the point.
+  # With only D1, a network whose internet was down measured "0 of 6
+  # resolvers OK" and fired no dns-category rule at all, and the GUI,
+  # which colors the DNS row from the rules the CLI hands it, rendered a
+  # green dot beside the words "0 of 6 resolvers OK". A row cannot be
+  # allowed to contradict its own value; the fix belongs here rather than
+  # in Swift because the GUI holds no diagnostic logic by design.
+  #
+  # Ordered D2-then-D1 with the elif so the two can never both fire.
+  if [ -n "$DNS_LINES" ] && [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 0 ]; then
+    add_diag warn D2 "No name lookups are working at all — every DNS server your Mac tried failed to answer. On its own that would point at your DNS settings, but nothing else on the internet is reachable either, so this is most likely a symptom rather than the cause. Fix the connection first; if lookups still fail once it's back, switch your DNS to 1.1.1.1 (Cloudflare) or 8.8.8.8 (Google) in System Settings → Network → Details → DNS."
+  elif [ -n "$DNS_LINES" ] && [ "$DNS_OK" -eq 0 ] && [ "$PUBLIC_OK" -eq 1 ]; then
     add_diag warn D1 "The internet works but some name lookups are failing — your DNS server is flaky. Switch your DNS to 1.1.1.1 (Cloudflare) or 8.8.8.8 (Google) in System Settings → Network → Details → DNS."
   fi
 

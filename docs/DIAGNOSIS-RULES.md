@@ -276,6 +276,29 @@ decides a critical diagnosis. It costs ~4 s.
 - Severity: `warn`
 - Recommendation: change resolver (1.1.1.1 or 8.8.8.8).
 
+### D2 — No name lookups working at all
+
+- **Trigger:** `DNS_LINES` non-empty (the check ran), `dns.ok == false`,
+  and `public.ok == false`.
+- **Severity:** warn. The connection failure it accompanies is already
+  critical; a second critical would double-count one fault.
+- **Recommendation:** fix the connection first, then re-test DNS.
+
+**Precedence: D1 and D2 are mutually exclusive**, split on `public.ok`.
+D1 is the partial case and says "everything else works, so it's your
+resolver" — a sentence that is only true when everything else does work.
+D2 is the total case and deliberately declines to blame the resolver.
+
+**Why D2 exists.** D1's `public.ok == true` guard meant a network with no
+internet fired *no* `dns`-category rule at all, however badly DNS was
+failing. `RunReportView` colors the "Name lookups (DNS)" row from the
+categories of the rules the CLI hands it, so the report card showed a
+green dot beside the words "0 of 6 resolvers OK" — visible in the
+screenshots that prompted this work. The row was right and the dot was
+wrong, and the missing piece was a rule, not a renderer: per CLAUDE.md the
+GUI holds no diagnostic logic, so a threshold or verdict added to Swift to
+paper over this would have been the wrong fix in the wrong file.
+
 ### D3 — Slow DNS resolver latency
 
 - Trigger: `dns.resolver_ms > 250 AND dns.ok == true`

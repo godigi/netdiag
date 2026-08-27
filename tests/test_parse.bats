@@ -681,3 +681,42 @@ assert_not_contains() {
   assert_contains " ${DIAG_RULE[*]} " " P1 "
   assert_not_contains " ${DIAG_RULE[*]} " " CP-1 "
 }
+
+# ── D2: total resolver failure ───────────────────────────────────────────
+# D1 requires PUBLIC_OK=1, so on a network with no internet the DNS check
+# could measure "0 of 6 resolvers OK" and fire nothing at all — which the
+# GUI, which colors that row from rules, rendered as a green dot beside
+# the words "0 of 6 resolvers OK".
+
+@test "diagnosis: every resolver failing fires D2 even with no internet" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.125.128.1" LINK_UP=1 GW_LOSS=0 PUBLIC_OK=0 DNS_OK=0
+  DNS_LINES="1.1.1.1|apple.com||FAIL
+8.8.8.8|apple.com||FAIL"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  assert_contains " ${DIAG_RULE[*]} " " D2 "
+}
+
+@test "diagnosis: D2 does not fire when the DNS check never ran" {
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.125.128.1" LINK_UP=1 GW_LOSS=0 PUBLIC_OK=1 DNS_OK=0 DNS_LINES=""
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  assert_not_contains " ${DIAG_RULE[*]} " " D2 "
+}
+
+@test "diagnosis: D2 and D1 do not both fire" {
+  # D1 is the partial case (internet up, some lookups failing); D2 is the
+  # total one. Both firing would put two DNS verdicts in one report.
+  # shellcheck source=../lib/diagnosis.sh
+  . "$REPO/lib/diagnosis.sh"
+  GATEWAY="10.125.128.1" LINK_UP=1 GW_LOSS=0 PUBLIC_OK=1 DNS_OK=0
+  DNS_LINES="1.1.1.1|apple.com||FAIL"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  diagnosis_run >/dev/null
+  assert_contains " ${DIAG_RULE[*]} " " D1 "
+  assert_not_contains " ${DIAG_RULE[*]} " " D2 "
+}
