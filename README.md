@@ -399,6 +399,22 @@ netdiag --install-watcher    # launchd, every 15 min
 netdiag --summary=168        # what happened this past week?
 ```
 
+For outages rather than snapshots, install the **recorder** — a launchd
+agent running one long-lived `--monitor` that appends every transition to
+`~/net-diag/events.jsonl`:
+
+```sh
+netdiag --install-recorder   # keeps running, and restarts across reboots
+netdiag --events=24          # what changed, and how long each fault lasted
+```
+
+The 15-minute watcher above cannot answer "was the internet down at 03:14
+and for how long" — anything shorter than its cadence happens entirely
+between two clean runs. The recorder can. `--events` pairs faults into
+episodes with durations, and reports how much of the window was actually
+observed, so a four-hour outage is never confused with a four-hour closed
+lid.
+
 `baseline.jsonl` is append-only at `~/net-diag/baseline.jsonl`; pipe it
 through `jq` for ad-hoc analysis. Once it passes its retention cap the
 oldest records roll into `baseline-archive.jsonl` rather than being

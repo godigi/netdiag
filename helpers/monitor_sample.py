@@ -203,6 +203,132 @@ def _changes() -> list[dict]:
     return out
 
 
+def _journal_append(sample: dict, changes: list[dict]) -> None:
+    """Append this cycle's transitions to the event journal, if one is set.
+
+    Why transitions and not samples: a sample every five seconds forever is
+    a database problem, and the samples are not what anyone asks about.
+    "Was the internet down at 03:14, and for how long" is answered by the
+    moments something *changed* — and `_changes()` above already computes
+    exactly that set, with a user-facing sentence for each, once per cycle.
+    Until now it was rendered and discarded.
+
+    Opt-in via NETDIAG_MON_JOURNAL, because `--monitor`'s documented
+    contract is a process that writes nothing to disk (lib/monitor.sh's
+    header, docs/JSON-SCHEMA.md). A consumer piping the stream into its own
+    program still gets that; the flag is what the recorder passes.
+
+    Three kinds of line are written:
+
+      * one per entry in `changes` — the transition itself;
+      * a `gap` when the monitor was not looking (sleep, a stall), because
+        a window that does not know how much of itself was observed will
+        happily report an outage that was a closed lid, or an uptime that
+        was nobody watching;
+      * `monitor-started` on the first cycle of a process, so a reader can
+        tell "no events because nothing happened" from "no events because
+        nothing was running".
+
+    Every line carries its own timestamp and network identity rather than
+    inheriting them from a header, because this file is appended to by
+    successive monitor processes across reboots and is read back by
+    timestamp range. It is never rewritten in place.
+
+    A failure here must never take down the stream: the monitor's job is to
+    keep reporting, and a full disk or a read-only home directory is not a
+    reason to stop watching the network. Errors are swallowed deliberately.
+    """
+    path = os.environ.get("NETDIAG_MON_JOURNAL")
+    if not path:
+        return
+
+    base = {
+        # The stream calls it `ts`; the journal calls it `t`. Deliberate:
+        # a journal line is not a sample and should not look like one to a
+        # reader that has both files open.
+        "t": sample.get("ts"),
+        "seq": sample.get("seq"),
+        "network": (sample.get("network") or {}).get("id"),
+        "network_label": (sample.get("network") or {}).get("label"),
+    }
+    lines = []
+
+    if _env("SEQ") == "1":
+        lines.append(dict(base, kind="monitor-started",
+                          summary="Monitoring started"))
+
+    gap = _i("GAP_S")
+    if gap:
+        lines.append(dict(base, kind="gap", gap_s=gap,
+                          summary=f"Not observed for {gap}s"))
+
+    for change in changes:
+        lines.append(dict(base, kind=change.get("id"),
+                          field=change.get("field"),
+                          **{"from": change.get("from")},
+                          to=change.get("to"),
+                          summary=change.get("summary")))
+
+    if not lines:
+        return
+
+    try:
+        with open(path, "a", encoding="utf-8") as handle:
+            for line in lines:
+                handle.write(json.dumps(line, separators=(",", ":"),
+                                        default=str) + "\n")
+    except OSError:
+        return
+
+    # Trim once per process, not once per sample: a recorder that runs for
+    # weeks would otherwise re-read the whole file every ten seconds to
+    # answer a question that changes once a month.
+    if _env("SEQ") == "1":
+        _journal_prune(path)
+
+
+def _journal_prune(path: str) -> None:
+    """Roll the oldest lines into `<journal>-archive.jsonl` past the cap.
+
+    Rolls rather than deletes, for the reason lib/output.sh's prune_history
+    gives about the run store: the whole value of this file is depth, the
+    first lines to go are always the oldest, and "the retention policy
+    quietly ate your history" is the failure the feature exists to prevent.
+
+    No lock, unlike prune_history. That is a real assumption and worth
+    stating: the recorder is a singleton, and two monitors journaling to
+    one path is a configuration this does not defend against. The cost if
+    it happens is duplicated lines, never lost ones — the archive is
+    appended before the live file is truncated, so a crash between the two
+    duplicates rather than drops, and helpers/events.py dedupes on
+    (timestamp, seq, kind) for exactly that reason.
+    """
+    try:
+        keep = int(os.environ.get("NETDIAG_KEEP_EVENTS", "5000"))
+    except ValueError:
+        keep = 5000
+    if keep <= 0:
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return
+    # Same hysteresis as prune_history: trimming the moment the cap is
+    # crossed rewrites the file on almost every start for no benefit.
+    if len(lines) <= keep + keep // 10:
+        return
+    head, tail = lines[:-keep], lines[-keep:]
+    archive = (path[:-6] if path.endswith(".jsonl") else path) + "-archive.jsonl"
+    try:
+        with open(archive, "a", encoding="utf-8") as handle:
+            handle.writelines(head)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.writelines(tail)
+    except OSError:
+        return
+
+
 def main() -> None:
     is_wifi = _env("IFACE_TYPE") == "wifi"
     link_up = os.environ.get("NETDIAG_MON_LINK_UP") == "1"
@@ -316,6 +442,8 @@ def main() -> None:
     changes = _changes()
     if changes:
         sample["changes"] = changes
+
+    _journal_append(sample, changes)
 
     json.dump(sample, sys.stdout, separators=(",", ":"), default=str)
     sys.stdout.write("\n")

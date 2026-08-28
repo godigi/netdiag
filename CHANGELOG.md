@@ -6,6 +6,61 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — netdiag remembers what happened [event journal, `--events`]
+
+The first item of Tier 1 from `docs/design/nothing-was-watching.md`, and
+the one that decides whether netdiag is a monitor at all. It could always
+say what was wrong *now*. It could not say what was wrong at 03:14, or for
+how long, and it did not say that it couldn't.
+
+The monitor already computed the answer and threw it away. `_changes()` in
+`helpers/monitor_sample.py` has always diffed each cycle against the last
+— VPN up and down, SSID changes, roams, public-IP changes, every rule
+firing and clearing, each with a user-facing sentence — and every one of
+those was rendered into a sample, used to decide whether to notify, and
+then discarded. Nothing durable recorded a transition.
+
+- **`--monitor --journal PATH`** appends one line per transition. Opt-in,
+  because `--monitor`'s documented contract is a process that writes
+  nothing to disk, and a consumer piping the stream into its own program
+  should keep getting exactly that. A bad path fails at startup with exit
+  3 rather than dropping every event for days.
+- **Two kinds the journal adds to the change set**: `monitor-started`, so
+  a reader can tell "no events because nothing happened" from "no events
+  because nothing was running"; and `gap`, carrying the seconds the
+  monitor was not looking.
+- **`--events[=HOURS]`** reads it back: transitions in the window, faults
+  paired into episodes with durations, and how much of the window was
+  actually observed. `netdiag --events=24` now answers the question the
+  design document opens with.
+- **`--install-recorder`** is a KeepAlive launchd agent running that
+  monitor, so the journal keeps filling across reboots. Separate from the
+  watcher rather than folded into it: the watcher stores a snapshot every
+  fifteen minutes, so any outage shorter than its cadence happens entirely
+  between two clean runs. It refuses TCC-protected paths for the same
+  reason `ND-1` exists.
+- Retention mirrors `baseline.jsonl` — past `NETDIAG_KEEP_EVENTS` the
+  oldest roll into `events-archive.jsonl` rather than being deleted.
+
+**Three honest cases the episode pairing has to survive**, and does: an
+episode still open at the end is measured **to the last event, never to
+now**, because the recorder may have stopped an hour ago and "ongoing for
+four hours" would be inventing observation; a monitor restart closes an
+open episode there with `duration_is_lower_bound`, rather than letting it
+span a period nobody watched; and a `gap` inside an episode is recorded as
+`unobserved_s` rather than absorbed into its duration, because a four-hour
+outage and a four-hour closed lid produce identical silence.
+
+**The reader does not judge.** No uptime verdict, no outage
+classification, no threshold — whether four minutes of downtime is
+acceptable is a verdict, and verdicts fire from `lib/diagnosis.sh` against
+`lib/thresholds.sh`. `AV-1`/`AV-2` are the next piece and are deliberately
+absent here rather than smuggled into a helper.
+
+19 new tests in `tests/test_events.bats`, including that `--monitor`
+without `--journal` still writes nothing under `HOME`.
+
+
 ### Fixed — the app was never decoding `wan`
 
 `RunSnapshot.init(from:)` declared `wan` in `CodingKeys`, declared it as a

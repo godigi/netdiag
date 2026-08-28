@@ -180,6 +180,10 @@ HISTORY_APPEND=1
 WATCH=0
 WATCH_INTERVAL_S=300
 SUMMARY=0
+EVENTS=0
+INSTALL_RECORDER=0
+UNINSTALL_RECORDER=0
+EVENTS_WINDOW_HOURS=24
 SUMMARY_WINDOW_HOURS=24
 # --history emits the whole run store as normalized, network-grouped JSON
 # for a GUI to chart. Distinct from --summary, which prints prose about one
@@ -204,6 +208,9 @@ SHARE_ID=""
 # so the GUI's Settings sliders have something to drive.
 MONITOR=0
 MONITOR_FAST_INTERVAL=10
+# Opt-in path for --monitor's event journal. Empty = write nothing, which
+# is --monitor's documented contract and stays the default. [journal]
+MONITOR_JOURNAL=""
 MONITOR_DEGRADED_INTERVAL=5
 MONITOR_MEDIUM_INTERVAL=60
 MONITOR_SLOW_INTERVAL=300
@@ -242,6 +249,7 @@ while [ "$#" -gt 0 ]; do
   if [ -n "$_take_monitor" ]; then
     case "$_take_monitor" in
       FAST)     MONITOR_FAST_INTERVAL="$1" ;;
+      JOURNAL)  MONITOR_JOURNAL="$1" ;;
       DEGRADED) MONITOR_DEGRADED_INTERVAL="$1" ;;
       MEDIUM)   MONITOR_MEDIUM_INTERVAL="$1" ;;
       SLOW)     MONITOR_SLOW_INTERVAL="$1" ;;
@@ -277,6 +285,10 @@ while [ "$#" -gt 0 ]; do
     --watch)          WATCH=1 ;;
     --watch=*)        WATCH=1; WATCH_INTERVAL_S="${1#--watch=}" ;;
     --summary)        SUMMARY=1 ;;
+    --install-recorder)   INSTALL_RECORDER=1 ;;
+    --uninstall-recorder) UNINSTALL_RECORDER=1 ;;
+    --events)         EVENTS=1 ;;
+    --events=*)       EVENTS=1; EVENTS_WINDOW_HOURS="${1#*=}" ;;
     --summary=*)      SUMMARY=1; SUMMARY_WINDOW_HOURS="${1#--summary=}" ;;
     --history)        HISTORY=1 ;;
     --history=*)      HISTORY=1; HISTORY_LIMIT="${1#--history=}" ;;
@@ -285,6 +297,8 @@ while [ "$#" -gt 0 ]; do
     --share)          SHARE=1 ;;
     --share=*)        SHARE=1; SHARE_ID="${1#--share=}" ;;
     --monitor)        MONITOR=1 ;;
+    --journal)                    _take_monitor=JOURNAL ;;
+    --journal=*)                  MONITOR_JOURNAL="${1#*=}" ;;
     --monitor-fast-interval)      _take_monitor=FAST ;;
     --monitor-fast-interval=*)    MONITOR_FAST_INTERVAL="${1#*=}" ;;
     --monitor-degraded-interval)  _take_monitor=DEGRADED ;;
@@ -425,6 +439,14 @@ Modes (exit after running, don't run the normal check battery):
                            (default 300). Ctrl-C to stop.
   --summary[=HOURS]        print an aggregate over the last HOURS of
                            ~/net-diag/baseline.jsonl (default 24).
+  --events[=HOURS]         emit what CHANGED over the last HOURS as JSON
+                           (default 24): every transition the recorder saw,
+                           faults paired into episodes with durations, and
+                           how much of the window was actually observed.
+                           Reads ~/net-diag/events.jsonl and its archive.
+  --install-recorder       launchd agent running --monitor --journal, so
+                           the journal keeps filling across reboots
+  --uninstall-recorder     remove it (the journal is left in place)
   --history[=N]            emit the whole run store as one normalized JSON
                            object — networks grouped by identity, one
                            compact row per run — for charting. N caps it to
@@ -439,6 +461,7 @@ Modes (exit after running, don't run the normal check battery):
                            sample, until stopped. The machine-readable
                            sibling of --watch (which re-runs --quick and
                            prints prose). Writes no log and no history.
+                             --journal PATH   append transitions to an event journal
                              --monitor-fast-interval SEC      (default 10)
                              --monitor-degraded-interval SEC  (default 5)
                              --monitor-medium-interval SEC    (default 60)
@@ -561,6 +584,22 @@ if [ "$WATCH" -eq 1 ]; then
       exit 3 ;;
   esac
 fi
+if [ "$EVENTS" -eq 1 ]; then
+  # Reading the journal is deliberately *not* judging it. No thresholds are
+  # exported here and helpers/events.py imports none: it pairs episodes and
+  # reports how much of the window was actually observed, and whether four
+  # minutes of downtime is acceptable is a verdict that belongs to a rule.
+  # AV-1/AV-2 are where that will live.
+  case "$EVENTS_WINDOW_HOURS" in
+    ''|*[!0-9]*) printf 'netdiag: --events expects a window in hours (got: %s)\n' "$EVENTS_WINDOW_HOURS" >&2; exit 3 ;;
+  esac
+  python3 "$HELPERS_DIR/events.py" \
+    --journal "$LOG_DIR/events.jsonl" \
+    --hours "$EVENTS_WINDOW_HOURS" \
+    --version "$NETDIAG_VERSION" || exit 3
+  exit 0
+fi
+
 if [ "$SUMMARY" -eq 1 ]; then
   case "$SUMMARY_WINDOW_HOURS" in
     ''|*[!0-9]*|0)
@@ -575,7 +614,8 @@ fi
 _require_python3 || exit 3
 
 # ── Mode dispatch (exit after handling) ────────────────────────────────────
-if [ "$INSTALL_WATCHER" -eq 1 ] || [ "$UNINSTALL_WATCHER" -eq 1 ]; then
+if [ "$INSTALL_WATCHER" -eq 1 ] || [ "$UNINSTALL_WATCHER" -eq 1 ] \
+   || [ "$INSTALL_RECORDER" -eq 1 ] || [ "$UNINSTALL_RECORDER" -eq 1 ]; then
   # watchdog.sh owns the plist path, the label and the TCC-protected-folder
   # test; thresholds.sh owns the interval it writes. Both halves of the
   # feature read the same three facts from the same place — the install
@@ -587,6 +627,8 @@ if [ "$INSTALL_WATCHER" -eq 1 ] || [ "$UNINSTALL_WATCHER" -eq 1 ]; then
   . "$LIB_DIR/watchdog.sh"
   # shellcheck source=lib/launchd.sh
   . "$LIB_DIR/launchd.sh"
+  [ "$INSTALL_RECORDER" -eq 1 ] && install_recorder_run
+  [ "$UNINSTALL_RECORDER" -eq 1 ] && uninstall_recorder_run
   [ "$INSTALL_WATCHER" -eq 1 ] && install_watcher_run
   uninstall_watcher_run
 fi
@@ -737,6 +779,24 @@ if [ "$MONITOR" -eq 1 ]; then
   # The monitor writes only to stdout: no log file, no baseline append,
   # nothing under ~/net-diag. It is a read-only observer, and a process
   # that runs for days must not accumulate anything.
+  #
+  # --journal is the one exception, and it is opt-in for exactly that
+  # reason: a consumer piping this stream into its own program still gets
+  # a process that touches no disk. The recorder agent passes the flag;
+  # an ad-hoc `netdiag --monitor` does not. The directory is created here
+  # rather than on first write, so a bad path fails at startup with a
+  # usage error instead of silently dropping every event for days.
+  if [ -n "$MONITOR_JOURNAL" ]; then
+    if ! mkdir -p "$(dirname "$MONITOR_JOURNAL")" 2>/dev/null; then
+      printf 'netdiag: cannot create the directory for the journal at %s\n' "$MONITOR_JOURNAL" >&2
+      exit 3
+    fi
+    if ! : >> "$MONITOR_JOURNAL" 2>/dev/null; then
+      printf 'netdiag: cannot write the journal at %s\n' "$MONITOR_JOURNAL" >&2
+      exit 3
+    fi
+    export NETDIAG_MON_JOURNAL="$MONITOR_JOURNAL"
+  fi
   LOG=/dev/null
   # shellcheck source=lib/thresholds.sh
   . "$LIB_DIR/thresholds.sh"

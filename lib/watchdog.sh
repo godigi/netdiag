@@ -31,6 +31,12 @@
 # shellcheck disable=SC2034
 
 WATCHER_LABEL="com.netdiag.watcher"
+# The recorder is a second, different agent: the watcher runs a whole
+# --quick scan every fifteen minutes and stores a run; the recorder runs
+# one long-lived --monitor and appends transitions. They answer different
+# questions and neither replaces the other, so they get separate labels
+# rather than one plist with two moods.
+RECORDER_LABEL="com.netdiag.recorder"
 
 # The one place either half of the feature names the plist. lib/launchd.sh
 # writes it, watchdog_run reads it, and a mismatch would mean netdiag
@@ -38,6 +44,10 @@ WATCHER_LABEL="com.netdiag.watcher"
 # itself.
 watchdog_plist_path() {
   printf '%s/Library/LaunchAgents/%s.plist' "$HOME" "$WATCHER_LABEL"
+}
+
+watchdog_recorder_plist_path() {
+  printf '%s/Library/LaunchAgents/%s.plist' "$HOME" "$RECORDER_LABEL"
 }
 
 watchdog_heartbeat_path() {
