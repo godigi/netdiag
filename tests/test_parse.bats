@@ -23,6 +23,8 @@ setup() {
   . "$REPO/lib/mtr.sh"
   # shellcheck source=../lib/wan.sh
   . "$REPO/lib/wan.sh"
+  # shellcheck source=../lib/headline.sh
+  . "$REPO/lib/headline.sh"
 }
 
 # ── N1: no network at all must not report "healthy" ──────────────────────
@@ -155,6 +157,87 @@ kod_init_kod_db(): Cannot open KoD db file /var/db/ntp-kod
 @test "grade_bufferbloat: +500ms → F" {
   result="$(grade_bufferbloat 500)"
   [ "$result" = "F" ]
+}
+
+# ── bufferbloat_card_verdict (Report card vs. B1/B2) ─────────────────────
+#
+# The Report card and the diagnosis rules grade the same two numbers, and
+# the card used to disagree with them: `*C*` was matched before `*D*|*F*`,
+# so a C/F pair printed a yellow "noticeable lag under load" directly above
+# B2's red "enough to ruin voice/video calls". These hold the two to one
+# table.
+
+@test "bufferbloat card: a D or F on either leg is severe, even beside a C" {
+  # The four pairs the old ordering got wrong, and the reason this function
+  # exists. Each one has a critical-grade leg, so each must read as severe.
+  for pair in CD DC CF FC; do
+    result="$(bufferbloat_card_verdict "${pair:0:1}" "${pair:1:1}")"
+    [ "${result%%|*}" = "bad" ] || {
+      echo "grade pair $pair gave '${result%%|*}', expected bad"
+      return 1
+    }
+  done
+}
+
+@test "bufferbloat card: clean pairs stay clean" {
+  for pair in AA AB BA BB; do
+    result="$(bufferbloat_card_verdict "${pair:0:1}" "${pair:1:1}")"
+    [ "${result%%|*}" = "ok" ] || {
+      echo "grade pair $pair gave '${result%%|*}', expected ok"
+      return 1
+    }
+  done
+}
+
+@test "bufferbloat card: a C with nothing worse is a warning" {
+  for pair in AC CA BC CB CC; do
+    result="$(bufferbloat_card_verdict "${pair:0:1}" "${pair:1:1}")"
+    [ "${result%%|*}" = "warn" ] || {
+      echo "grade pair $pair gave '${result%%|*}', expected warn"
+      return 1
+    }
+  done
+}
+
+@test "bufferbloat card severity matches B1/B2 for every grade pair" {
+  # The real invariant, stated independently of the implementation: B1 and
+  # B2 in lib/diagnosis.sh grade each leg on its own (C is warn, D and F are
+  # critical) and the worst one owns the verdict. Derive that expectation
+  # per leg here and compare, so the card cannot drift from the rules
+  # without this failing — for all 25 pairs, not just the four that broke.
+  _leg_severity() {
+    case "$1" in
+      A|B) echo ok ;;
+      C)   echo warn ;;
+      D|F) echo bad ;;
+    esac
+  }
+  _rank() {
+    case "$1" in ok) echo 0 ;; warn) echo 1 ;; bad) echo 2 ;; esac
+  }
+  for gw in A B C D F; do
+    for inet in A B C D F; do
+      gw_sev="$(_leg_severity "$gw")"
+      inet_sev="$(_leg_severity "$inet")"
+      if [ "$(_rank "$gw_sev")" -ge "$(_rank "$inet_sev")" ]; then
+        expected="$gw_sev"
+      else
+        expected="$inet_sev"
+      fi
+      actual="$(bufferbloat_card_verdict "$gw" "$inet")"
+      [ "${actual%%|*}" = "$expected" ] || {
+        echo "grade $gw/$inet: card said '${actual%%|*}', B1/B2 imply '$expected'"
+        return 1
+      }
+    done
+  done
+}
+
+@test "bufferbloat card: an ungraded pair is not silently healthy" {
+  # A pair grade_bufferbloat can never produce must not fall through to the
+  # green arm and paint an all-clear over a link nobody graded.
+  result="$(bufferbloat_card_verdict "" "")"
+  [ "${result%%|*}" != "ok" ]
 }
 
 # ── traceroute parser ────────────────────────────────────────────────────

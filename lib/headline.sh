@@ -10,6 +10,38 @@
 # Hdr() flips DIAGNOSIS_REACHED on "Report" so all the say() calls below
 # print even in default mode (where section bodies are suppressed).
 
+# The Bufferbloat row's severity and wording, from the two Waveform grades
+# ($1 = gateway leg, $2 = ISP leg). Echoes "sev|description".
+#
+# Pure, and a named function rather than an inline `case`, for the same
+# reason StageResolver is a pure function on the GUI side: this is a mapping
+# that must agree with a *second* engine, and the only way to hold two
+# engines to one table is to be able to run the table.
+#
+# The engine it must agree with is B1/B2 in lib/diagnosis.sh, which grade
+# each leg separately and let the worst one own the verdict: C is warn, D
+# and F are critical. So the worst grade wins here too, which means D and F
+# are matched BEFORE C.
+#
+# That order is the whole bug this function was extracted for. `case` takes
+# the first arm that matches, and with `*C*` written first the pair "C/F"
+# matched it and stopped — a grade F link was described as "noticeable lag
+# under load" in a yellow row, directly above B2's own red diagnosis calling
+# the same link critical and "enough to ruin voice/video calls and
+# multiplayer games". Two severities for one fact, one screen apart. Every
+# C-plus-D/F pair was affected: CD, DC, CF and FC.
+bufferbloat_card_verdict() {
+  case "${1}${2}" in
+    AA|AB|BA|BB) printf 'ok|clean under load\n' ;;
+    *D*|*F*)     printf 'bad|severe lag under load\n' ;;
+    *C*)         printf 'warn|noticeable lag under load\n' ;;
+    # No grade pair reaches here today — grade_bufferbloat only ever
+    # returns A-F — but an unrecognised pair must not silently inherit
+    # "ok" and paint a green row over a link nobody graded.
+    *)           printf '|not graded\n' ;;
+  esac
+}
+
 headline_run() {
   # --quiet wants only the diagnoses themselves — skip the Report card.
   [ "$QUIET" -eq 0 ] || return 0
@@ -220,12 +252,10 @@ headline_run() {
 
   # ── Bufferbloat ──────────────────────────────────────────────────────
   if [ -n "$BUFFERBLOAT_GW_GRADE" ] && [ -n "$BUFFERBLOAT_INET_GRADE" ]; then
-    local bb_sev=ok bb_descr=""
-    case "${BUFFERBLOAT_GW_GRADE}${BUFFERBLOAT_INET_GRADE}" in
-      AA|AB|BA|BB) bb_sev=ok;   bb_descr="clean under load" ;;
-      *C*)         bb_sev=warn; bb_descr="noticeable lag under load" ;;
-      *D*|*F*)     bb_sev=bad;  bb_descr="severe lag under load" ;;
-    esac
+    local bb_verdict bb_sev bb_descr
+    bb_verdict="$(bufferbloat_card_verdict "$BUFFERBLOAT_GW_GRADE" "$BUFFERBLOAT_INET_GRADE")"
+    bb_sev="${bb_verdict%%|*}"
+    bb_descr="${bb_verdict#*|}"
     _row "$bb_sev" "Bufferbloat" "grade ${BUFFERBLOAT_GW_GRADE}/${BUFFERBLOAT_INET_GRADE} · $bb_descr"
   elif [ "$NO_BUFFERBLOAT" -eq 1 ] || [ "$QUICK" -eq 1 ]; then
     _row "" "Bufferbloat" "skipped (--quick / --no-bufferbloat)"
