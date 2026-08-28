@@ -36,10 +36,27 @@ struct RulesCatalog: Decodable, Sendable {
         let id: String
         var title: String?
         var category: String?
+        /// The optional second measurement family this rule is about,
+        /// added in catalog schema `3`. `nil` for the great majority of
+        /// rules, and for every rule against a CLI too old to emit it.
+        ///
+        /// See `helpers/rules_catalog.py`'s note at `CATEGORIES`: a
+        /// category names the measurement a rule *judges*, not its
+        /// suspected cause, and a handful of rules genuinely judge two.
+        /// `G1` is the reason this exists — it reports gateway loss
+        /// (`router`) and blames the radio for it (`wifi`), and filing it
+        /// under the cause alone left a green dot beside "35% loss".
+        var also: String?
         var severity: String?
         var scope: String?
         var blurb: String?
         var doc: String?
+
+        /// Every family this rule is about, primary first. The one thing
+        /// a consumer deciding "does this rule concern my row?" should
+        /// ask — reading `category` alone silently drops the secondary,
+        /// which is the bug `also` was added to fix.
+        var categories: [String] { [category, also].compactMap { $0 } }
     }
 
     /// One entry from `metrics` — a jargon term the report card shows,
@@ -83,6 +100,7 @@ extension RulesCatalog {
         rules = raw.compactMap { entry in
             guard let id = entry.id, !id.isEmpty else { return nil }
             return Rule(id: id, title: entry.title, category: entry.category,
+                        also: entry.also,
                         severity: entry.severity, scope: entry.scope,
                         blurb: entry.blurb, doc: entry.doc)
         }
@@ -109,18 +127,25 @@ extension RulesCatalog {
         var id: String?
         var title: String?
         var category: String?
+        var also: String?
         var severity: String?
         var scope: String?
         var blurb: String?
         var doc: String?
 
-        enum CodingKeys: String, CodingKey { case id, title, category, severity, scope, blurb, doc }
+        enum CodingKeys: String, CodingKey {
+            case id, title, category, also, severity, scope, blurb, doc
+        }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             id = c.lenient(.id)
             title = c.lenient(.title)
             category = c.lenient(.category)
+            // Absent on every rule but the few that need it, and on every
+            // rule at all against a pre-schema-3 CLI. `lenient` already
+            // yields nil for a missing key, so no version branch is needed.
+            also = c.lenient(.also)
             severity = c.lenient(.severity)
             scope = c.lenient(.scope)
             blurb = c.lenient(.blurb)

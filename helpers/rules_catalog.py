@@ -46,8 +46,9 @@ same question `rules` does ("what does this word on screen mean?") for the
 same consumer (a `questionmark.circle` hint in `RunReportView`), and a
 second CLI mode would just be a second round trip and a second cache file
 for something this small. `SCHEMA_RULES_CATALOG` bumped 1 → 2 for the
-addition — additive only, per this schema's own promise in
-docs/JSON-SCHEMA.md, so a build that only reads `rules` keeps working
+addition, and 2 → 3 for the optional per-rule `also` category — both
+additive only, per this schema's own promise in docs/JSON-SCHEMA.md, so a
+build that reads only `rules`, or only `category`, keeps working
 unchanged.
 
 Like `blurb`, `help` stays qualitative: no dBm, no ms, no percent. A
@@ -63,7 +64,8 @@ import sys
 
 # This file's own schema: the shape of the --rules-catalog document.
 # v1 → v2: added the sibling `metrics` glossary array.
-SCHEMA_RULES_CATALOG = 2
+# v2 → v3: added the optional per-rule `also` category (see CATEGORIES).
+SCHEMA_RULES_CATALOG = 3
 
 # The measurement family each rule judges — the GUI tints a report-card
 # row by this, not by severity, so a "varies"-severity rule like B1 still
@@ -72,8 +74,27 @@ CATEGORIES = frozenset({
     "router", "internet", "dns", "wifi", "load", "mtu", "speed", "clock",
     "ipv6", "vpn", "lan", "dhcp", "topology", "baseline",
 })
-# "speed" is used by zero rules today: it is reserved for ST-1 (speed
-# regression), which docs/DIAGNOSIS-RULES.md lists but nothing emits yet.
+
+# `category` names the measurement a rule is ABOUT — the row whose number
+# the rule is passing judgement on. It does not name the suspected cause.
+#
+# That distinction is not pedantry; getting it backwards is what produced
+# a green dot beside "35% loss". G1 ("gateway packet loss with weak
+# Wi-Fi") was filed under `wifi` because the Wi-Fi signal is its *cause*,
+# so the Router row — the row carrying the 35% — was left untinted while
+# the red mark landed on a Wi-Fi row that had no number in it at all.
+#
+# A handful of rules genuinely are about two measurements at once, and
+# for those `also` names the second one. Both rows tint. `category` stays
+# the primary — the number the rule is chiefly judging — so a consumer
+# that only reads `category` (any build predating this field) keeps the
+# behaviour it had, which is why this is additive rather than a change of
+# `category` to a list.
+#
+# One secondary, not a list: no rule today is about three measurements,
+# and a list invites the temptation to tag a rule with everything it
+# vaguely touches, which puts the tint back everywhere and means nothing.
+# If a third is ever genuinely needed, widen it then.
 
 # "varies" covers the handful of rules that grade by magnitude — the same
 # add_diag call site chooses warn or critical depending on how far past
@@ -187,7 +208,15 @@ RULES: list[dict[str, str]] = [
     {
         "id": "G1",
         "title": "Gateway packet loss with weak Wi-Fi",
-        "category": "wifi",
+        # Router first: G1 and G2 report the identical measurement — the
+        # share of packets lost between the Mac and the gateway — and
+        # differ only in whether a weak signal was there to explain it.
+        # G2 is `router`, so G1 must be too, or the same finding tints a
+        # different row depending on how well it could be explained.
+        # `wifi` stays as the secondary because the radio is the named
+        # cause and the Wi-Fi row should say so.
+        "category": "router",
+        "also": "wifi",
         "severity": "critical",
         "scope": "both",
         "blurb": (
@@ -982,6 +1011,9 @@ METRICS: list[dict[str, str]] = [
 
 
 _FIELDS = frozenset({"id", "title", "category", "severity", "scope", "blurb", "doc"})
+# Optional, and the only optional field a rule has. See `also`'s note at
+# CATEGORIES for what it means and why exactly one is enough.
+_OPTIONAL_FIELDS = frozenset({"also"})
 _METRIC_FIELDS = frozenset({"key", "label", "help"})
 
 
@@ -995,10 +1027,17 @@ def _validate(rules: list[dict[str, str]]) -> None:
     """
     seen_ids: set[str] = set()
     for r in rules:
-        assert set(r) == _FIELDS, f"entry has the wrong field set: {r}"
+        assert set(r) - _OPTIONAL_FIELDS == _FIELDS, (
+            f"entry has the wrong field set: {r}"
+        )
         for k, v in r.items():
             assert isinstance(v, str) and v.strip(), f"{r.get('id')}.{k} is empty"
         assert r["category"] in CATEGORIES, f"{r['id']}: bad category {r['category']!r}"
+        if "also" in r:
+            assert r["also"] in CATEGORIES, f"{r['id']}: bad also {r['also']!r}"
+            assert r["also"] != r["category"], (
+                f"{r['id']}: `also` repeats `category` ({r['also']!r})"
+            )
         assert r["severity"] in SEVERITIES, f"{r['id']}: bad severity {r['severity']!r}"
         assert r["scope"] in SCOPES, f"{r['id']}: bad scope {r['scope']!r}"
         assert r["id"] not in seen_ids, f"duplicate rule id: {r['id']}"

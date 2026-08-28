@@ -118,6 +118,16 @@ struct HomeView: View {
                     Text("Wi-Fi").foregroundStyle(.secondary)
                 }
                 Spacer()
+                // "now", explicitly. The report card below carries its own
+                // Wi-Fi signal row, and that one reports what the *check*
+                // recorded — which stays blank without sudo. Unlabelled,
+                // the two read as the app contradicting itself about a
+                // number one of them is visibly showing; labelled, they
+                // read as what they are, a live radio reading and a
+                // recorded one.
+                Text("now")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 Text(cell.value)
                     .fontWeight(.medium)
                     .foregroundStyle(.primary)
@@ -205,6 +215,15 @@ struct HomeView: View {
         }
     }
 
+    /// Whether the machine is on Wi-Fi *as far as this app has been told*.
+    ///
+    /// The fallback is `false`, not `true`. Both are wrong sometimes — the
+    /// question genuinely has no answer before the first sample lands — but
+    /// they are wrong in different directions, and only one of them puts an
+    /// orange "Wi-Fi network name & radio diagnostics are restricted"
+    /// banner on a desktop that has never had a Wi-Fi card. Guessing "not
+    /// Wi-Fi" costs at most one cycle of a banner appearing slightly late;
+    /// guessing "Wi-Fi" invents a problem the user cannot act on.
     private var isConnectedToWiFi: Bool {
         if let isWiFi = coordinator.monitor.latest?.link.isWiFi {
             return isWiFi
@@ -212,7 +231,7 @@ struct HomeView: View {
         if let run = coordinator.latestRun {
             return run.snapshot.wifi != nil
         }
-        return true
+        return false
     }
 
     // MARK: - Header

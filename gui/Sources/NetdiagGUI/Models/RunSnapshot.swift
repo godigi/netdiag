@@ -43,6 +43,7 @@ struct RunSnapshot: Decodable, Sendable {
     var bufferbloat: Bufferbloat = .init()
     var mtu: MTU = .init()
     var ipv6: IPv6 = .init()
+    var wan: WAN = .init()
     var vpn: MonitorSample.VPN = .init()
     var tcpReach: [TCPReach] = []
     var wifiScan: WiFiScan?
@@ -59,7 +60,7 @@ struct RunSnapshot: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case version, timestamp, network, wifi, gateway, dns, traceroute
-        case bufferbloat, mtu, ipv6, vpn, speedtest, ntp, dhcp, mtr, timings
+        case bufferbloat, mtu, ipv6, wan, vpn, speedtest, ntp, dhcp, mtr, timings
         case suitability, diagnosis
         case runMode = "run_mode"
         case runID = "run_id"
@@ -201,13 +202,56 @@ struct RunSnapshot: Decodable, Sendable {
         var pingLossPct: Double?
         var aaaaOk: Bool = false
         var tcpV6Ok: Bool = false
+        /// This network carries IPv6 and has no IPv4 at all, by design
+        /// rather than as a fault — see `lib/ipv6.sh`'s `ipv6_is_v6_only`
+        /// and rule V6-3. Load-bearing for the report card: without it an
+        /// absent IPv4 gateway reads as a total outage on a network that
+        /// is working exactly as intended.
+        var only: Bool = false
+        /// macOS synthesised a 464XLAT address so IPv4-only apps keep
+        /// working on that network.
+        var clat: Bool = false
 
         enum CodingKeys: String, CodingKey {
-            case available
+            case available, only, clat
             case globalAddr = "global_addr"
             case pingLossPct = "ping_loss_pct"
             case aaaaOk = "aaaa_ok"
             case tcpV6Ok = "tcp_v6_ok"
+        }
+    }
+
+    /// The `wan` block: what sits between this network and the public
+    /// internet. Only the fields the report card's NAT topology row reads
+    /// are modelled — the rest of the block reaches the expert panel as
+    /// raw JSON, which is where the full detail belongs.
+    struct WAN: Decodable, Sendable {
+        var doubleNat: DoubleNAT = .init()
+        var upnp: UPnP = .init()
+
+        enum CodingKeys: String, CodingKey {
+            case upnp
+            case doubleNat = "double_nat"
+        }
+
+        struct DoubleNAT: Decodable, Sendable {
+            var detected: Bool = false
+            /// Home-side routers only. ISP-side private transit is normal
+            /// carrier routing and deliberately does not count here — see
+            /// `lib/wan.sh` and the NAT-1b rule.
+            var homeCount: Int = 0
+            var ispTransitCount: Int = 0
+
+            enum CodingKeys: String, CodingKey {
+                case detected
+                case homeCount = "home_count"
+                case ispTransitCount = "isp_transit_count"
+            }
+        }
+
+        struct UPnP: Decodable, Sendable {
+            /// "enabled" | "disabled" | "unknown".
+            var state: String = "unknown"
         }
     }
 

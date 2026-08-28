@@ -61,12 +61,15 @@ assert d['version'] == sys.argv[1], d['version']
 " "$VERSION"
 }
 
-@test "schema is 2" {
+@test "schema is 3" {
+  # 1 -> 2 added the `metrics` glossary; 2 -> 3 added the optional
+  # per-rule `also` category. Both additive, per this schema's own
+  # promise in docs/JSON-SCHEMA.md.
   run "$NETDIAG" --rules-catalog
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, sys
-assert json.load(sys.stdin)['schema'] == 2
+assert json.load(sys.stdin)['schema'] == 3
 "
 }
 
@@ -125,15 +128,20 @@ assert not bad, bad
 
 # ── Every entry: complete, well-typed, closed-set fields ────────────────
 
-@test "every entry has all 7 fields, non-empty" {
+@test "every entry has all 7 required fields, non-empty" {
+  # `also` is the one optional field (schema 3) and is checked separately
+  # below. Everything else stays mandatory: this test is what stops a rule
+  # shipping with a blank blurb the GUI would render as an empty chip.
   run "$NETDIAG" --rules-catalog
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-fields = {'id', 'title', 'category', 'severity', 'scope', 'blurb', 'doc'}
+required = {'id', 'title', 'category', 'severity', 'scope', 'blurb', 'doc'}
+optional = {'also'}
 for r in d['rules']:
-    assert set(r.keys()) == fields, (r.get('id'), sorted(r.keys()))
+    keys = set(r.keys())
+    assert keys - optional == required, (r.get('id'), sorted(keys))
     for k, v in r.items():
         assert isinstance(v, str) and v.strip(), (r.get('id'), k, v)
 "
@@ -367,4 +375,102 @@ assert 'UP-1' not in ids
 @test "an unrelated unknown flag still exits 3, not 0 or 2" {
   run "$NETDIAG" --this-flag-does-not-exist
   [ "$status" -eq 3 ]
+}
+
+# ── Category → report-card row coverage ──────────────────────────────────
+#
+# THE OTHER LOAD-BEARING TEST. The GUI tints a report-card row by the
+# category of the rules that fired, so a category no row claims colours
+# nothing at all — and the failure is silent in the worst possible way: an
+# all-green card sitting directly above its own amber findings. That is
+# exactly what `ipv6`, `topology`, `vpn` and `speed` did before the row
+# table was completed.
+#
+# This spans two languages, so it lives here rather than in the Swift
+# `--verify` harness: the categories are defined in Python and consumed in
+# Swift, and only a test that reads both can hold them together. Same
+# shape as test_thresholds.bats grepping Python for inline cutoffs.
+
+@test "every rule category has a report-card row that claims it" {
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, re, sys
+d = json.load(sys.stdin)
+
+used = set()
+for r in d['rules']:
+    used.add(r['category'])
+    if r.get('also'):
+        used.add(r['also'])
+
+src = open('$REPO/gui/Sources/NetdiagGUI/Views/RunReportView.swift').read()
+block = re.search(
+    r'static let rowCategories: \[String: Set<String>\] = \[(.*?)\n    \]',
+    src, re.S)
+assert block, 'rowCategories table not found in RunReportView.swift'
+claimed = set()
+for line in block.group(1).splitlines():
+    m = re.match(r'\s*\"[^\"]+\":\s*\[(.*)\],\s*\$', line)
+    if m:
+        claimed.update(re.findall(r'\"([^\"]+)\"', m.group(1)))
+assert claimed, 'parsed no categories out of rowCategories'
+
+orphans = used - claimed
+assert not orphans, f'categories no report-card row claims: {sorted(orphans)}'
+"
+}
+
+@test "the row-coverage guard would actually catch an unclaimed category" {
+  # The guard above is only worth having if it fails when it should, so
+  # prove it against a category deliberately absent from the table.
+  run python3 -c "
+import re
+src = open('$REPO/gui/Sources/NetdiagGUI/Views/RunReportView.swift').read()
+block = re.search(
+    r'static let rowCategories: \[String: Set<String>\] = \[(.*?)\n    \]',
+    src, re.S)
+claimed = set()
+for line in block.group(1).splitlines():
+    m = re.match(r'\s*\"[^\"]+\":\s*\[(.*)\],\s*\$', line)
+    if m:
+        claimed.update(re.findall(r'\"([^\"]+)\"', m.group(1)))
+assert 'a-category-no-row-claims' not in claimed
+raise SystemExit(0 if ({'a-category-no-row-claims'} - claimed) else 1)
+"
+  [ "$status" -eq 0 ]
+}
+
+@test "G1 is judged as a router rule, with wifi as its secondary" {
+  # The regression this whole field exists for. G1 and G2 report the same
+  # measurement — packets lost between the Mac and the gateway — so they
+  # must tint the same row. Filed under 'wifi' alone, G1 left the Router
+  # row green beside the words '35% loss' and reddened a Wi-Fi row that
+  # had no number in it.
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+rules = {r['id']: r for r in json.load(sys.stdin)['rules']}
+assert rules['G1']['category'] == 'router', rules['G1']['category']
+assert rules['G1'].get('also') == 'wifi', rules['G1'].get('also')
+assert rules['G1']['category'] == rules['G2']['category'], 'G1 and G2 must share a primary'
+"
+}
+
+@test "an 'also' category is a real category and never repeats the primary" {
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+primaries = {r['category'] for r in d['rules']}
+for r in d['rules']:
+    also = r.get('also')
+    if also is None:
+        continue
+    assert isinstance(also, str) and also.strip(), r['id']
+    assert also != r['category'], f\"{r['id']}: also repeats category\"
+    assert also in primaries, f\"{r['id']}: {also!r} is not a known category\"
+"
 }

@@ -960,13 +960,14 @@ today's fields keeps working against tomorrow's catalog.
 
 ```jsonc
 {
-  "schema": 2,
+  "schema": 3,
   "version": "0.9.0",
   "rules": [
     {
       "id": "G2",
       "title": "Router dropping packets",
       "category": "router",
+      // "also": "wifi"   — optional; present on G1 only, today
       "severity": "critical",
       "scope": "both",
       "blurb": "Packets are being dropped between your Mac and your router even though the WiFi signal is strong, which points at the router itself rather than the wireless link. A reboot (power off, wait, then power back on) clears this in most cases.",
@@ -1000,6 +1001,26 @@ today's fields keeps working against tomorrow's catalog.
   `vpn`, `lan`, `dhcp`, `topology`, `baseline`), for tinting a
   report-card row — deliberately not the same axis as `severity`, so a
   `varies`-severity rule like `B1` still has one fixed row to live on.
+
+  It names the measurement the rule **judges**, never the cause it
+  blames. The distinction is load-bearing: `G1` reports gateway packet
+  loss and attributes it to a weak radio, and filing it under the cause
+  put a green "all clear" dot beside the words "35% loss" while the red
+  mark landed on a Wi-Fi row with no number in it.
+- **`also`** *(optional, added in `schema` 3)* is a second category for
+  the handful of rules that genuinely judge two measurements at once.
+  Absent on almost every rule, and absent entirely from a catalog emitted
+  by an older netdiag. `G1` is the only rule carrying one today
+  (`"category": "router"`, `"also": "wifi"`) — the loss is the router
+  row's number and the radio is the Wi-Fi row's, and both should say so.
+
+  A consumer that reads only `category` keeps its previous behaviour,
+  which is why this is an added field rather than `category` becoming a
+  list. A consumer deciding "does this rule concern my row?" should test
+  membership against both. `also` is always a category from the list
+  above and never repeats `category`; both invariants are asserted by
+  `tests/test_rules_catalog.bats`, which also fails the build if any
+  category has no report-card row claiming it.
 - **`severity`** is `info` / `warn` / `critical` for a rule that always
   fires at one severity, or `varies` for the handful that grade by
   magnitude within a single `add_diag` call site (`B1`, `B2`, `M1`,

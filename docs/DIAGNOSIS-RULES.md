@@ -119,6 +119,17 @@ runs stop filing under the synthetic "unknown" network.
   the wider internet" — see the rationale under G3, which explains why
   G1/G2/G3 all spell this out in plain words rather than assuming the
   reader knows a router isn't the internet.
+- Catalog: `"category": "router"`, `"also": "wifi"` — the only rule with a
+  secondary category. G1 measures exactly what G2 measures (packets lost
+  between the Mac and the gateway) and differs only in having a weak
+  signal available to explain it, so it must tint the same row G2 does.
+  It was catalogued under `wifi` alone until v0.13.0, on the reasoning
+  that the radio is the cause — which left the Router row showing a green
+  all-clear dot beside the words "35% loss" while the red mark went to a
+  Wi-Fi row that, on an unprivileged run, had no number in it at all. A
+  category names the measurement a rule judges, not the cause it blames;
+  `also` is how a rule that genuinely judges two says so. See
+  `docs/JSON-SCHEMA.md`'s `--rules-catalog` section.
 
 ### G2 — Gateway loss with healthy WiFi
 
