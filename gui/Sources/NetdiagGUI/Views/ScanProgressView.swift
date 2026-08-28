@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The phase list that replaced the spinner.
+/// The phase list that replaced the spinner, now topped with a determinate
+/// bar.
 ///
 /// Every row states one of three facts about a *check*: it ran, it was
 /// skipped, or it did not complete. None of them is a fact about the
@@ -8,12 +9,21 @@ import SwiftUI
 /// judgement is `lib/diagnosis.sh`'s, it arrives in `diagnosis[].summary`,
 /// and a progress list that pre-empted it with a red row would be the app
 /// diagnosing on its own.
+///
+/// The bar above the grid is `Support/PhaseWeights.swift`'s fraction, not a
+/// second opinion computed here — this view's job is to draw the number,
+/// never to invent one. The "N of M · phase · mode" line stays exactly as
+/// it was: the bar complements that count, it does not replace it, because
+/// the count is still the honest answer to "how many checks are left" even
+/// when the bar's answer to "how much longer" is a guess this build has not
+/// yet earned (see `overallBar`).
 struct ScanProgressView: View {
     var progress: ScanProgress
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if progress.hasPlan {
+                overallBar
                 summary
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 10)],
                           alignment: .leading, spacing: 4) {
@@ -33,11 +43,47 @@ struct ScanProgressView: View {
         }
     }
 
+    /// The determinate bar. Its fraction comes from `PhaseWeights`, weighted
+    /// by durations measured on *this* machine on *this* mode; the ETA
+    /// underneath is shown only once that history exists at all —
+    /// `snapshot.isLearned` — because an ETA built from equal-weight guesses
+    /// on a fresh install would claim precision the app does not have.
+    private var overallBar: some View {
+        let snapshot = progress.weights.progress(
+            mode: progress.mode ?? "",
+            phases: progress.phases,
+            speedProgress: progress.speed?.progress,
+            bufferbloatProgress: progress.bufferbloat?.progress)
+        return VStack(alignment: .leading, spacing: 2) {
+            ProgressView(value: snapshot.fraction)
+            if let eta = etaText(snapshot) {
+                Text(eta).font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    /// `nil` before any history exists for this mode — the "unlearned"
+    /// state the bar shows without a time. Once learned, a countdown that
+    /// has run down to (or below, from rounding) a couple of seconds reads
+    /// as "finishing up" rather than as "0s left", which would look like a
+    /// stalled or backwards-running clock on a phase that has not actually
+    /// finished.
+    private func etaText(_ snapshot: PhaseWeights.Progress) -> String? {
+        guard snapshot.isLearned else { return nil }
+        guard let remaining = snapshot.remainingSeconds, remaining > 2 else {
+            return "Finishing up…"
+        }
+        return "About \(Self.formatted(seconds: remaining)) left"
+    }
+
     private var summary: some View {
         HStack(spacing: 6) {
-            // A count of a declared list, not a percentage: --json emits
-            // nothing until the end, so there is no total duration to be a
-            // fraction of.
+            // A count of a declared list, kept beside the bar rather than
+            // replaced by it. The two answer different questions — how
+            // many checks are left, and how much longer — and only the
+            // first is exact. On a fresh install it is also the only one
+            // the app can answer at all, since the bar has no learned
+            // durations to weight itself by yet.
             Text("\(progress.resolvedCount) of \(progress.plannedCount)")
                 .monospacedDigit()
             if let running = progress.runningPhase {
@@ -133,9 +179,24 @@ struct ScanProgressView: View {
     static func formatted(ms: Int) -> String {
         ms >= 1000 ? String(format: "%.1fs", Double(ms) / 1000) : "\(ms)ms"
     }
+
+    /// A rounded, human-scale "about how long" — "45s", "1m 20s", "2m" —
+    /// never sub-second precision an estimate this coarse cannot back up.
+    static func formatted(seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        guard total >= 60 else { return "\(total)s" }
+        let minutes = total / 60
+        let secs = total % 60
+        return secs == 0 ? "\(minutes)m" : "\(minutes)m \(secs)s"
+    }
 }
 
-/// The one-line form, for the dropdown. Same model, no room for a grid.
+/// The one-line form, for the dropdown. Same model, no room for a grid or a
+/// bar — so the one-line equivalent of `overallBar` is text, appended to the
+/// count rather than replacing it, and only once it is learned. The speed
+/// line is left alone: it already shows live throughput and a stage name,
+/// and a third clause there would crowd the one line that is busiest at
+/// exactly the point in a run where crowding it is worst.
 struct ScanProgressLine: View {
     var progress: ScanProgress
 
@@ -143,12 +204,33 @@ struct ScanProgressLine: View {
         if let speed = progress.speed {
             Text(speedLabel(speed))
         } else if progress.hasPlan {
-            Text("\(progress.resolvedCount) of \(progress.plannedCount)"
-                 + (progress.runningPhase.map { " · \($0.label.lowercased())" } ?? ""))
-                .monospacedDigit()
+            Text(countLabel).monospacedDigit()
         } else {
             Text("Working…")
         }
+    }
+
+    private var countLabel: String {
+        var text = "\(progress.resolvedCount) of \(progress.plannedCount)"
+        if let running = progress.runningPhase {
+            text += " · \(running.label.lowercased())"
+        }
+        if let eta = etaSuffix {
+            text += " · \(eta)"
+        }
+        return text
+    }
+
+    private var etaSuffix: String? {
+        let snapshot = progress.weights.progress(
+            mode: progress.mode ?? "",
+            phases: progress.phases,
+            speedProgress: progress.speed?.progress,
+            bufferbloatProgress: progress.bufferbloat?.progress)
+        guard snapshot.isLearned, let remaining = snapshot.remainingSeconds, remaining > 2 else {
+            return nil
+        }
+        return "\(ScanProgressView.formatted(seconds: remaining)) left"
     }
 
     private func speedLabel(_ speed: ScanProgress.Speed) -> String {

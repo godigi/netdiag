@@ -67,16 +67,41 @@ from typing import Any
 # from THRESH_SPEED_DROP_FACTOR in lib/thresholds.sh, read once in main()
 # and passed into evaluate(), not from this table — the same "exactly one
 # home for a cutoff" rule every other threshold in this project follows.
+#
+# Four "spike" rows also carry an absolute floor, keyed by this table's
+# `path` and looked up from the FLOORS dict main() builds out of
+# lib/thresholds.sh — same reasoning as the speed factor: a floor decides
+# whether a number is bad, so it isn't a literal here either. A spike only
+# fires once the *current* value clears its floor as well as the ratio
+# test, which is what stops a bufferbloat delta of 0.1 ms going to 0.7 ms
+# — a ×7 "spike" that never leaves grade A — from reading as a regression.
+# `mtu.effective`, `speedtest.*` and `public.isp` have no floor: an
+# absolute value changing (MTU, ISP) is significant at any size, and speed
+# already has its own confirmation rule below.
+#
+# Labels are plain English on purpose: this text is read verbatim in a
+# BL-1 diagnosis line, and "gateway RTT" / "bufferbloat inet Δ" meant
+# nothing to a non-technical user who saw them. "router" / "ISP" match the
+# vocabulary gui/Sources/NetdiagGUI/Views/RunReportView.swift and
+# helpers/history.py already use for the same two numbers.
 METRICS: list[tuple[str, str, str, float | None]] = [
-    ("gateway.rtt_avg_ms",        "gateway RTT",         "spike", 3.0),
-    ("gateway.loss_pct",          "gateway loss%",       "spike", 2.0),
-    ("bufferbloat.gw_delta_ms",   "bufferbloat gw Δ",    "spike", 3.0),
-    ("bufferbloat.inet_delta_ms", "bufferbloat inet Δ",  "spike", 3.0),
-    ("mtu.effective",             "path MTU",            "change", None),
-    ("speedtest.down_mbps",       "speedtest down",      "drop", None),
-    ("speedtest.up_mbps",         "speedtest up",        "drop", None),
-    ("public.isp",                "ISP",                 "change", None),
+    ("gateway.rtt_avg_ms",        "time to reach your router",           "spike", 3.0),
+    ("gateway.loss_pct",          "packet loss to your router",          "spike", 2.0),
+    ("bufferbloat.gw_delta_ms",   "extra delay to your router under load", "spike", 3.0),
+    ("bufferbloat.inet_delta_ms", "extra delay to your ISP under load",  "spike", 3.0),
+    ("mtu.effective",             "largest packet size",                 "change", None),
+    ("speedtest.down_mbps",       "download speed",                      "drop", None),
+    ("speedtest.up_mbps",         "upload speed",                        "drop", None),
+    ("public.isp",                "your internet provider",              "change", None),
 ]
+
+# path -> absolute floor in the metric's own unit. Built in main() from
+# lib/thresholds.sh values read through the environment; see the METRICS
+# comment above for why these four rows and no others.
+FLOOR_METRICS = (
+    "gateway.rtt_avg_ms", "gateway.loss_pct",
+    "bufferbloat.gw_delta_ms", "bufferbloat.inet_delta_ms",
+)
 
 
 def env_threshold(name: str, cast: type):
@@ -128,7 +153,8 @@ def load_jsonl(p: Path) -> list[dict]:
 
 
 def evaluate(current: dict, history: list[dict],
-            speed_drop_factor: float, speed_confirm_runs: int) -> list[dict]:
+            speed_drop_factor: float, speed_confirm_runs: int,
+            floors: dict[str, float]) -> list[dict]:
     regressions: list[dict] = []
     for path, label, kind, factor in METRICS:
         cur = get_nested(current, path)
@@ -161,6 +187,12 @@ def evaluate(current: dict, history: list[dict],
             continue
 
         if kind == "spike" and factor is not None and med > 0 and cur_f > med * factor:
+            # The ratio test alone is satisfied; a floored metric also
+            # needs the *current* value itself to be bad, not merely a
+            # large multiple of an already-tiny median.
+            floor = floors.get(path)
+            if floor is not None and cur_f < floor:
+                continue
             regressions.append({
                 "metric": path, "current": cur_f, "median": med,
                 "label": label, "kind": "spike",
@@ -209,6 +241,22 @@ def main() -> None:
     speed_drop_factor = env_threshold("THRESH_SPEED_DROP_FACTOR", float)
     speed_confirm_runs = env_threshold("THRESH_SPEED_CONFIRM_RUNS", int)
 
+    # Absolute floors for the four "spike" metrics that have one — see the
+    # METRICS comment above. gateway.rtt_avg_ms and the two bufferbloat
+    # deltas share a unit (ms); gateway.loss_pct is a percentage. Each
+    # value is read from lib/thresholds.sh through the environment, no
+    # default, same as every threshold above.
+    gw_rtt_floor = env_threshold("THRESH_BASELINE_GW_RTT_FLOOR_MS", float)
+    gw_loss_floor = env_threshold("LOSS_WARN_PCT", float)
+    bufferbloat_floor = env_threshold("THRESH_BUFFERBLOAT_A_MS", float)
+    floors: dict[str, float] = {
+        "gateway.rtt_avg_ms": gw_rtt_floor,
+        "gateway.loss_pct": gw_loss_floor,
+        "bufferbloat.gw_delta_ms": bufferbloat_floor,
+        "bufferbloat.inet_delta_ms": bufferbloat_floor,
+    }
+    assert set(floors) == set(FLOOR_METRICS)
+
     try:
         current = json.loads(args.current.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as e:
@@ -233,7 +281,7 @@ def main() -> None:
 
     history = same_network[-args.n:] if same_network else []
 
-    regressions = (evaluate(current, history, speed_drop_factor, speed_confirm_runs)
+    regressions = (evaluate(current, history, speed_drop_factor, speed_confirm_runs, floors)
                   if len(history) >= 3 else [])
     out = {
         "compared_runs": len(history),

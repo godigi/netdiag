@@ -70,11 +70,46 @@ added later without anyone remembering to instrument it.
 {"t":"run","state":"done","exit":1}
 ```
 
-**A plan, not a percentage.** `--json` produces nothing until the end, so
-there is no quantity a percentage could be a percentage *of*. A `plan`
-event names the phases this mode will attempt, and phases resolve to
-`done` or `skip`. "17 of 28, testing under load" is true; a progress bar
-would not be.
+**A plan, not a percentage — the original argument, since revised.**
+`--json` produces nothing until the end, so at the time this spec was
+written there was no quantity a percentage could be a percentage *of*. A
+`plan` event names the phases this mode will attempt, and phases resolve
+to `done` or `skip`. "17 of 28, testing under load" is true; a progress
+bar built from phase *count* would not be — 27 of this run's ~28 phases
+finish in single-digit seconds combined, and the 28th, the speed test,
+takes 65–115 s on its own, so a count-based bar would race to ~90% and
+then visibly stall for a minute. That asymmetry was the real objection,
+and it is why the app shipped with the phase list and no bar for as long
+as it did.
+
+**What changed.** `done`'s `ms` field (below) means every phase's
+duration is now measured, on this machine, every run — which is exactly
+the quantity a percentage needs to be a percentage *of*. The objection
+above stops being "there is no quantity" and becomes "the phases are not
+equal-sized, so weight them by what they actually cost instead of by
+how many there are." `gui/Sources/NetdiagGUI/Support/PhaseWeights.swift`
+does that: it learns each phase's typical duration per run mode (a
+median over the last 5 runs, chosen so one stalled phase cannot distort
+the bar for the next several runs) and turns the current phase list plus
+each phase's state — plus the speed test's and bufferbloat's own
+sub-progress, once one of those is the phase running — into a completion
+fraction. A fresh install with no history yet still falls back to equal
+weights (this section's original position, now the zero-history case
+rather than the permanent one), and the app declines to show a time
+estimate until real durations have been learned. See that file's header
+for the full reasoning and `ScanProgressView.swift` for how the bar and
+the still-present "17 of 28" line coexist.
+
+One caveat that only shows up once durations are being *summed*: the
+phase durations in this stream are not disjoint. Ten checks run
+concurrently and each announces its own `start`/`done` as it lands, and
+then `collect_parallel` is itself timed as `parallel_batch` — so the
+batch's `ms` is the wall clock those ten shared, not additional time. A
+real `--quick` capture: dns 380, tcp_reach 120, path 110, hosts 22, ipv6
+18, and `parallel_batch` 395 spanning all of them. Any consumer adding
+these up has to drop the wrapper (or the children, but the children are
+what give the bar its motion). `PhaseWeights.overlappingPhases` is that
+list.
 
 **The plan is kept honest by a test.** It is a declared list, and a
 declared list drifts from the code the first time a check is added. A bats

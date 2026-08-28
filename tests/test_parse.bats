@@ -25,6 +25,8 @@ setup() {
   . "$REPO/lib/wan.sh"
   # shellcheck source=../lib/headline.sh
   . "$REPO/lib/headline.sh"
+  # shellcheck source=../lib/wifi_common.sh
+  . "$REPO/lib/wifi_common.sh"
 }
 
 # ── N1: no network at all must not report "healthy" ──────────────────────
@@ -703,6 +705,49 @@ assert_not_contains() {
   [ "$MAX_SEVERITY" -eq 2 ]
 }
 
+# ── The SSID a calling app can supply when macOS won't ───────────────────
+#
+# TCC attributes `ipconfig getsummary` and `wdutil` to those binaries, not
+# to the .app that spawned them, so netdiag.app reads the real SSID over
+# CoreWLAN while the CLI it just launched reads "<redacted>" — and WI-1
+# then reported that macOS would not name the network the app was showing
+# at the top of the same window.
+
+@test "wifi_resolve_ssid: a measured name wins over a supplied one" {
+  run wifi_resolve_ssid "Home" "Something Else"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'Home\tsystem')" ]
+}
+
+@test "wifi_resolve_ssid: a redacted name falls back to the caller's hint" {
+  run wifi_resolve_ssid "<redacted>" "Cafe Jeri hotel"
+  [ "$output" = "$(printf 'Cafe Jeri hotel\tcaller')" ]
+}
+
+@test "wifi_resolve_ssid: an empty name falls back to the caller's hint" {
+  run wifi_resolve_ssid "" "Cafe Jeri hotel"
+  [ "$output" = "$(printf 'Cafe Jeri hotel\tcaller')" ]
+}
+
+@test "wifi_resolve_ssid: no hint leaves the redaction and no source" {
+  # The source is empty rather than "system": nothing was measured, and
+  # claiming otherwise is exactly what the field exists to prevent.
+  run wifi_resolve_ssid "<redacted>" ""
+  [ "$output" = "$(printf '<redacted>\t')" ]
+}
+
+@test "wifi_resolve_ssid: a redacted hint is not a name" {
+  # A caller passing through its own placeholder must not turn the
+  # string "<redacted>" into a network called "<redacted>".
+  run wifi_resolve_ssid "" "<redacted>"
+  [ "$output" = "$(printf '\t')" ]
+}
+
+@test "wifi_resolve_ssid: an SSID with spaces survives the round trip" {
+  run wifi_resolve_ssid "" "Cafe Jeri  hotel 5G"
+  [ "$output" = "$(printf 'Cafe Jeri  hotel 5G\tcaller')" ]
+}
+
 # ── WI-1: macOS is withholding the network's name ────────────────────────
 #
 # A data-completeness rule. Three real flapping episodes in this project's
@@ -720,15 +765,51 @@ assert_not_contains() {
 }
 
 @test "diagnosis: WI-1 explains the consequence, not just the permission" {
-  # The point is not "grant a permission"; it is that history for this
-  # network merges with every other unnamed one.
+  # The point is not "grant a permission"; it is what the missing name
+  # costs the user later.
   sp_setup
   WIFI_NAME_HIDDEN=1
   diagnosis_run >/dev/null
-  assert_contains "$(diag_text_for WI-1)" "history"
   # And it says so without implying a fault: the rule reports a gap in
   # what netdiag can record, not a problem with the network.
   assert_contains "$(diag_text_for WI-1)" "Nothing is broken"
+}
+
+@test "diagnosis: WI-1 does not claim history is mixed when a gateway MAC is known" {
+  # The regression this pins: the rule used to say "history for this
+  # network gets mixed in with every other unnamed network", which is
+  # false whenever there is a MAC. lib/netid.sh writes the MAC into
+  # network.id and history.py's group_key prefers `mac:` over `ssid:`,
+  # so grouping is correct and only the label is generic. Saying
+  # otherwise told the user their stored data was worthless when it
+  # was not.
+  sp_setup
+  WIFI_NAME_HIDDEN=1 GW_MAC="aa:bb:cc:dd:ee:01"
+  diagnosis_run >/dev/null
+  assert_contains "$(diag_text_for WI-1)" "nothing is mis-filed"
+  assert_contains "$(diag_text_for WI-1)" "hardware address"
+}
+
+@test "diagnosis: WI-1 does say checks are pooled when there is no gateway MAC either" {
+  # The other half: with no MAC to fall back on the old claim was true,
+  # and the rule still has to make it.
+  sp_setup
+  WIFI_NAME_HIDDEN=1 GW_MAC=""
+  diagnosis_run >/dev/null
+  assert_contains "$(diag_text_for WI-1)" "pooled together"
+}
+
+@test "diagnosis: WI-1 names no particular app to grant Location Services to" {
+  # It used to say "your terminal", which is wrong when the caller is
+  # netdiag.app or the launchd watcher — and sends people to a settings
+  # pane that will not fix it.
+  sp_setup
+  WIFI_NAME_HIDDEN=1 GW_MAC="aa:bb:cc:dd:ee:01"
+  diagnosis_run >/dev/null
+  case "$(diag_text_for WI-1)" in
+    (*terminal*|*Terminal*) echo "WI-1 still names the terminal"; return 1 ;;
+  esac
+  assert_contains "$(diag_text_for WI-1)" "whatever runs netdiag"
 }
 
 @test "diagnosis: a named network does not fire WI-1" {

@@ -1,35 +1,36 @@
-netdiag  2026-08-28-152849
-log: /Users/bfreeman/net-diag/2026-08-28-152849.log
+netdiag  2026-08-28-160445
+log: /Users/bfreeman/net-diag/2026-08-28-160445.log
 
 ── Report ──
   ✓  Network             en0 · WiFi 5GHz ch149
-  ✓  Router              192.168.60.1 · 0% loss · 3.4 ms · ±0.9 ms jitter
+  ✓  Router              192.168.60.1 · 0% loss · 3.4 ms · ±2.1 ms jitter
   ✓  Internet            Cyber Info Provedor de Acesso LTDA ME ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 53 ms · ±3.5 ms jitter
+  ✓  Latency             1.1.1.1 · 53 ms · ±2.0 ms jitter
   ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
   ✓  DNS                 working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Packet size         1500 bytes · standard
   ✓  Router config       UPnP disabled (safer default)
   ✓  Hosts file          clean (only macOS defaults)
-  ✓  Background watcher  last ran 2 minutes ago
+  ✓  Background watcher  last ran 12 minutes ago
   ·  VPN                 not active
   ·  IPv6                not available (IPv4-only network)
   ·  Speed               measuring now — result prints below (~1 min)
 
 ── What we found ──
-  · macOS isn't telling netdiag which WiFi network you're on, so this run
-    is filed under a generic name instead of the real one. Nothing is
-    broken, but history for this network gets mixed in with every other
-    unnamed network — so per-network comparisons and baselines will be
-    less useful than they should be. Granting Location Services to your
-    terminal (System Settings → Privacy & Security → Location Services)
-    fixes it for future runs.
+  · macOS isn't telling netdiag which WiFi network you're on, so this
+    check is labelled with a generic name instead of the real one. Nothing
+    is broken and nothing is mis-filed — checks are grouped by your
+    router's hardware address, not by its name — but every unnamed network
+    looks alike in a list, so it's hard to tell one place from another
+    later. Granting Location Services to whatever runs netdiag (System
+    Settings → Privacy & Security → Location Services) fixes the name for
+    future checks.
 
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 18.9 Mbps · Up 13.3 Mbps · 6.435 ms (jitter 0.297 ms)
+  ✓ Down 19.0 Mbps · Up 12.7 Mbps · 6.125 ms (jitter 0.762 ms)
   · Server: Cyber Info Serviços de Telecomunicações Ltda
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-28-152849.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-28-160445.log

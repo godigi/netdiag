@@ -237,6 +237,44 @@ THRESH_COMPARE_TAIL_PCTL=10
 THRESH_SPEED_DROP_FACTOR=0.5
 THRESH_SPEED_CONFIRM_RUNS=2
 
+# ── Baseline absolute floors (BL-1) ───────────────────────────────────────
+# A ratio test alone flags differences that are arithmetically real and
+# practically invisible: a bufferbloat delta moving from 0.1 ms to 0.7 ms
+# is a ×7 "spike" that never leaves grade A, and a gateway RTT moving from
+# 3 ms to 11 ms is ordinary WiFi jitter, not a fault. helpers/baseline.py's
+# "spike" metrics now require the *current* value to also clear an
+# absolute floor before the ratio test is allowed to fire — same
+# environment-only discipline as THRESH_SPEED_* above, no default, read by
+# helpers/baseline.py's main() and exported by lib/output.sh immediately
+# before the call.
+#
+# bufferbloat.gw_delta_ms and bufferbloat.inet_delta_ms reuse
+# THRESH_BUFFERBLOAT_A_MS below: under an A grade there is nothing to
+# report regardless of how large the ratio looks. gateway.loss_pct reuses
+# LOSS_WARN_PCT above: the same 10% this project already treats as the
+# point loss starts to matter everywhere else it's measured.
+#
+# gateway.rtt_avg_ms gets a floor of its own — nothing else in the project
+# already judges an absolute gateway RTT — verified against every BL-1
+# gateway-RTT line one user's ~/net-diag/baseline.jsonl has ever recorded
+# (12 lines, current/median ms): 10.9/3.15, 14.7/3.5, 15.4/4.0, 15.8/4.3,
+# 36.9/11.6, 62.2/7.0, 87.3/9.6, 115.1/9.6, 285.9/16.9, 373.0/50.6,
+# 2039.2/4.58, 2786.5/51.0. The first four are ordinary WiFi and should
+# never have warned; the other eight range from a congested moment to a
+# dead gateway and are genuinely worth a warning. Those two groups sit
+# either side of a gap from 15.8 to 36.9, and any floor inside that gap
+# reproduces exactly that split.
+#
+# 50 ms, floated as a starting point before this was checked against real
+# data, sits past that gap: it would additionally silence the 36.9/11.6
+# line, which belongs with the eight real ones, not the four noise ones.
+# 25 ms sits inside the gap with comparable margin either side (9.2 ms
+# above the highest noise reading, 11.9 ms below the lowest real one) and
+# kills exactly the 4 noise lines while keeping all 8 real ones — the
+# split the data actually supports, so 25 replaces the 50 ms starting
+# point.
+THRESH_BASELINE_GW_RTT_FLOOR_MS=25
+
 # SP-1 — when a measured download is close enough to the Wi-Fi link's own
 # PHY rate that the *wireless* leg, not the internet plan, is the cap.
 # Expressed as a percentage of WIFI_TX.

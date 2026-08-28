@@ -62,6 +62,11 @@ WIFI_DISCONNECT_WINDOW_HOURS=1
 WIFI_DISCONNECT_LINES=""  # condensed event lines, stored in the record
 WIFI_PRIVILEGED=0        # 1 = the sudo-only radio fields were readable
 WIFI_NAME_HIDDEN=0       # 1 = macOS withheld the SSID [WI-1]
+# Where WIFI_SSID came from: "system" (this process read it), "caller" (a
+# calling app that could see it handed it over — see NETDIAG_SSID_HINT in
+# lib/wifi.sh), or "" (no name at all). A stored run must never claim to
+# have seen something it was told.
+WIFI_SSID_SOURCE=""
 
 # VPN (lib/vpn.sh)
 VPN_ACTIVE=0

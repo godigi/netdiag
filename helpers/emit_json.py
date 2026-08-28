@@ -412,6 +412,13 @@ def main() -> None:
             # True when macOS withheld the SSID from an unprivileged
             # caller, so `ssid` is a placeholder rather than a name. [WI-1]
             "name_hidden": _bool("WIFI_NAME_HIDDEN"),
+            # Where `ssid` came from: "system" when this process read it
+            # off the link, "caller" when a calling app that could see it
+            # passed NETDIAG_SSID_HINT (netdiag.app does, because TCC
+            # attributes ipconfig/wdutil to those binaries rather than to
+            # the .app), null when there is no name at all. Recorded so a
+            # stored run never claims to have seen what it was told.
+            "ssid_source": _env("WIFI_SSID_SOURCE"),
         } if is_wifi else None),
         "gateway": {
             "ip": _env("GATEWAY"),

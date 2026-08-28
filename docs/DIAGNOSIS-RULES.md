@@ -651,23 +651,55 @@ evidence of a change.
 ### WI-1 — macOS is withholding the network's name
 
 - Trigger: on Wi-Fi, `WIFI_NAME_HIDDEN == 1` — `lib/wifi.sh` saw the
-  SSID come back `<redacted>` or empty.
+  SSID come back `<redacted>` or empty *and* no caller supplied
+  `NETDIAG_SSID_HINT`.
 - Severity: `info`.
 - Evidence: none needed; the absence is the finding.
-- Recommendation: grant Location Services to the terminal.
+- Recommendation: grant Location Services to whichever process runs
+  netdiag — which is not necessarily a terminal.
+- Two texts, chosen on whether `GW_MAC` is known. See below.
 
 **A data-completeness fact, not a network fault**, and the reason it is
 a diagnosis rather than the log line it used to be is that the *stored*
-consequence is what bites. Every run on a nameless network is filed
-under `WiFi (SSID hidden by macOS)`, so runs on genuinely different
-networks merge into one history and a per-network baseline can end up
-comparing a café against an office.
+consequence is what matters. Every run on a nameless network is filed
+under `WiFi (SSID hidden by macOS)`, so a list of networks reads as a
+column of identical placeholders and nobody can tell the café from the
+office.
 
 This project has three real Wi-Fi flapping episodes in its own recorded
 history — 112, 241 and 173 disassociations inside an hour — and cannot
 confirm they were even on the same network, for exactly this reason.
 The two `info` lines in `lib/wifi.sh` were suppressed in a default run,
 so nobody saw the problem until the data was already unusable.
+
+**Two things this rule used to claim, both wrong, both corrected.**
+
+*"History for this network gets mixed in with every other unnamed
+network."* False whenever a gateway MAC is known. `lib/netid.sh` writes
+the MAC into `network.id` and `helpers/history.py`'s `group_key` prefers
+`mac:` over `ssid:`, so the grouping is correct and only the *label* is
+generic. The claim is true only when there is no MAC to fall back on, so
+the rule now emits one of two texts depending on `GW_MAC`. The version
+that fires in the common case says checks are grouped by the router's
+hardware address and nothing is mis-filed.
+
+*"Grant Location Services to your terminal."* Wrong when the caller is
+`netdiag.app` or the launchd watcher, and it sends people to a settings
+pane that will not fix anything. The rule now names no particular app.
+
+**A caller that can see the name can just hand it over.** TCC attributes
+`ipconfig getsummary` and `wdutil` to `/usr/sbin/ipconfig` and
+`/usr/bin/wdutil`, not to the process that spawned them — so
+`netdiag.app`, which reads the real SSID over CoreWLAN and displays it at
+the top of its own window, was launching a CLI that then reported macOS
+would not tell it the name. Setting `NETDIAG_SSID_HINT` in the child's
+environment fixes that: `lib/wifi.sh` uses it only after both of its own
+scrapes have come back empty or `<redacted>`, records the provenance in
+`wifi.ssid_source` (`"system"` vs `"caller"`), and `WIFI_NAME_HIDDEN` is
+never set, so this rule does not fire at all. `lib/monitor.sh`
+deliberately does *not* consult the hint — see the comment there: a
+value captured once at spawn time is fresh for a scan and stale for a
+process that outlives the network it was told about.
 
 **Related instrumentation.** Two other gaps from the same investigation
 are closed alongside this rule, neither of them a rule:
@@ -955,6 +987,22 @@ it is macOS's own statement of which link the user thinks they are on.
   absolute number still looks fine. Scoped per-network since v0.5.0 —
   before that, a laptop moving between home and a café reported a
   regression on every move.
+- Absolute floor: a ratio alone also flags the opposite mistake — a
+  difference that's arithmetically real and practically invisible. A
+  bufferbloat delta moving from 0.1 ms to 0.7 ms is a ×7 "spike" that
+  never leaves grade A, and a gateway RTT moving from 3 ms to 11 ms is
+  ordinary WiFi jitter, not a fault. `gateway.rtt_avg_ms`,
+  `gateway.loss_pct`, `bufferbloat.gw_delta_ms` and
+  `bufferbloat.inet_delta_ms` therefore also require the *current* value
+  to clear an absolute floor before the ratio test can fire:
+  `THRESH_BASELINE_GW_RTT_FLOOR_MS` (25 ms — see `lib/thresholds.sh` for
+  how that number was verified against real gateway-RTT history),
+  `LOSS_WARN_PCT` (10%, the same floor every other loss rule in this
+  project already uses) and `THRESH_BUFFERBLOAT_A_MS` (5 ms — below grade
+  A there is nothing to report). `mtu.effective` (a `change` metric) and
+  `speedtest.*` / `public.isp` are untouched: a changed MTU or ISP is
+  significant at any value, and speed already has the confirmation rule
+  below instead.
 - Speedtest confirmation: a speed test result depends on who else is using
   the link at that exact moment as much as on the network's own health, so
   `speedtest.down_mbps` / `speedtest.up_mbps` need more than one bad

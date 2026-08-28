@@ -45,6 +45,34 @@ wifi_parse_ipconfig_summary() {
     END{printf "%s\t%s\t%s\n", ssid, bssid, sec}'
 }
 
+# The network's name and where it came from, TAB-separated.
+#
+# $1 = the SSID this process managed to read ("" or "<redacted>" when
+#      macOS withheld it), $2 = the optional NETDIAG_SSID_HINT a calling
+#      app supplied.
+#
+# Prints "<ssid>\t<source>" where source is "system" (measured here),
+# "caller" (taken from the hint) or "" (no name at all, and the SSID
+# field is whatever the caller should keep displaying).
+#
+# A measured value always wins over a supplied one, even though the hint
+# is usually the better data: the point of `ssid_source` is that a stored
+# run can say which it was, and that only means anything if the
+# precedence is fixed rather than "whichever looked nicer".
+#
+# Here rather than inline in lib/wifi.sh so it can be tested without a
+# radio — the rest of wifi_run is unmockable subprocess output.
+wifi_resolve_ssid() {
+  local measured="$1" hint="${2:-}"
+  if [ -n "$measured" ] && [ "$measured" != "<redacted>" ]; then
+    printf '%s\t%s\n' "$measured" "system"
+  elif [ -n "$hint" ] && [ "$hint" != "<redacted>" ]; then
+    printf '%s\t%s\n' "$hint" "caller"
+  else
+    printf '%s\t%s\n' "$measured" ""
+  fi
+}
+
 # Fields from `sudo wdutil info` output ($1). Prints seven TAB-separated
 # fields: rssi, noise, channel, tx_rate, phy, ssid, bssid — any of which
 # may be empty. RSSI/noise come back as bare numbers ("−55", not "−55 dBm").

@@ -65,6 +65,7 @@ enum Defaults {
         static let autoCheckUpdates   = "autoCheckUpdates"
         static let lastUpdateCheck    = "lastUpdateCheck"
         static let locationBannerDismissed = "locationBannerDismissed"
+        static let phaseDurationSamples = "phaseDurationSamples"
     }
 
     // MARK: - Updates
@@ -191,6 +192,20 @@ enum Defaults {
     static var networkMerges: [String: String] {
         get { d.dictionary(forKey: Key.networkMerges) as? [String: String] ?? [:] }
         set { d.set(newValue, forKey: Key.networkMerges) }
+    }
+
+    // MARK: - Scan progress weighting
+
+    /// `PhaseWeights`' raw material: mode -> phase name -> recent measured
+    /// durations (ms), oldest first. `PhaseWeights` owns the shape and the
+    /// median/window logic; this is only the same dictionary-in-UserDefaults
+    /// pattern `networkNames` above uses, one level deeper. A malformed or
+    /// pre-this-feature value decodes as empty, which `PhaseWeights` already
+    /// treats as "nothing learned yet" — the correct behaviour for an
+    /// upgrade, not a crash.
+    static var phaseDurationSamples: [String: [String: [Int]]] {
+        get { d.dictionary(forKey: Key.phaseDurationSamples) as? [String: [String: [Int]]] ?? [:] }
+        set { d.set(newValue, forKey: Key.phaseDurationSamples) }
     }
 
     /// Networks this app has seen live. Distinct from the history: a

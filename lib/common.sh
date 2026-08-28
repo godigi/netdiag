@@ -250,10 +250,17 @@ progress_plan_phases() {
   esac
 }
 
-# A plan, not a percentage. --json produces nothing until the very end, so
-# there is no quantity a percentage could be a percentage of; a named list
-# of phases lets a consumer say "17 of 25, testing under load", which is
-# true, where a progress bar would not be.
+# A plan, not a percentage — on this side of the wire. --json produces
+# nothing until the very end, so this stream has no quantity to offer a
+# percentage *of*; a named list of phases lets a consumer say "17 of 25,
+# testing under load", which is true.
+#
+# A consumer that keeps its own history can go further, and netdiag.app
+# now does: the `ms` on each `done` event below is what it accumulates,
+# per phase per mode, to weight a real progress bar. That is a fact this
+# stream supplies rather than one it asserts — the CLI still never emits
+# a percentage. See gui/Sources/NetdiagGUI/Support/PhaseWeights.swift and
+# docs/design/watching-it-happen.md.
 progress_plan() {
   local mode="$1" phases="" p
   # Phase names are internal identifiers ([a-z_]), so they need no

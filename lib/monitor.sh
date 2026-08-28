@@ -220,6 +220,14 @@ _mon_probe_link() {
       } <<<"$(wifi_parse_ipconfig_summary "$summary")"
       MON_SSID="$ssid"
       MON_BSSID="$bssid"
+      # Deliberately NOT falling back to NETDIAG_SSID_HINT the way
+      # lib/wifi.sh does. The hint is captured once, by the calling app,
+      # at spawn time — fresh for a scan that lasts seconds, stale for a
+      # monitor that lives as long as the app does. Adopting it here would
+      # label every future network with the name of the one the user
+      # happened to be on when the monitor started, and that name feeds
+      # netid_run below, so the *identity* would be wrong and not just the
+      # caption. A generic label is the better failure.
     fi
   fi
 

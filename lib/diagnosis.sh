@@ -460,18 +460,40 @@ diagnosis_run() {
   # WI-1 — macOS is withholding the network's name.
   #
   # A data-completeness fact, not a network fault, and it is here rather
-  # than as a log line because the *stored* consequence is what bites.
+  # than as a log line because the *stored* consequence is what matters.
   # Every run on a nameless network is filed under "WiFi (SSID hidden by
-  # macOS)", so runs on genuinely different networks merge into one
-  # history and per-network baselines compare a café against an office.
+  # macOS)", so a list of networks reads as a column of identical
+  # placeholders and nobody can tell the café from the office.
   #
   # This project has three real WiFi-flapping episodes in its own
   # history — 112, 241 and 173 disassociations in an hour — and cannot
   # confirm they were even on the same network, for exactly this reason.
   # The existing `info` lines in lib/wifi.sh are suppressed in a default
   # run, so nobody saw them until the data was already unusable.
+  #
+  # Two corrections to what this rule used to say, both of which made it
+  # sound worse than it is:
+  #
+  #   * "history for this network gets mixed in with every other unnamed
+  #     network" is false whenever a gateway MAC is known.
+  #     helpers/history.py's group_key prefers `mac:` over `ssid:` and
+  #     lib/netid.sh writes the MAC into network.id, so the *grouping* is
+  #     correct and only the *label* is generic. The claim is only true
+  #     with no MAC to fall back on, so the text now splits on that.
+  #   * "grant Location Services to your terminal" is wrong when the
+  #     caller is netdiag.app or the launchd watcher.
+  #
+  # A caller that can see the SSID can also just hand it over — see
+  # NETDIAG_SSID_HINT in lib/wifi.sh — in which case WIFI_NAME_HIDDEN is
+  # never set and this rule does not fire at all. That is the path
+  # netdiag.app takes, and it is why the app no longer reports that macOS
+  # withheld a name it is displaying at the top of the same window.
   if [ "$IS_WIFI" -eq 1 ] && [ "${WIFI_NAME_HIDDEN:-0}" -eq 1 ]; then
-    add_diag info WI-1 "macOS isn't telling netdiag which WiFi network you're on, so this run is filed under a generic name instead of the real one. Nothing is broken, but history for this network gets mixed in with every other unnamed network — so per-network comparisons and baselines will be less useful than they should be. Granting Location Services to your terminal (System Settings → Privacy & Security → Location Services) fixes it for future runs."
+    if [ -n "${GW_MAC:-}" ]; then
+      add_diag info WI-1 "macOS isn't telling netdiag which WiFi network you're on, so this check is labelled with a generic name instead of the real one. Nothing is broken and nothing is mis-filed — checks are grouped by your router's hardware address, not by its name — but every unnamed network looks alike in a list, so it's hard to tell one place from another later. Granting Location Services to whatever runs netdiag (System Settings → Privacy & Security → Location Services) fixes the name for future checks."
+    else
+      add_diag info WI-1 "macOS isn't telling netdiag which WiFi network you're on, and there's no router hardware address to fall back on either, so this check can't be tied to a particular network at all. Nothing is broken, but checks run in different places will be pooled together, which makes comparisons against past results less useful than they should be. Granting Location Services to whatever runs netdiag (System Settings → Privacy & Security → Location Services) fixes it for future checks."
+    fi
   fi
 
   # WD-1 — WiFi flapping.

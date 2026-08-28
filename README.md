@@ -275,6 +275,23 @@ between home, office and a café reported "gateway RTT x4 spike" and "ISP
 changed" on every move. Runs recorded before v0.5.0 have no network
 identity and are skipped rather than pooled in.
 
+### Telling netdiag the Wi-Fi name
+
+macOS withholds the SSID from callers without a Location Services grant,
+and the grant is attributed to the *binary* — so `ipconfig getsummary`
+and `wdutil` are checked as themselves, not as the app that ran them. An
+app can therefore see the network's name over CoreWLAN while the netdiag
+it just launched reads back the literal string `<redacted>` and reports
+[WI-1](./docs/DIAGNOSIS-RULES.md#wi-1--macos-is-withholding-the-networks-name).
+
+Set `NETDIAG_SSID_HINT` in netdiag's environment to hand it the name.
+It is used only when netdiag's own two scrapes come back empty or
+redacted — a value it measured always wins — and `wifi.ssid_source` in
+the JSON records which it was (`"system"` or `"caller"`). netdiag.app
+sets it automatically. `--monitor` deliberately ignores it: a name
+captured once at spawn time is fresh for a scan and stale for a process
+that outlives the network it was told about.
+
 ### Exit codes
 
 | Code | Meaning                                                            |

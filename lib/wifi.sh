@@ -111,6 +111,30 @@ wifi_run() {
       fi
     fi
 
+    # A caller that can already see the SSID may hand it to us in
+    # NETDIAG_SSID_HINT. netdiag.app is the case this exists for: TCC
+    # attributes `ipconfig getsummary` and `wdutil` to /usr/sbin/ipconfig
+    # and /usr/bin/wdutil, not to the .app that spawned them, so this
+    # process reads back "<redacted>" on a machine where the app's own
+    # CoreWLAN read returns the real name. WI-1 then told the user macOS
+    # could not name the network the app was displaying at the top of the
+    # same window — a true statement about this process and a nonsense one
+    # to read.
+    #
+    # A value this process measured always wins over one it was told, so
+    # the hint is consulted only after both scrapes above have failed. The
+    # provenance is recorded either way: see WIFI_SSID_SOURCE in
+    # lib/globals.sh and wifi.ssid_source in the JSON.
+    local resolved_ssid resolved_src
+    {
+      IFS=$'\t' read -r resolved_ssid resolved_src
+    } <<<"$(wifi_resolve_ssid "$WIFI_SSID" "${NETDIAG_SSID_HINT:-}")"
+    WIFI_SSID="$resolved_ssid"
+    WIFI_SSID_SOURCE="$resolved_src"
+    if [ "$WIFI_SSID_SOURCE" = "caller" ]; then
+      info "SSID supplied by the calling app: $WIFI_SSID (macOS withheld it from this process)"
+    fi
+
     # macOS Tahoe redacts SSID/BSSID by default for unprivileged callers.
     # Even under sudo, wdutil only returns the real SSID/BSSID if the calling
     # terminal has been granted Location Services. Surface that as a hint
@@ -118,13 +142,18 @@ wifi_run() {
     if [ "$WIFI_SSID" = "<redacted>" ] || [ -z "$WIFI_SSID" ]; then
       # Recorded as well as printed. These two `info` lines are
       # suppressed in a default run, and the *stored* consequence is the
-      # one that bites: every run on this network is filed under
-      # "WiFi (SSID hidden by macOS)", so runs on genuinely different
-      # networks become indistinguishable in history. WI-1 is what makes
-      # that visible to the user; this flag is what tells it to fire.
+      # one that matters: every run on this network is filed under
+      # "WiFi (SSID hidden by macOS)", so a list of networks reads as a
+      # column of identical placeholders. Grouping itself survives when
+      # the gateway MAC is known — helpers/history.py's group_key prefers
+      # it over the name — which is why WI-1 says "hard to tell apart"
+      # rather than "mixed together". This flag is what tells it to fire.
       WIFI_NAME_HIDDEN=1
-      info "SSID/BSSID hidden by macOS — grant Terminal 'Location Services' permission"
-      info "(System Settings → Privacy & Security → Location Services → Terminal)."
+      # Not "grant Terminal": the caller may be netdiag.app, a launchd
+      # watcher, or any terminal emulator, and naming the wrong one sends
+      # people to a settings pane that will not fix it.
+      info "SSID/BSSID hidden by macOS — grant 'Location Services' to whatever runs netdiag"
+      info "(System Settings → Privacy & Security → Location Services)."
     fi
   else
     info "Not on WiFi (interface $INTERFACE looks wired)."

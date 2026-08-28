@@ -6,6 +6,131 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — BL-1 warned about differences too small to matter
+
+`helpers/baseline.py` was a pure ratio test. A metric exceeding its
+median by ×2 or ×3 produced a warn-severity BL-1 regardless of how small
+both numbers were, so a bufferbloat delta moving from **0.1 ms to 0.7 ms**
+was reported as a `×7.0 spike` — grade A before and after, since
+`THRESH_BUFFERBLOAT_A_MS` is 5. Replaying every record in one machine's
+`~/net-diag/baseline.jsonl` (2,103 records) reproduces **21** such spike
+warnings, of which **10 are noise**: all six bufferbloat lines had a
+current value under 5 ms, and four gateway-RTT lines were ordinary Wi-Fi
+(10.9, 14.7, 15.4 and 15.8 ms against medians of 3–4 ms).
+
+A spike now has to clear an absolute floor as well as the ratio. The
+floors live in `lib/thresholds.sh` and reach `baseline.py` through the
+environment, with no defaults, exactly as `THRESH_SPEED_DROP_FACTOR`
+already did — a floor decides whether a number is bad, so it is a
+threshold and gets a threshold's treatment.
+
+- bufferbloat deltas reuse `THRESH_BUFFERBLOAT_A_MS` (5 ms): below an A
+  grade there is nothing to report however large the ratio looks.
+- `gateway.loss_pct` reuses `LOSS_WARN_PCT` (10%).
+- `gateway.rtt_avg_ms` gets a new `THRESH_BASELINE_GW_RTT_FLOOR_MS`.
+  Nothing else in the project judges an absolute gateway RTT, so the
+  value was picked from the data: the twelve gateway-RTT lines in that
+  store split into four noise readings (≤ 15.8 ms) and eight real ones
+  (≥ 36.9 ms, up to 2,786 ms), with a gap between. **25 ms** sits in that
+  gap with room either side. 50 ms, the first candidate, sits past it and
+  would also have silenced the 36.9 ms line, which belongs with the real
+  ones.
+
+The same replay over the fixed logic returns **11** warnings: every noise
+line gone, every real one kept.
+
+The labels were jargon in prose the user has to act on. `bufferbloat inet
+Δ` — "I don't even know what INET is, and I'm a very technical person" —
+is now *extra delay to your ISP under load*; `gateway RTT` is *time to
+reach your router*; `speedtest down` is *download speed*; `path MTU` is
+*largest packet size*. Values are rounded and carry units, so
+`gateway RTT is 10.915 vs 3.1525 median (×3.5 spike)` reads as
+`time to reach your router is now 11 ms, normally 3 ms (×3.5)`.
+
+### Fixed — WI-1 fired while the app displayed the name it said macOS withheld
+
+TCC attributes `ipconfig getsummary` and `wdutil` to `/usr/sbin/ipconfig`
+and `/usr/bin/wdutil`, not to the process that spawned them. So
+`netdiag.app` — which reads the real SSID over CoreWLAN, shows it at the
+top of its window, and adopts it as the network's name — was launching a
+CLI that read back the literal string `<redacted>` and reported that
+macOS would not say which network you were on. Every stored run was also
+labelled `WiFi (SSID hidden by macOS)`.
+
+The caller can now hand the name over in `NETDIAG_SSID_HINT`.
+`lib/wifi.sh` consults it only after both of its own scrapes have come
+back empty or redacted — a measured value always wins — and records which
+it was in the new `wifi.ssid_source` (`"system"` / `"caller"` / `null`),
+so a stored run never claims to have seen what it was told. With the hint
+present `WIFI_NAME_HIDDEN` is never set and WI-1 does not fire at all.
+Verified on a real network: the run reports `ssid: Cafe Jeri hotel`,
+`ssid_source: caller`, label `Cafe Jeri hotel`, no WI-1. `network.id`
+still carries the gateway MAC, which is what `helpers/history.py`'s
+`group_key` prefers, so nothing regroups.
+
+`lib/monitor.sh` deliberately ignores the hint: it is captured once at
+spawn time, which is fresh for a scan lasting seconds and stale for a
+process that outlives the network it was told about — and `MON_SSID`
+feeds `netid_run`, so a stale value would corrupt identity, not just a
+caption.
+
+**Two things WI-1 claimed that were wrong**, both corrected:
+
+- *"History for this network gets mixed in with every other unnamed
+  network."* False whenever a gateway MAC is known — `lib/netid.sh` puts
+  the MAC in `network.id` and `group_key` prefers `mac:` over `ssid:`, so
+  grouping was always correct and only the label was generic. The rule
+  now emits one of two texts depending on `GW_MAC`; the common one says
+  nothing is mis-filed. It told users their stored data was worthless
+  when it was not.
+- *"Grant Location Services to your terminal."* Wrong when the caller is
+  `netdiag.app` or the launchd watcher, and it pointed at a settings pane
+  that would not have fixed anything.
+
+### Added — an overall progress bar for a full check
+
+A full check showed a phase grid and "12 of 28", with a determinate bar
+only during the speed test. `ScanProgress.swift` and
+`docs/design/watching-it-happen.md` argued the case against a bar — "a
+plan, not a percentage" — on the grounds that `--json` emits nothing
+until the end, so nothing could be a percentage *of*.
+
+That argument has expired, and the doc now records why rather than being
+quietly contradicted. The CLI emits a `plan` naming every phase a mode
+will attempt and a `ms` on every `done`, so the app can weight a bar by
+durations measured on this machine. The objection worth keeping is the
+one about *shape*: the speed test is 65–115 s of a ~150 s run, so a bar
+driven by phase count would race to ~90% and then sit still.
+
+`Support/PhaseWeights.swift` is a pure value type holding
+`mode → phase → last 5 durations`, persisted in `Defaults`, reporting the
+**median** — with an odd window one stalled phase cannot become the
+estimate, and it ages out entirely after five good runs, which an EWMA
+would not. `.skipped` and `.didNotRun` phases leave both the numerator
+and the denominator, so a `--quick` run that skips the speed test does
+not strand 40% of the bar. The running phase contributes its weight times
+its own sub-progress, so the speed test's slice fills smoothly. The
+fraction is non-decreasing by construction, not by a clamp.
+
+`parallel_batch` is excluded from the weighting: `bin/netdiag` launches
+ten checks concurrently, each announcing itself on fd 3 as it lands, and
+then wraps `collect_parallel` in a `run_timed parallel_batch` whose
+duration is the wall clock those ten shared. A captured `--quick` stream
+shows dns 380 ms, tcp_reach 120 ms, ipv6 18 ms — and `parallel_batch`
+395 ms spanning all of them. Counting both put the same seconds in the
+denominator twice.
+
+The ETA appears only once durations have been learned for that mode; a
+fresh install gets the bar and no time, because equal-weight guesses
+cannot back one. A countdown under two seconds reads "Finishing up…"
+rather than "0s left". The "N of M" line stays — it answers a different
+question, exactly, and is the only one a fresh install can answer at all.
+
+Asserted in `--verify` (`swift test` runs nothing on a CLT-only
+toolchain): monotonicity, the 1.0 ceiling, the skipped-speed-test case,
+sub-progress inside the heaviest phase, the unlearned case, and the
+`parallel_batch` double-count.
+
 ### Fixed — the app was never decoding `wan`
 
 `RunSnapshot.init(from:)` declared `wan` in `CodingKeys`, declared it as a

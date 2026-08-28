@@ -573,12 +573,14 @@ RULES: list[dict[str, str]] = [
         "scope": "scan",
         "blurb": (
             "macOS isn't telling netdiag which WiFi network you're on, "
-            "so this run is filed under a generic name instead of the "
-            "real one. Nothing is broken, but history for this network "
-            "gets mixed in with every other unnamed network, making "
-            "per-network comparisons and baselines less useful. "
-            "Granting Location Services to your terminal fixes it for "
-            "future runs."
+            "so this check is labelled with a generic name instead of "
+            "the real one. Nothing is broken, and checks are still "
+            "grouped by your router's hardware address rather than by "
+            "its name, so nothing is mis-filed — but every unnamed "
+            "network looks alike in a list. Granting Location Services "
+            "to whatever runs netdiag fixes the name for future checks, "
+            "and an app that can already see the name can hand it over "
+            "instead."
         ),
         "doc": "DIAGNOSIS-RULES.md#wi-1--macos-is-withholding-the-networks-name",
     },
@@ -879,9 +881,12 @@ RULES: list[dict[str, str]] = [
             "One or more measurements from this run are noticeably worse "
             "than what's typical for this specific network, based on its "
             "own recent history. An absolute threshold can miss this kind "
-            "of regression when the number still looks fine in isolation; "
-            "which metric moved, and by how much, is named in the "
-            "diagnosis text."
+            "of regression when the number still looks fine in isolation. "
+            "For some of these metrics the current reading also has to be "
+            "bad enough on its own to matter, not merely a large multiple "
+            "of an already-tiny typical value, so an imperceptible blip "
+            "never raises this by itself. Which metric moved, and by how "
+            "much, is named in the diagnosis text."
         ),
         "doc": "DIAGNOSIS-RULES.md#bl-1--a-metric-regressed-against-this-networks-own-history",
     },

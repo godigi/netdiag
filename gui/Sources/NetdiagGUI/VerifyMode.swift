@@ -64,6 +64,7 @@ private enum VerifyHarness {
         runStageTests()
         runFullCheckPolicyTests()
         runHeadlineRuleTests()
+        runPhaseWeightsTests()
         runSnapshots()
         print("")
         if failures.isEmpty {
@@ -81,6 +82,15 @@ private enum VerifyHarness {
             print("  \u{2714} \(name)")
         } else {
             print("  \u{2718} \(name) — got \(got), want \(want)")
+            failures.append(name)
+        }
+    }
+
+    private static func check(_ condition: Bool, _ name: String) {
+        if condition {
+            print("  \u{2714} \(name)")
+        } else {
+            print("  \u{2718} \(name)")
             failures.append(name)
         }
     }
@@ -272,6 +282,137 @@ private enum VerifyHarness {
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
         return try? JSONDecoder().decode(RulesCatalog.self, from: data)
+    }
+
+    // MARK: - PhaseWeights
+    //
+    // The one type this feature added that is worth asserting on directly:
+    // a pure struct, built here with `PhaseWeights(samples:)` rather than
+    // `.loaded()`, so these checks never touch the real `Defaults` store a
+    // person's own runs have been teaching. Every scenario re-asserts the
+    // two properties that matter most — the fraction never goes down within
+    // a run, and it never exceeds 1 — because those are exactly the ones a
+    // future refactor could quietly break without any single case catching
+    // it.
+
+    private static func runPhaseWeightsTests() {
+        print("\nPhaseWeights")
+
+        func phase(_ name: String, _ state: ScanProgress.PhaseState, ms: Int? = nil) -> ScanProgress.Phase {
+            ScanProgress.Phase(name: name, state: state, ms: ms)
+        }
+
+        /// Asserts a fraction sequence never drops, never exceeds 1, and
+        /// ends where expected — the shared shape every scenario below
+        /// checks, so the "never decreases / never exceeds 1" guarantee is
+        /// verified once per scenario rather than trusted on faith after
+        /// the first.
+        func assertSequence(_ fractions: [Double], endsAt want: Double, _ label: String) {
+            check(fractions.allSatisfy { $0 >= 0 && $0 <= 1 }, "\(label): every fraction in 0...1")
+            check(zip(fractions, fractions.dropFirst()).allSatisfy { $0 <= $1 },
+                  "\(label): fraction never decreases")
+            equal(fractions.last ?? -1, want, "\(label): final fraction")
+        }
+
+        // Scenario 1: a "full"-shaped mode with learned weights, dominated
+        // by one heavy phase (as the real speed test dominates a real full
+        // run — 65-115s against single-digit seconds for everything else).
+        // Walking every phase from pending through running to done, in
+        // order, must reach exactly 1.0: `doneWeight` and `totalWeight`
+        // accumulate the same terms in the same order once every phase is
+        // `.done`, so they are bit-for-bit equal, not just "close".
+        let full = PhaseWeights(samples: [
+            "full": ["iface": [100], "gateway": [200], "wifi": [150], "speedtest": [90_000]],
+        ])
+        let fullNames = ["iface", "gateway", "wifi", "speedtest"]
+        var fullFractions: [Double] = []
+        var running = fullNames.map { phase($0, .pending) }
+        for index in fullNames.indices {
+            running[index].state = .running
+            fullFractions.append(full.progress(mode: "full", phases: running,
+                                               speedProgress: nil, bufferbloatProgress: nil).fraction)
+            running[index].state = .done
+            running[index].ms = 1 // learned weight is used regardless of this run's own ms
+            fullFractions.append(full.progress(mode: "full", phases: running,
+                                               speedProgress: nil, bufferbloatProgress: nil).fraction)
+        }
+        assertSequence(fullFractions, endsAt: 1.0, "full run, learned weights")
+
+        // Scenario 2: sub-progress inside the heaviest phase (here,
+        // "speedtest", weighted 90000 of a 90450 total — ~99.5% of the bar)
+        // must visibly move the fraction rather than leaving it pinned at
+        // whatever the other phases contributed.
+        var atSpeedtest = fullNames.map { phase($0, .done, ms: 1) }
+        atSpeedtest[3] = phase("speedtest", .running)
+        let atStart = full.progress(mode: "full", phases: atSpeedtest,
+                                    speedProgress: 0.0, bufferbloatProgress: nil).fraction
+        let atHalf = full.progress(mode: "full", phases: atSpeedtest,
+                                   speedProgress: 0.5, bufferbloatProgress: nil).fraction
+        let atFull = full.progress(mode: "full", phases: atSpeedtest,
+                                   speedProgress: 1.0, bufferbloatProgress: nil).fraction
+        check(atStart < atHalf && atHalf < atFull,
+              "sub-progress inside the heaviest phase moves the bar (\(atStart) < \(atHalf) < \(atFull))")
+        equal(atFull, 1.0, "heaviest phase's sub-progress reaching 1.0 completes the bar")
+
+        // Scenario 3: a "quick"-shaped mode where the speed test is always
+        // skipped, so it was never learned — only iface/gateway/wifi have
+        // history. The plan still lists it (progress_plan_phases declares
+        // the same phases for full and quick — see lib/common.sh), so the
+        // bar must re-normalise around it rather than stall short of 1.0.
+        let quick = PhaseWeights(samples: [
+            "quick": ["iface": [100], "gateway": [200], "wifi": [150]],
+        ])
+        let beforeSkip = [phase("iface", .done, ms: 100), phase("gateway", .done, ms: 200),
+                          phase("wifi", .done, ms: 150), phase("speedtest", .pending)]
+        let afterSkip = [phase("iface", .done, ms: 100), phase("gateway", .done, ms: 200),
+                         phase("wifi", .done, ms: 150), phase("speedtest", .skipped, ms: nil)]
+        let beforeFraction = quick.progress(mode: "quick", phases: beforeSkip,
+                                            speedProgress: nil, bufferbloatProgress: nil).fraction
+        let afterFraction = quick.progress(mode: "quick", phases: afterSkip,
+                                           speedProgress: nil, bufferbloatProgress: nil).fraction
+        check(beforeFraction < 1.0, "quick run: still-pending skipped-to-be phase holds the bar below 1.0")
+        equal(afterFraction, 1.0, "quick run: skipping the speed test still reaches 1.0")
+        check(afterFraction >= beforeFraction, "quick run: resolving to skip never lowers the fraction")
+
+        // Scenario 4: no history at all for this mode. Equal weights, and
+        // — the point of `isLearned` — no ETA the app has not earned.
+        let unlearned = PhaseWeights()
+        let freshPhases = [phase("a", .done, ms: 1), phase("b", .pending), phase("c", .pending)]
+        let freshSnapshot = unlearned.progress(mode: "never-seen", phases: freshPhases,
+                                               speedProgress: nil, bufferbloatProgress: nil)
+        equal(freshSnapshot.isLearned, false, "no history: isLearned is false")
+        equal(freshSnapshot.remainingSeconds, nil, "no history: no ETA offered")
+        equal(freshSnapshot.fraction, 1.0 / 3.0, "no history: equal weights (1 of 3 phases done)")
+
+        // Scenario 5: `parallel_batch` wraps the ten checks bin/netdiag
+        // launches concurrently, so its duration is the wall clock they
+        // shared and counting both puts the same seconds in twice. The
+        // numbers here are a real `--quick` capture: dns 380, tcp_reach
+        // 120, ipv6 18 — and parallel_batch 395 spanning all three.
+        let batch = PhaseWeights(samples: [
+            "quick": ["dns": [380], "tcp_reach": [120], "ipv6": [18], "parallel_batch": [395]],
+        ])
+        // Everything inside the batch has landed; the wrapper has not.
+        let insideDone = [phase("dns", .done, ms: 380), phase("tcp_reach", .done, ms: 120),
+                          phase("ipv6", .done, ms: 18), phase("parallel_batch", .running)]
+        let batchSnapshot = batch.progress(mode: "quick", phases: insideDone,
+                                           speedProgress: nil, bufferbloatProgress: nil)
+        // Without the exclusion this is 518/913 ≈ 0.57 and the bar would
+        // still have a "phase" worth 43% of the run left to go — time
+        // that has, in fact, already elapsed.
+        equal(batchSnapshot.fraction, 1.0,
+              "parallel_batch does not double-count the phases it wraps")
+        equal(batchSnapshot.remainingSeconds, 0,
+              "parallel_batch contributes no time to the ETA")
+        // And its stored samples must not skew the fallback estimate used
+        // for a phase this mode has never measured.
+        let withUnseen = insideDone + [phase("mtu", .pending)]
+        let fallbackSnapshot = batch.progress(mode: "quick", phases: withUnseen,
+                                              speedProgress: nil, bufferbloatProgress: nil)
+        // Fallback = mean of {380, 120, 18} = 172.67 → 173, not the
+        // mean of those plus 395 (228) the wrapper would have produced.
+        equal(fallbackSnapshot.fraction, 518.0 / 691.0,
+              "an overlapping phase's samples stay out of the fallback estimate")
     }
 
     // MARK: - 2. Stage-card visual contract (offscreen render → PNG)

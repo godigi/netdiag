@@ -41,6 +41,7 @@ build_json() {
   NETDIAG_LINK_DHCP_ROUTER="${LINK_DHCP_ROUTER:-}" \
   NETDIAG_IS_WIFI="$IS_WIFI" \
   NETDIAG_WIFI_SSID="$WIFI_SSID" \
+  NETDIAG_WIFI_SSID_SOURCE="${WIFI_SSID_SOURCE:-}" \
   NETDIAG_WIFI_BSSID="$WIFI_BSSID" \
   NETDIAG_WIFI_SEC="$WIFI_SEC" \
   NETDIAG_WIFI_RSSI="${WIFI_RSSI:-}" \
@@ -368,24 +369,57 @@ output_run() {
     # lib/thresholds.sh, because a cutoff that decides whether a number is
     # normal lives in exactly one place. baseline.py refuses to run without
     # them rather than carrying a default.
-    export THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS
+    #
+    # THRESH_BASELINE_GW_RTT_FLOOR_MS, LOSS_WARN_PCT and
+    # THRESH_BUFFERBLOAT_A_MS are the same kind of export for a different
+    # part of baseline.py: the absolute floors that keep a "spike" from
+    # firing on a difference that's real but too small to matter. See
+    # lib/thresholds.sh's "Baseline absolute floors" section.
+    export THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS \
+           THRESH_BASELINE_GW_RTT_FLOOR_MS LOSS_WARN_PCT THRESH_BUFFERBLOAT_A_MS
     baseline_out="$(python3 "$HELPERS_DIR/baseline.py" \
       --history "$LOG_DIR/baseline.jsonl" --current "$json_tmp" --n 10 2>/dev/null || true)"
     BASELINE_JSON="$baseline_out"
     if [ -n "$baseline_out" ]; then
       baseline_lines="$(printf '%s' "$baseline_out" | python3 -c "
 import json, sys
+
+# Plain units, rounded to a whole number — no one needs sub-millisecond
+# precision to know their router got slower, and '10.915 vs 3.1525' was
+# the raw float pair this used to print. Keyed off the metric path's own
+# suffix so a metric added to baseline.py's METRICS table gets its unit
+# here for free; mtu.effective is the one that carries its unit in the
+# name rather than the suffix.
+def unit_for(metric):
+    if metric.endswith('_pct'):  return '%'
+    if metric.endswith('_ms'):   return ' ms'
+    if metric.endswith('_mbps'): return ' Mbps'
+    if metric == 'mtu.effective': return ' bytes'
+    return ''
+
+def value(v, unit):
+    return f'{round(v)}{unit}' if isinstance(v, (int, float)) else f'{v}'
+
 d = json.load(sys.stdin)
 for r in d.get('regressions', []):
-    kind  = r.get('kind', '?')
-    label = r.get('label', r.get('metric'))
-    cur   = r.get('current'); med = r.get('median')
+    kind   = r.get('kind', '?')
+    label  = r.get('label', r.get('metric'))
+    metric = r.get('metric', '') or ''
+    cur    = r.get('current'); med = r.get('median')
+    unit   = unit_for(metric)
+    cur_s, med_s = value(cur, unit), value(med, unit)
     if kind == 'spike':
-        print(f'{label} is {cur} vs {med} median (×{r.get(\"factor\",\"?\")} spike)')
+        factor = r.get('factor')
+        factor_s = f' (×{factor})' if factor else ''
+        print(f'{label} is now {cur_s}, normally {med_s}{factor_s}')
     elif kind == 'drop':
-        print(f'{label} dropped to {cur} from {med} median')
+        # Same shape as a spike, deliberately: the two differ in which
+        # direction is bad, not in what the reader needs to be told.
+        print(f'{label} is now {cur_s}, normally {med_s}')
     elif kind == 'change':
-            print(f'{label} changed: \"{cur}\" (was previously \"{med}\")')
+        # No 'normally' here — a value that swapped (the ISP, the packet
+        # size) did not drift away from a typical reading, it changed.
+        print(f'{label} changed to {cur_s} — it was {med_s}')
 " 2>/dev/null || true)"
       if [ -n "$baseline_lines" ]; then
         while IFS= read -r reg; do

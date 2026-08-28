@@ -1,3 +1,4 @@
+import CoreWLAN
 import Foundation
 
 /// Finds the `netdiag` executable, and defines the environment every child
@@ -85,7 +86,41 @@ enum BinaryLocator {
         // one, but stating it explicitly means the app and a terminal run
         // demonstrably share ~/net-diag rather than probably sharing it.
         env["HOME"] = NSHomeDirectory()
+        // The Wi-Fi name, when this app can see it and the CLI cannot.
+        //
+        // TCC attributes `ipconfig getsummary` and `wdutil` to those
+        // binaries rather than to the .app that spawned them, so the child
+        // reads back the literal string "<redacted>" on a machine where
+        // `CWInterface.ssid()` here returns the real name. Left alone, the
+        // CLI fires WI-1 — "macOS isn't telling netdiag which WiFi network
+        // you're on" — in a window whose title bar is showing that exact
+        // network, and every stored run is labelled "WiFi (SSID hidden by
+        // macOS)".
+        //
+        // The CLI treats this strictly as a fallback: a name it read off
+        // the link itself always wins, and it records `wifi.ssid_source`
+        // either way, so nothing downstream has to trust us blindly. See
+        // NETDIAG_SSID_HINT in lib/wifi.sh.
+        //
+        // No permission check here: without a Location grant `ssid()`
+        // returns nil, which is exactly the case this skips. Cheap enough
+        // to do per spawn — full checks are occasional and the monitor
+        // spawns once for the life of the process.
+        if let ssid = liveSSID() { env["NETDIAG_SSID_HINT"] = ssid }
         return env
+    }
+
+    /// The associated network's name from CoreWLAN, or nil when there
+    /// isn't one to be had — Wi-Fi off, on ethernet, or Location not
+    /// granted. Mirrors `NetdiagCoordinator.refreshLiveWiFi`'s interface
+    /// lookup, including its fallback for builds where `interface()`
+    /// returns nil while associated.
+    private static func liveSSID() -> String? {
+        let client = CWWiFiClient.shared()
+        let iface = client.interface() ?? client.interfaces()?.first { $0.powerOn() }
+        guard let name = iface?.ssid(), !name.isEmpty,
+              !name.contains("<redacted>") else { return nil }
+        return name
     }
 
     /// Human-readable explanation for the one failure a user can fix.

@@ -11,15 +11,20 @@ setup() {
   FIX="${BATS_TEST_DIRNAME}/fixtures"
   TMP="$BATS_TEST_TMPDIR"
   # helpers/baseline.py refuses to run without THRESH_SPEED_DROP_FACTOR /
-  # THRESH_SPEED_CONFIRM_RUNS (lib/thresholds.sh), the same way
+  # THRESH_SPEED_CONFIRM_RUNS and the absolute-floor thresholds
+  # (THRESH_BASELINE_GW_RTT_FLOOR_MS, LOSS_WARN_PCT,
+  # THRESH_BUFFERBLOAT_A_MS) — all from lib/thresholds.sh, the same way
   # helpers/history.py refuses without THRESH_COMPARE_*. Exported once here
   # so every existing `run python3 .../baseline.py` call below keeps
   # working without having to know about a feature it isn't testing; the
   # dedicated speed-confirmation tests further down override
-  # THRESH_SPEED_CONFIRM_RUNS explicitly where the value under test matters.
+  # THRESH_SPEED_CONFIRM_RUNS explicitly where the value under test matters,
+  # and the dedicated floor tests further down override the floor vars the
+  # same way.
   # shellcheck source=../lib/thresholds.sh
   . "$REPO/lib/thresholds.sh"
-  export THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS
+  export THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS \
+         THRESH_BASELINE_GW_RTT_FLOOR_MS LOSS_WARN_PCT THRESH_BUFFERBLOAT_A_MS
 }
 
 # Run emit_json.py with only the NETDIAG_* vars given as KEY=VALUE args,
@@ -196,7 +201,7 @@ _write_history() {
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq_get compared_runs)" = "5" ]
-  [[ "$output" == *"gateway RTT"* ]] || return 1
+  [[ "$output" == *"time to reach your router"* ]] || return 1
 }
 
 @test "baseline: history from other networks is skipped, not compared" {
@@ -233,7 +238,7 @@ _write_history() {
   printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":40.0}}' > "$cur"
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur" --n 10
   [ "$(printf '%s' "$output" | jq_get compared_runs)" = "5" ]
-  [[ "$output" == *"gateway RTT"* ]] || return 1
+  [[ "$output" == *"time to reach your router"* ]] || return 1
 }
 
 @test "baseline: a run with no network identity is not compared" {
@@ -254,6 +259,88 @@ _write_history() {
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
   [ "$(printf '%s' "$output" | jq_get compared_runs)" = "0" ]
   [ "$(printf '%s' "$output" | jq_get regressions)" = "[]" ]
+}
+
+# ── baseline.py: absolute floors keep noise out of BL-1 ──────────────────
+# The bug this pins: a pure ratio test flagged differences that are
+# arithmetically real and practically invisible — a bufferbloat delta
+# moving from 0.1 ms to 0.7 ms (grade A both before and after, per
+# THRESH_BUFFERBLOAT_A_MS) or a gateway RTT moving a few ms on ordinary
+# WiFi (per THRESH_BASELINE_GW_RTT_FLOOR_MS). Both floors, and
+# gateway.loss_pct's reuse of LOSS_WARN_PCT, are exported by setup() above
+# from lib/thresholds.sh; a spike now needs the *current* value to clear
+# its floor as well as the ratio test before BL-1 fires.
+
+_write_bufferbloat_history() {
+  # $1 = file, $2 = network id, $3 = count, $4 = field
+  # (gw_delta_ms|inet_delta_ms), $5 = value
+  local f="$1" nid="$2" n="$3" field="$4" val="$5" i
+  for i in $(seq 1 "$n"); do
+    printf '{"network":{"id":"%s"},"bufferbloat":{"%s":%s}}\n' "$nid" "$field" "$val" >> "$f"
+  done
+}
+
+@test "baseline: a bufferbloat spike under the A-grade floor is not reported" {
+  # Real shape from the user's store: bufferbloat gw Δ 0.1 → 0.7 ms, a ×7
+  # ratio "spike" that never leaves grade A.
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  _write_bufferbloat_history "$hist" "wifi:ssid=Home" 5 gw_delta_ms 0.1
+  printf '{"network":{"id":"wifi:ssid=Home"},"bufferbloat":{"gw_delta_ms":0.7}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq_get regressions)" = "[]" ]
+}
+
+@test "baseline: a bufferbloat spike that clears the A-grade floor is reported" {
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  _write_bufferbloat_history "$hist" "wifi:ssid=Home" 5 gw_delta_ms 1
+  printf '{"network":{"id":"wifi:ssid=Home"},"bufferbloat":{"gw_delta_ms":40}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"extra delay to your router under load"* ]] || return 1
+}
+
+@test "baseline: ordinary WiFi gateway RTT jitter stays under the floor and is not reported" {
+  # Real BL-1 line from the user's store: 15.8 ms current vs 4.3 ms
+  # median. The ratio test alone would fire (×3.7 > the 3.0 factor); the
+  # 25 ms floor keeps it quiet because 15.8 ms is ordinary WiFi variance.
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  _write_history "$hist" "wifi:ssid=Home" 5 4.3
+  printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":15.8}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq_get regressions)" = "[]" ]
+}
+
+@test "baseline: a gateway RTT spike that clears the floor is reported" {
+  # Same shape, real numbers, but past the 25 ms floor: 36.9 ms vs 11.6 ms
+  # median is genuinely worth a warning.
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  _write_history "$hist" "wifi:ssid=Home" 5 11.6
+  printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":36.9}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"time to reach your router"* ]] || return 1
+}
+
+@test "baseline: a gateway RTT spike message carries rounded units, not raw floats" {
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  _write_history "$hist" "wifi:ssid=Home" 5 11.6
+  printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":36.9}}' > "$cur"
+  run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq_get regressions.0.current)" = "36.9" ]
+  [ "$(printf '%s' "$output" | jq_get regressions.0.median)" = "11.6" ]
+}
+
+@test "baseline.py refuses to run without THRESH_BASELINE_GW_RTT_FLOOR_MS" {
+  hist="$TMP/h.jsonl"; cur="$TMP/c.json"
+  printf '{"network":{"id":"wifi:ssid=Home"},"gateway":{"rtt_avg_ms":3.0}}' > "$cur"
+  run env -u THRESH_BASELINE_GW_RTT_FLOOR_MS \
+    python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"THRESH_BASELINE_GW_RTT_FLOOR_MS"* ]] || return 1
+  [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
 # ── baseline.py: a speed drop needs two measured runs to confirm ─────────
@@ -303,7 +390,11 @@ _write_speed_history() {
   printf '{"network":{"id":"wifi:ssid=Home"},"speedtest":{"down_mbps":35}}' > "$cur"
   run python3 "$REPO/helpers/baseline.py" --history "$hist" --current "$cur"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"speedtest down"* ]] || return 1
+  # The label is the user-facing one — "speedtest down" was jargon in a
+  # line a non-technical reader has to act on. Assert on the metric path
+  # as well, so a future rewording changes one of these and not both.
+  [[ "$output" == *"download speed"* ]] || return 1
+  [[ "$output" == *"speedtest.down_mbps"* ]] || return 1
 }
 
 @test "baseline: a slow run following a normal one is not reported" {

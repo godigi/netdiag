@@ -6,10 +6,20 @@ import Foundation
 /// `docs/design/watching-it-happen.md`: a `plan` naming the phases this mode
 /// will attempt, then a `start`/`done`/`skip` per phase, then one `run done`.
 ///
-/// **A plan, not a percentage.** `--json` produces nothing until the very
-/// end, so there is no quantity a percentage could be a percentage *of*.
-/// "17 of 28" is a true statement about a declared list; a progress bar
-/// would be an invented one.
+/// **A plan, and now also a percentage.** This type used to argue the
+/// opposite — `--json` produces nothing until the very end, so early on
+/// there was no quantity a percentage could be a percentage *of*, and "17
+/// of 28" was the honest statement a bar could not be. That changed once
+/// the CLI started naming every phase a mode will attempt (`plan`) *and*
+/// timing every one that finishes (`done`'s `ms`): there is now a real
+/// quantity, measured on this machine, for a bar to be a fraction of.
+/// `Support/PhaseWeights.swift` turns that history into per-phase weights
+/// and is what `ScanProgressView` draws its bar from; this type still owns
+/// the "17 of 28" count and the phase list the bar sits above, and folds
+/// each finished run's durations into `weights` so the next run's bar is
+/// better-informed than this one's was. See `PhaseWeights.swift`'s header
+/// for the full reasoning, and `docs/design/watching-it-happen.md`'s "A
+/// plan, not a percentage" section for the original argument this revises.
 ///
 /// Note what is *not* here, and must never be: no thresholds, no judgement
 /// of the numbers a phase produced. This type knows whether a check ran,
@@ -74,6 +84,13 @@ final class ScanProgress {
     /// back to the spinner rather than showing an empty list.
     private(set) var hasPlan = false
     private(set) var isFinished = false
+
+    /// Learned per-phase durations, for `ScanProgressView`'s bar. Loaded
+    /// once here rather than re-read from `Defaults` on every ingest, so a
+    /// run's own in-flight `done` events cannot retroactively change the
+    /// weights the bar it is currently drawing was computed from — only
+    /// `finish()` writes a new value, and only for the *next* run to read.
+    private(set) var weights = PhaseWeights.loaded()
 
     var resolvedCount: Int { phases.filter(\.isResolved).count }
     var plannedCount: Int { phases.count }
@@ -183,6 +200,16 @@ final class ScanProgress {
         // process is the single worst thing a progress view can do.
         for index in phases.indices where !phases[index].isResolved {
             phases[index].state = .didNotRun
+        }
+        // Learn from whatever did complete — including a cancelled or
+        // crashed run's earlier phases, which measured real durations
+        // before the run ended early. Phases just flipped to `.didNotRun`
+        // above teach nothing (`PhaseWeights.learning` only reads `.done`),
+        // so a cut-short run cannot poison the estimate for phases it never
+        // reached.
+        if let mode, hasPlan {
+            weights = weights.learning(mode: mode, phases: phases)
+            weights.save()
         }
     }
 }
