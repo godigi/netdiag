@@ -76,7 +76,7 @@ GUI (SwiftUI) — owns rendering, OS events, and alert policy only
 └── never computes a threshold or writes a diagnosis string
 ```
 
-Three consequences worth stating, because each was a decision rather than
+Four consequences worth stating, because each was a decision rather than
 a default:
 
 1. **`lib/thresholds.sh` exists because there are now two judges.** The
@@ -95,6 +95,20 @@ a default:
    monitor reports G2 even when ICMP is filtered, because withholding it
    would break parity with a scan; the app reads `status.icmp_filtered`
    and declines to notify. Same facts, one place to decide each thing.
+
+4. **`helpers/judgement.py` is the one pair-table two judging surfaces
+   both read.** `--summary`'s text report and `--history`'s `judged`
+   block (`networks[].judged`, schema 2) each turn a metric's stored
+   median into a verdict — one for a person reading the terminal, one
+   for a GUI's Trends chart — and before this module existed each held
+   its own copy of the same six thresholds, on a collision course with
+   the other. `judgement.py` is the single table (metric key → warn
+   env, crit env, direction, phrase) both `helpers/summary.py` and
+   `helpers/history.py` read, so the two can now only ever agree: a
+   menu-bar app rendering `judged.summary` and a terminal printing
+   `--summary`'s own line describe the same network from the same six
+   rows, because there is only one place either could have read them
+   from.
 
 ## Bash vs Python helper — decision (v0.2.0, amended v0.8.0)
 

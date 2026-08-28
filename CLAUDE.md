@@ -19,10 +19,13 @@ Grown from a ~300-line bash starter into a modular `lib/*.sh` CLI with 14 diagno
 - **Thresholds live in `lib/thresholds.sh`, nowhere else.** Four things now
   judge a network — `lib/diagnosis.sh` (one verdict per scan),
   `lib/monitor.sh` (one every few seconds), `helpers/history.py` (one per
-  metric, per stored run) and `helpers/summary.py` (one per metric, per
-  network, over a window) — and if they drift the app shows a green dot
-  over a red report. `tests/test_thresholds.bats` fails the build on an
-  inline numeric cutoff in any of the four.
+  metric, per stored run, in `--show`'s comparison — and now one per
+  network, from that network's stored-run medians, in `--history`'s
+  `judged` block) and `helpers/summary.py` (one per metric, per network,
+  over a window) — the last two reading one shared pair-table in
+  `helpers/judgement.py` so they can't disagree — and if they drift the
+  app shows a green dot over a red report. `tests/test_thresholds.bats`
+  fails the build on an inline numeric cutoff in any of the four.
 - **The GUI holds no diagnostic logic.** `gui/` renders what the CLI
   decides: rule IDs come from `status.rules`, prose comes from
   `diagnosis[].summary` verbatim. If a change would put a threshold or a

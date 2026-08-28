@@ -417,6 +417,7 @@ it would accumulate forever.
               "group_id": "mac:10:98:5f:…"},
   "vpn":     {"active": false, "type": null, "name": null},
   "gateway": {"loss_pct": 0.0, "rtt_avg_ms": 4.1},
+  "internet": {"loss_pct": 0.0, "rtt_avg_ms": 11.8},
   "wifi":    {"rssi": null, "noise": null, "snr": null, "channel": null},
   "dns":     {"ok": true, "resolver": "192.168.15.1", "elapsed_ms": 12},
   "tcp":     {"any_ok": true, "targets": [{"host": "1.1.1.1", "port": 443,
@@ -606,7 +607,7 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
 
 ```jsonc
 {
-  "schema": 1,
+  "schema": 2,
   "sources": {"live": "…/baseline.jsonl", "archive": "…/baseline-archive.jsonl"},
   "counts":  {"records_read": 1972, "unparseable_dropped": 0,
               "duplicates_dropped": 0, "redacted_dropped": 11,
@@ -621,6 +622,12 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
                 "metric_stats": {"gateway_rtt_ms":
                   {"median": 3.21, "p10": 2.90, "p90": 8.40},
                   "wifi_rssi_dbm": null},
+                "judged": {"overall": "ok",
+                  "summary": "Usually healthy across 32 checks.",
+                  "metrics": {"gateway_loss_pct": "ok",
+                    "bufferbloat_gw_ms": null, "bufferbloat_inet_ms": null,
+                    "wifi_rssi_dbm": null, "mtu_effective": "ok",
+                    "ntp_drift_s": "ok"}},
                 "severity_counts": {}}],
   "runs": [{"id": "2026-08-11T20:51:19Z.a3f9c1d2", "ts": "…",
             "network_id": "mac:10:98:5f:…", "version": "0.6.1",
@@ -696,6 +703,57 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
   `metric_stats` is not guaranteed to exist in `metric_samples` at all;
   code iterating `metric_stats` to look up a matching `n` must check for
   the key rather than assume it.
+- **`networks[].judged`** (schema 2+) is a sibling of `metric_stats`, not a
+  replacement for it: `metric_stats` states facts with no verdict;
+  `judged` states a verdict, drawn from those same facts. It is
+  `{"overall": "ok" | "warn" | "critical" | null, "summary": "<sentence>",
+  "metrics": {key: "ok" | "warn" | "critical" | null}}`.
+
+  Only six of the 13 `metrics[]` keys ever appear inside
+  `judged.metrics` — `gateway_loss_pct`, `bufferbloat_gw_ms`,
+  `bufferbloat_inet_ms`, `wifi_rssi_dbm`, `mtu_effective`, `ntp_drift_s` —
+  because those are the only ones with a policy cutoff at all (the pair
+  table in `helpers/judgement.py`'s `JUDGED_METRICS`). Gateway RTT,
+  jitter, internet RTT/loss and both speed-test directions have no
+  absolute cutoff to judge against and are never added to that table, so
+  **their absence from `judged.metrics` means "not judged", never
+  "healthy"** — a consumer that defaults a missing key to `ok` would be
+  inventing a verdict this project has deliberately declined to state.
+
+  Each present verdict judges **the median only** —
+  `metric_stats[key].median` run through the same comparison
+  `--summary`'s text report has always used — never a single run's
+  `value`, which is what `--show`'s own `comparison` block judges
+  instead. This is why a verdict is `null` exactly when the corresponding
+  `metric_stats[key]` is `null`: both are gated on the identical
+  `THRESH_COMPARE_MIN_SAMPLES` check over the identical population, so
+  there is one nullability rule here, not two that could disagree.
+  `overall` is the worst of the present verdicts (`critical` beats `warn`
+  beats `ok`), or `null` when every judged metric on this network is
+  `null` — too few checks to judge any of them yet.
+
+  `summary` is CLI-authored prose (`helpers/judgement.py`'s
+  `compose_summary`) — e.g. "Usually healthy across 1,913 checks.",
+  "Usually healthy — but the Wi-Fi signal is often weak.", "Often having
+  problems — the router drops packets and the path MTU is often
+  reduced.", or "Not enough checks on this network to judge it yet." when
+  `overall` is `null`. Consumers render it verbatim, the same discipline
+  `diagnosis[].summary` and `rules[].blurb` already hold: a GUI must not
+  compose its own wording from `overall` and `metrics`, because
+  `helpers/judgement.py` is the same table `--summary`'s text output
+  reads for the identical six metrics, and a second wording is a second
+  place for the two to quietly disagree.
+
+  Every cutoff `judged` compares against comes from `lib/thresholds.sh`
+  through the environment, via `helpers/judgement.py`'s
+  `require_threshold` — no defaults, so a plain `netdiag --history` now
+  refuses to run (exit 3) if one of the six is unset, the same contract
+  `metric_stats` already holds for `THRESH_COMPARE_*`.
+
+  `--show`'s own schema is untouched by this addition — it stays `1`,
+  and its `comparison` block gains no `judged` sibling of its own; a
+  single run's verdict remains whatever `comparison[key].verdict`
+  already said.
 - **`run_count` counts records; `check_count` counts checks.** They differ
   by the partial runs — see [`run_mode`](#run_mode). `severity_counts` and
   `counts.checks` follow `check_count`; `metric_samples` and
@@ -963,8 +1021,8 @@ every optional dependency below is missing.
 {
   "schema": 1,
   "version": "0.9.0",
-  "schemas": {"run": 1, "monitor": 2, "history": 1, "show": 1,
-              "rules_catalog": 1, "signal_scale": 1, "progress": 1},
+  "schemas": {"run": 1, "monitor": 2, "history": 2, "show": 1,
+              "rules_catalog": 4, "signal_scale": 1, "progress": 1},
   "features": ["capabilities", "version", "progress", "monitor", "history",
                "show", "redact", "speed-only", "dns-only",
                "bufferbloat-only", "ping-only", "watcher", "rules-catalog",
@@ -1025,7 +1083,7 @@ today's fields keeps working against tomorrow's catalog.
 
 ```jsonc
 {
-  "schema": 3,
+  "schema": 4,
   "version": "0.9.0",
   "rules": [
     {
@@ -1044,6 +1102,12 @@ today's fields keeps working against tomorrow's catalog.
       "key": "mtu",
       "label": "Packet size (MTU)",
       "help": "The biggest chunk of data your connection can send in one piece. If it's smaller than usual, some websites and video calls can stall or fail to load."
+    },
+    {
+      "key": "wifi_rssi_dbm",
+      "label": "WiFi signal",
+      "help": "How strong the wireless signal is where your Mac sits, measured by the radio itself. A weak reading here explains stalls and dropouts even when everything past the router looks healthy.",
+      "why_absent": "Signal strength is only recorded by a privileged run — `sudo netdiag` in a terminal."
     }
   ]
 }
@@ -1107,10 +1171,27 @@ today's fields keeps working against tomorrow's catalog.
 - **`doc`** is a GitHub-style anchor into `docs/DIAGNOSIS-RULES.md` for
   the full trigger condition, evidence, and rationale.
 - **`metrics`** is a glossary, not a rule list: one entry per jargon term
-  the report card shows (`router`, `internet`, `dns`, `wifi_signal`,
-  `bufferbloat`, `mtu`, `speed`, `clock`, `packet_loss`, `latency`,
-  `jitter`), for a `questionmark.circle` hint next to a row label. Added
-  in schema `2`; `rules` is unchanged from schema `1`.
+  a consumer needs to explain, for a `questionmark.circle` hint next to a
+  row label or a chart title. Added in schema `2`; `rules` is unchanged
+  from schema `1`. Three families of entries live here now:
+  - The original report-card terms (`router`, `internet`, `dns`,
+    `wifi_signal`, `bufferbloat`, `mtu`, `speed`, `clock`, `packet_loss`,
+    `latency`, `jitter`).
+  - *(schema 4)* One entry per key in `helpers/history.py`'s `METRICS`
+    table — the same 13 keys `netdiag --history`'s `metric_stats` and
+    `judged.metrics` use (`gateway_rtt_ms`, `gateway_loss_pct`,
+    `gateway_jitter_ms`, `inet_rtt_ms`, `inet_loss_pct`, `wifi_rssi_dbm`,
+    `wifi_snr_db`, `mtu_effective`, `bufferbloat_gw_ms`,
+    `bufferbloat_inet_ms`, `speed_down_mbps`, `speed_up_mbps`,
+    `ntp_drift_s`) — not the generic report-card terms above, since a
+    Trends chart titled "Gateway RTT" needs a hint keyed on
+    `gateway_rtt_ms`, not on `router`. `label` matches `--history`'s own
+    label for the key verbatim.
+  - *(schema 4)* Three entries describing `--monitor`'s chart
+    measurements rather than any `--history` key — `monitor_gateway_rtt`,
+    `monitor_internet_tcp`, `monitor_gateway_loss` — whose `help` is the
+    prose a Live chart's subtitle shows, so the GUI does not author its
+    own claim about how the number underneath was measured.
   - **`key`** is what a GUI looks the entry up by — stable, never
     re-used for a different meaning.
   - **`label`** is the short user-facing name for the term (matches the
@@ -1118,6 +1199,18 @@ today's fields keeps working against tomorrow's catalog.
   - **`help`** is 1–2 plain sentences explaining the term to someone who
     has never heard it, with no jargon and no embedded numeric
     threshold — same discipline as `blurb`, for the same reason.
+  - **`why_absent`** *(optional, added in schema 4)* — present only on a
+    `--history` metric entry whose absence from a stored run has a
+    knowable cause: a check mode that skips the measurement (`--quick`,
+    the background watcher, a `--speed-only`/`--dns-only`/…-focused run)
+    or a privilege it needs (`sudo netdiag` for the two WiFi radio
+    metrics). One or two plain sentences, rendered verbatim by consumers
+    — it names *why* the chart is empty, not what to do about it; the
+    GUI supplies its own "Full check" affordance rather than the CLI
+    dictating UI. Metrics with no single knowable cause (a report-card
+    term, or a metric that is simply "measured or the network has never
+    been checked") omit the field entirely, the same way a rule omits
+    `also` when it has no secondary category.
 
 ---
 

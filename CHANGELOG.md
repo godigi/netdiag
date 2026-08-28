@@ -314,6 +314,72 @@ IPv4-only (`scutil --nwi`: "No IPv6 states found"). The predicates are
 pure and fixture-tested and the CLAT range is the RFC's, but end-to-end
 behaviour on an actual NAT64 network is unconfirmed.
 
+### Added — `--history` gains a per-network verdict, so a chart can say "usually healthy" without judging anything itself
+
+`netdiag --history` has always shipped `metric_stats` — median, p10, p90
+per metric, per network — but stated no opinion about any of them. A
+GUI's Trends tab wanting to open on "this network is usually fine" had
+no field to read and, short of one, would have had to invent its own
+copy of six thresholds Swift has no business owning: exactly the
+CLAUDE.md rule this project already holds for `diagnosis[].summary` and
+`rules[].blurb`.
+
+`networks[]` now carries a `judged` sibling of `metric_stats` —
+`{"overall": "ok"|"warn"|"critical"|null, "summary": "<sentence>",
+"metrics": {key: verdict}}` — schema `1` → `2`. It judges **the median
+only**, the same discipline `--summary`'s text report has always held,
+and a verdict is `null` exactly when the corresponding `metric_stats`
+entry is: one nullability rule, gated on the same
+`THRESH_COMPARE_MIN_SAMPLES` over the same population. Only the six
+metrics with an actual policy cutoff — gateway loss, both bufferbloat
+deltas, WiFi RSSI, path MTU, clock drift — ever appear in
+`judged.metrics`; the other seven `--history` keys (gateway RTT and
+jitter, internet RTT/loss, both speed directions) have no absolute
+threshold to judge against and are never added, so their absence means
+"not judged", never "healthy". `summary` is CLI-authored prose —
+"Usually healthy across 1,913 checks.", "Usually healthy — but the
+Wi-Fi signal is often weak.", "Not enough checks on this network to
+judge it yet." — that a consumer renders verbatim rather than composing
+its own wording from the verdict map. `--show`'s own schema is
+untouched; its `comparison` block keeps judging one run at a time, as
+before.
+
+The judging logic itself lives in a new `helpers/judgement.py`, not
+inline in `history.py`: `--summary`'s text report and `--history`'s
+`judged` block were about to become two independent implementations of
+the same six comparisons, which is precisely the shape that drifts
+silently — a menu-bar app reading `judged` and a terminal reading
+`--summary` ending up with two different opinions about one network,
+with nothing to say which one lied. `judgement.py` is the one pair-table
+(metric key → warn env, crit env, direction, phrase) both
+`helpers/history.py` and `helpers/summary.py` now read; `--summary`'s
+text output is unchanged byte-for-byte (`tests/test_summary.bats`
+guards it). Every cutoff still comes from `lib/thresholds.sh` through
+the environment with no defaults — a plain `netdiag --history` now
+refuses to run (exit 3) if one of the six judging thresholds is unset,
+the same contract `metric_stats` already held for `THRESH_COMPARE_*`.
+`bin/netdiag` factors the ten-name threshold export this needs into one
+`_export_judging_thresholds()` function, called from every mode that
+now judges a network from the stored history, instead of a copy of the
+same list at each call site.
+
+`--rules-catalog`'s glossary grows to match: schema `3` → `4`, an
+optional `why_absent` field on a metric entry (present only where an
+empty chart has a knowable cause — a check mode that skips the
+measurement, or the privilege the two WiFi radio metrics need — plain
+prose migrated from and replacing `HistoryView.hint(for:)`'s Swift
+switch, rephrased neutrally since the button belongs to the GUI, not
+the CLI), and 16 new metric entries: one per `--history` metric key (the
+same 13 keys `metric_stats` and `judged.metrics` use, keyed and labelled
+to match verbatim) plus three describing `--monitor`'s Live-tab chart
+measurements (`monitor_gateway_rtt`, `monitor_internet_tcp`,
+`monitor_gateway_loss`), whose `help` is the chart-subtitle prose a GUI
+would otherwise have to author itself. `--capabilities` reports
+`history: 2` and `rules_catalog: 4`.
+
+This is the CLI half of the Live/Trends redesign; the GUI work that
+consumes `judged` and `why_absent` is a separate, later entry.
+
 ## [0.12.0] - 2026-08-27
 
 ### Fixed — a test that failed depending on what time it was run
