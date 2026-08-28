@@ -848,8 +848,8 @@ fi
 . "$LIB_DIR/globals.sh"
 for mod in iface vpn wifi wifi_scan wifi_disconnect dhcp arp gateway public \
            bufferbloat mtu dns ipv6 tcp_reach speedtest ntp traceroute mtr \
-           wan internet_ping hosts netid path watchdog headline diagnosis \
-           output gping; do
+           wan internet_ping hosts netid path watchdog availability \
+           headline diagnosis output gping; do
   # shellcheck disable=SC1090
   . "$LIB_DIR/$mod.sh"
 done
@@ -1010,6 +1010,10 @@ run_timed mtr         mtr_run
 # traffic at all, which is why it sits outside the parallel batch rather
 # than competing for a slot in it. [ND-1]
 run_timed watchdog    watchdog_run
+
+# How this network has behaved over the last day, from the event journal.
+# A file read and one python call — no network traffic. [AV-1, AV-2]
+run_timed availability availability_run
 
 # The second reading, before anything judges the numbers. Everything
 # between here and NETID_FP_START was measured on the network this

@@ -229,3 +229,12 @@ WATCHER_PATH_BLOCKED=0     # 1 = it runs from a TCC-protected folder
 DIAGNOSIS_LINES=""       # one "SEV|MSG" per line (SEV ∈ critical/warn/info)
 BASELINE_JSON=""         # raw JSON from helpers/baseline.py
 MOST_LIKELY_ROOT_CAUSE=""
+
+# Availability over the event journal (lib/availability.sh) [AV-1, AV-2]
+AV_MEASURED=0        # 1 = a journal existed and was read for this network
+AV_WINDOW_HOURS=""   # the window judged, from THRESH_AV_WINDOW_HOURS
+AV_OUTAGE_COUNT=0    # episodes of an outage rule, this network, in window
+AV_DOWNTIME_S=0      # their total duration
+AV_LONGEST_S=0       # the longest single one
+AV_FLAP_COUNT=0      # how many were shorter than THRESH_AV_FLAP_MAX_S
+AV_UNOBSERVED_PCT=0  # how much of the window nobody was watching

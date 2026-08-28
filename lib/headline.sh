@@ -323,6 +323,22 @@ headline_run() {
     _row ok "Hosts file" "clean (only macOS defaults)"
   fi
 
+  # ── Availability (only when a journal exists) ───────────────────────
+  # No row without a recorder: a blank "Availability: unknown" in every
+  # report is an advertisement for a feature, not a finding. The severity
+  # comes from the same two cutoffs AV-1 reads, so the row and the
+  # diagnosis cannot disagree about whether a night was bad.
+  if [ "${AV_MEASURED:-0}" -eq 1 ]; then
+    if [ "$AV_OUTAGE_COUNT" -ge "$THRESH_AV_OUTAGE_COUNT" ] \
+       || [ "$AV_DOWNTIME_S" -ge "$THRESH_AV_DOWNTIME_S" ]; then
+      _row warn "Availability" "$AV_OUTAGE_COUNT drop(s) in ${AV_WINDOW_HOURS}h · $(availability_fmt_duration "$AV_DOWNTIME_S") down"
+    elif [ "$AV_OUTAGE_COUNT" -gt 0 ]; then
+      _row "" "Availability" "$AV_OUTAGE_COUNT drop(s) in ${AV_WINDOW_HOURS}h · $(availability_fmt_duration "$AV_DOWNTIME_S") down"
+    else
+      _row ok "Availability" "no drops recorded in ${AV_WINDOW_HOURS}h"
+    fi
+  fi
+
   # ── Background watcher (only when one is installed) ─────────────────
   # No row at all for the overwhelming majority of runs, where no watcher
   # exists: a "not installed" line in every report is an advertisement,

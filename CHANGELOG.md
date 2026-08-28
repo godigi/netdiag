@@ -6,6 +6,49 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — netdiag judges the record, not just the moment [AV-1, AV-2]
+
+The verdict layer over the event journal, and the half `helpers/events.py`
+deliberately refuses to do. A scan is a snapshot, and a snapshot taken at a
+good moment on a connection that dropped six times last night reports a
+healthy network — truthfully, and uselessly.
+
+- **`AV-1` (warn)** fires when this network's outages in the last
+  `THRESH_AV_WINDOW_HOURS` reach either `THRESH_AV_OUTAGE_COUNT` or
+  `THRESH_AV_DOWNTIME_S`. Either, not both: six ten-second drops is a
+  flapping link and one twelve-minute drop is an outage, and a rule
+  requiring both would report neither. It names how many, how long in
+  total, how long the worst was, and points at `--events` for the exact
+  times to hand to whoever runs the line.
+- **`AV-2` (info)** fires on drops shorter than `THRESH_AV_FLAP_MAX_S` —
+  the case no individual scan can ever see, because a check run before one
+  and after it finds nothing wrong both times. Independent of `AV-1`, not
+  an else-branch: a link can flap into uselessness while no single drop is
+  long enough to reach the downtime cutoff.
+- **What counts as "down" is policy, so it lives in `lib/thresholds.sh`**
+  as `THRESH_AV_OUTAGE_RULES` — `N1`, `N1b`, `N1c`, `P1`, `P2`.
+  Deliberately not `L1`/`L2`/`D1`: those are a connection working badly,
+  and counting them would turn every bad afternoon into downtime. A test
+  asserts no second copy of that list exists anywhere in `lib/` or
+  `helpers/`.
+- **Both are scoped to `NETWORK_ID`.** A laptop that spent yesterday on a
+  café's broken WiFi must not have that charged to the office connection
+  it is on now.
+- **Neither fires without a journal.** Its absence is not evidence of
+  uptime — that is `ND-1`'s failure one level down — so `availability` is
+  `null` in the JSON and the Report card grows no row.
+- **Both say when the window was not watched.** Above
+  `THRESH_AV_UNOBSERVED_NOTE_PCT` the sentence appends the unobserved
+  fraction and scopes the count to what was *seen*. A note and not a
+  suppression, deliberately: an outage that was observed did happen, and
+  silence about it because the Mac also slept is the worse error. The
+  reverse — "no outages in 24 hours" off six hours of watching — is the
+  claim the note exists to prevent.
+
+`lib/availability.sh` reads the journal through `helpers/events.py` and
+applies the cutoffs; the reader still judges nothing. 14 new tests.
+
+
 ### Added — netdiag remembers what happened [event journal, `--events`]
 
 The first item of Tier 1 from `docs/design/nothing-was-watching.md`, and

@@ -343,3 +343,46 @@ THRESH_WATCHER_INTERVAL_S=900
 # runs — three quarters of an hour on the default cadence — is not
 # lateness, it is a watcher that has stopped.
 THRESH_WATCHER_STALE_FACTOR=3
+
+# ── Availability, judged from the event journal [AV-1, AV-2] ─────────────
+# The journal records what happened; these decide whether it was bad.
+# helpers/events.py deliberately judges nothing, so this is where the
+# verdict lives — the same split as every other rule in this project.
+
+# The window every availability verdict is about. A day is the shortest
+# span in which "it keeps dropping" is a claim rather than a coincidence,
+# and it is the span a person actually remembers: "it was fine yesterday".
+THRESH_AV_WINDOW_HOURS=24
+
+# Which rules count as the connection being *down*, as opposed to slow,
+# lossy or misconfigured. Not a number, but a policy that decides a
+# verdict, so it lives here for the same reason the numbers do — and
+# because lib/availability.sh and any future consumer must not each keep
+# their own idea of what an outage is.
+#
+# N1/N1c: nothing joined, or joined with no route. N1b: a focused run's
+# equivalent. P1/P2: the public internet did not answer. Deliberately NOT
+# L1/L2 (packet loss) or D1 (DNS): those are a connection working badly,
+# and calling them outages would turn every bad afternoon into downtime.
+THRESH_AV_OUTAGE_RULES="N1 N1b N1c P1 P2"
+
+# AV-1 fires on either count or total, because they catch different
+# faults: six ten-second drops is a flapping link, and one twelve-minute
+# drop is an outage, and a user wants to hear about both. Five minutes in
+# a day is roughly 99.65% availability — well outside what a working home
+# connection does, and low enough to catch a single bad episode.
+THRESH_AV_OUTAGE_COUNT=3
+THRESH_AV_DOWNTIME_S=300
+
+# AV-2 is about a pattern no single check can see: drops short enough
+# that any one scan would land either side of them. Two minutes is longer
+# than the monitor's slowest cadence, so an episode under it is one the
+# recorder saw start and end within a couple of samples.
+THRESH_AV_FLAP_MAX_S=120
+THRESH_AV_FLAP_COUNT=6
+
+# Above this much of the window unobserved, the counts are a lower bound
+# and the sentence says so. Not a suppression: an outage that was seen
+# still happened, and staying silent about it because the Mac also slept
+# would be the worse error.
+THRESH_AV_UNOBSERVED_NOTE_PCT=20
