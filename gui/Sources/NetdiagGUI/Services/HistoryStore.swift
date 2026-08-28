@@ -158,6 +158,17 @@ final class HistoryStore {
             let key = canonicalID(net.id)
             if var existing = byID[key] {
                 existing.runCount += net.runCount
+                // Summed only when both sides have it. `checkCount` is nil
+                // for a network the CLI reported before it started emitting
+                // `check_count` (see the field's doc comment) — treating
+                // that nil as 0 here would silently understate a merged
+                // network's true check count instead of admitting the
+                // total is unknown, same as leaving it un-decoded would.
+                if let existingCount = existing.checkCount, let netCount = net.checkCount {
+                    existing.checkCount = existingCount + netCount
+                } else {
+                    existing.checkCount = nil
+                }
                 // A merge is the user asserting an identity the data could
                 // not establish. Mark the result synthesized for the same
                 // reason the bridge heuristic does.
@@ -256,22 +267,39 @@ final class HistoryStore {
     }
 
     /// Returns the most recent speed test measurement from history.
+    ///
+    /// A `networkID` scopes the search to that network only. That scoped
+    /// loop used to fall through into the unscoped one below when it found
+    /// nothing, so a cafe network with no speed test of its own silently
+    /// returned home fibre's numbers instead of "no data" — `DropdownView`
+    /// captions the result with only an age ("speeds from test 3 weeks
+    /// ago"), never a network name, so the wrong network's numbers looked
+    /// like the right network's stale ones. `return nil` below is the fix:
+    /// once a `networkID` was given, "not found for that network" must stay
+    /// "not found", not silently broaden the search.
+    ///
+    /// `NetdiagCoordinator.hydrateFromHistoryIfNeeded` calls this with no
+    /// argument at all, precisely because it wants the opposite: "any
+    /// network's most recent speed test", for a cold launch that has not
+    /// yet identified which network it's on. That case takes the `nil`
+    /// branch of `canonicalTarget` below and always falls through to the
+    /// unscoped loop, unchanged.
     func latestSpeedTest(for networkID: String? = nil) -> (down: Double, up: Double?, date: Date)? {
         let canonicalTarget = networkID.map { canonicalID($0) }
         let runs = document.runs.sorted { ($0.ts ?? "") > ($1.ts ?? "") }
-        
+
         if let canonicalTarget {
             for run in runs {
-                if canonicalID(run.networkID) == canonicalTarget || run.networkID == networkID {
-                    let down = run.metrics["speed_down_mbps"] ?? run.metrics["speedtest.down_mbps"]
-                    if let down {
-                        let up = run.metrics["speed_up_mbps"] ?? run.metrics["speedtest.up_mbps"]
-                        return (down, up, run.date)
-                    }
+                guard canonicalID(run.networkID) == canonicalTarget || run.networkID == networkID else { continue }
+                let down = run.metrics["speed_down_mbps"] ?? run.metrics["speedtest.down_mbps"]
+                if let down {
+                    let up = run.metrics["speed_up_mbps"] ?? run.metrics["speedtest.up_mbps"]
+                    return (down, up, run.date)
                 }
             }
+            return nil
         }
-        
+
         for run in runs {
             let down = run.metrics["speed_down_mbps"] ?? run.metrics["speedtest.down_mbps"]
             if let down {

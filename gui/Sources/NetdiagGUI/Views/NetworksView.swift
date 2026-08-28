@@ -234,15 +234,33 @@ struct NetworksView: View {
     }
 
     private func statsRow(_ net: HistoryDocument.Network) -> some View {
-        HStack(spacing: 24) {
-            stat("Checks", "\(net.runCount)")
-            stat("Problems", "\(net.incidentCount)",
-                 detail: net.runCount > 0
-                    ? String(format: "%.0f%% of checks", net.incidentRate * 100) : nil)
+        // `checkCount` is nil for a CLI old enough to predate the key (see
+        // `HistoryDocument.Network`'s doc comment), and the only number
+        // left to show then is `runCount` — every stored record, including
+        // --speed-only/--mtu-only/--wifi-only partials. Labeling that count
+        // "Checks" was the bug: on this machine one network reports
+        // run_count 32 against check_count 28, so the old label overcounted
+        // by exactly the partial runs it didn't examine the network for.
+        // The label switches to "Runs" whenever it's showing the
+        // all-records total rather than the checks-only one, so it never
+        // claims more than the number actually means.
+        let checksCount = net.checkCount ?? net.runCount
+        let checksLabel = net.checkCount != nil ? "Checks" : "Runs"
+        return HStack(spacing: 24) {
+            stat(checksLabel, "\(checksCount)")
+            stat("Problems", "\(net.incidentCount)", detail: problemsDetail(net))
             stat("Median router RTT", medianRTT(net))
             stat("Seen", dateRange(net))
         }
         .font(.caption)
+    }
+
+    /// The "% of checks" caption under the Problems stat, or nil when
+    /// `incidentRate` has no honest denominator to report against — see
+    /// that property's doc comment for why it can be nil.
+    private func problemsDetail(_ net: HistoryDocument.Network) -> String? {
+        guard let rate = net.incidentRate else { return nil }
+        return String(format: "%.0f%% of checks", rate * 100)
     }
 
     private func controlsRow(_ net: HistoryDocument.Network) -> some View {
@@ -281,7 +299,11 @@ struct NetworksView: View {
             let visible = problemsOnly ? runs.filter(isProblem) : runs
             if visible.isEmpty {
                 if problemsOnly {
-                    Text("No warnings on this network")
+                    // `isProblem` below matches "warn" OR "critical" — this
+                    // used to say "No warnings", which read as false
+                    // reassurance on a network whose only issues were
+                    // critical rather than merely warn-level.
+                    Text("No problems on this network")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 8)
@@ -408,7 +430,16 @@ struct NetworksView: View {
     }
 
     private func networkRuns(_ net: HistoryDocument.Network) -> [HistoryDocument.Run] {
-        store.runs(networkID: net.id, window: .all)
+        // Filtered to `isCheck`, matching `HistoryStore.recentChecks` (Home's
+        // "Recent checks" card) and the "CHECKS" section header this list
+        // sits under. `store.runs(networkID:window:)` applies no such
+        // filter on its own, so a --speed-only reading used to show up here
+        // but not on Home — the same run reading two different ways
+        // depending on which list was showing it. Filtering here also makes
+        // this list's length agree with `statsRow`'s checksCount, which
+        // is the same `check_count` population once `checkCount` is
+        // present.
+        store.runs(networkID: net.id, window: .all).filter(\.isCheck)
     }
 
     private func isProblem(_ run: HistoryDocument.Run) -> Bool {
@@ -438,11 +469,27 @@ struct MergeSheet: View {
     let onCancel: () -> Void
     @State private var destination: String?
 
+    /// "28 checks" where the CLI told us how many of the records were
+    /// checks, "32 runs" where it did not — never "checks" over a number
+    /// that counts partials too. Same fallback and same honesty as
+    /// `NetworksView.statsRow`.
+    private static func recordCount(_ net: HistoryDocument.Network) -> String {
+        if let checks = net.checkCount {
+            return "\(checks) check\(checks == 1 ? "" : "s")"
+        }
+        return "\(net.runCount) run\(net.runCount == 1 ? "" : "s")"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Merge \"\(coordinator.history.displayName(for: source.id))\"")
                 .font(.headline)
-            Text("Its \(source.runCount) check\(source.runCount == 1 ? "" : "s") will be shown as part of the network you pick. This only changes how history is grouped in this app — nothing is deleted, and you can undo it.")
+            // `runCount` is every stored record, including --speed-only and
+            // the other partials; `check_count` is the ones that examined
+            // the network. This sheet said "checks" over the former, the
+            // same conflation the stats row above carried — and here it
+            // misstates what the user is about to move.
+            Text("Its \(Self.recordCount(source)) will be shown as part of the network you pick. This only changes how history is grouped in this app — nothing is deleted, and you can undo it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -451,7 +498,7 @@ struct MergeSheet: View {
                 ForEach(coordinator.history.mergedNetworksByRecency.filter { $0.id != source.id }) { net in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(coordinator.history.displayName(for: net.id))
-                        Text("\(net.runCount) checks · \(net.gateways.joined(separator: ", "))")
+                        Text("\(Self.recordCount(net)) · \(net.gateways.joined(separator: ", "))")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     .tag(net.id)

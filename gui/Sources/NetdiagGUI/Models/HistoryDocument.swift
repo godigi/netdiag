@@ -96,6 +96,14 @@ struct HistoryDocument: Decodable, Sendable {
         var firstSeen: String?
         var lastSeen: String?
         var runCount: Int = 0
+        /// Of `runCount`, the ones that examined the network rather than
+        /// answering one narrow question about it — the same `check_count`
+        /// vs `run_count` distinction `Counts.checks` documents above, at
+        /// the per-network level `helpers/history.py` also emits it at.
+        /// Optional, not defaulted to 0: an older CLI's `--history` omits
+        /// this key entirely, and that must decode as "unknown", not "zero
+        /// checks ever ran" — the same reasoning as `Counts.checks`.
+        var checkCount: Int?
         var gateways: [String] = []
         var isps: [String] = []
         var ssids: [String] = []
@@ -115,6 +123,7 @@ struct HistoryDocument: Decodable, Sendable {
             case firstSeen = "first_seen"
             case lastSeen = "last_seen"
             case runCount = "run_count"
+            case checkCount = "check_count"
             case metricSamples = "metric_samples"
             case metricStats = "metric_stats"
             case severityCounts = "severity_counts"
@@ -134,8 +143,33 @@ struct HistoryDocument: Decodable, Sendable {
             (severityCounts["warn"] ?? 0) + (severityCounts["critical"] ?? 0)
         }
 
-        var incidentRate: Double {
-            runCount > 0 ? Double(incidentCount) / Double(runCount) : 0
+        /// Fraction of this network's *checks* that came back warn or
+        /// critical, or `nil` when there is no honest denominator to divide
+        /// by.
+        ///
+        /// Divides by `checkCount`, not `runCount`. `helpers/history.py`
+        /// builds `severity_counts` — and so `incidentCount` above — only
+        /// from runs that pass `is_check()`: a `--speed-only` reading forms
+        /// no opinion on the network's health, so it can't vote on this
+        /// rate (history.py, around the `severity_counts` pass). Dividing
+        /// that checks-only numerator by `runCount`, which counts every
+        /// stored record including those partial runs, understated the
+        /// rate on any network with `-only` runs in its history — while
+        /// `NetworksView` captioned the result "% of checks", claiming the
+        /// exact population it was silently not using.
+        ///
+        /// Falls back to `runCount` only when `checkCount` is `nil` — a CLI
+        /// old enough to predate the key — which reproduces this
+        /// property's original behavior for that case rather than
+        /// inventing a new one: pre-`check_count` `severity_counts` was
+        /// never check-filtered either, so numerator and denominator did
+        /// describe the same (unfiltered) population back then. `nil` when
+        /// that denominator is zero: no checks recorded is "nothing to
+        /// report a rate about", not a genuine 0%.
+        var incidentRate: Double? {
+            let denominator = checkCount ?? runCount
+            guard denominator > 0 else { return nil }
+            return Double(incidentCount) / Double(denominator)
         }
 
         func hash(into hasher: inout Hasher) { hasher.combine(id) }

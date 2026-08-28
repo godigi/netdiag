@@ -6,6 +6,95 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — the report card no longer contradicts its own numbers
+
+An audit of everything netdiag *says* — CLI prose, the Report card, and
+the app — for output an average person would misread, and for two
+statements on one screen that disagree. Twenty findings; these are the
+ones where the app was telling the user two different things at once.
+
+**A category names the measurement a rule judges, not the cause it
+blames.** The app tints a report-card row by the category of the rules
+that fired, and that one confusion produced most of what follows.
+
+- `G1` ("gateway packet loss with weak Wi-Fi") was catalogued under
+  `wifi`, because the radio is its cause. So a Mac losing 35% of its
+  packets to its own router showed **a green all-clear dot beside the
+  words "35% loss"**, while the red mark went to a Wi-Fi row that, on an
+  unprivileged run, had no number in it at all. `G1` is now `router`,
+  matching `G2` — the same measurement, differing only in whether a weak
+  signal was available to explain it.
+- New optional `also` field on `--rules-catalog` (schema 2 → 3, additive)
+  for a rule that genuinely judges two measurements. `G1` carries
+  `"also": "wifi"` so the row with the loss figure *and* the row naming
+  the cause both light up. A consumer reading only `category` is
+  unaffected.
+- **`router` no longer bleeds into the Internet row.** It was there to
+  catch `N1`, but it also caught `G3` — whose own sentence reads "not to
+  the wider internet, so your internet service itself looks fine from
+  here", printed directly beneath an amber Internet row.
+- **`dhcp` no longer tints the DNS row.** `DH-1` is "your address lease
+  expires soon"; it was turning "6 of 6 resolvers OK" amber.
+- **`ipv6`, `topology`, `vpn` and `speed` now tint something.** They
+  matched no row at all, so a run firing `V6-1`, `NAT-1` or `WAN-1`
+  showed an entirely green card sitting above its own amber findings. The
+  card gains Packet loss, IPv6, VPN, NAT topology and Local network rows —
+  the ones `lib/headline.sh` has always had and the app had dropped.
+- `tests/test_rules_catalog.bats` now fails the build when any category
+  has no row claiming it. The old failure was silent: a new rule family
+  simply coloured nothing and the card looked healthy.
+
+**"Not measured" was answering the wrong question.** On a `--quick` run —
+the depth *both* primary buttons run — five of the card's rows read "not
+measured", which an average reader takes as *we tried and failed*. The
+truth is *we skipped it because you asked for the fast answer*, which the
+CLI's own card has always said. Absent values now name the run's depth
+("not measured (quick check)"). The Wi-Fi row says "not recorded (needs
+sudo)" rather than "not measured", because on Home it sits inches below a
+live radio reading taken from macOS directly — the card was flatly
+denying a number the same screen was showing. That live row is now
+labelled "now".
+
+**A reading the CLI told us not to trust is no longer painted as a
+measurement.** `TCP-1` and `ICMP-1` both mean real traffic is fine and
+only ping is being dropped — normal on hotel and corporate networks. The
+card showed the loss figure anyway, so a red "100% loss, no reply" row
+sat directly above the CLI's own "your internet is fine; don't worry
+about the ping numbers above", and a **green dot** sat beside "100% loss,
+no reply" whenever no internet-category rule had fired. Those rows now
+read `n/a — ping blocked`, and `n/a` counts as unmeasured, so it cannot
+earn an all-clear dot. Same treatment for an IPv6-only network, where the
+IPv4 probe cannot succeed by construction.
+
+**Bufferbloat grade C beside a D or an F was downgraded to a warning.**
+`lib/headline.sh` tested `*C*` before `*D*|*F*`, and `case` takes the
+first arm that matches — so a grade F link printed a yellow "noticeable
+lag under load" directly above `B2`'s red "enough to ruin voice/video
+calls and multiplayer games". Two severities for one fact, one screen
+apart; every C-plus-D/F pair was affected. The mapping is now a named
+function (`bufferbloat_card_verdict`) checked against `B1`/`B2` for all
+25 grade pairs. The app's "Under load" row also shows both legs now, not
+just the gateway's — its tint already came from either.
+
+**The headline sentence could describe an unrelated rule.**
+`lib/monitor.sh` appends rules in evaluation order, not severity order, so
+an `info` `VPN-1` sits ahead of a `critical` `L1`. The app took the first
+rule it could look up, and a VPN user losing most of their packets got a
+red "Detecting a network problem" card whose body read "A VPN is carrying
+your traffic right now." The worst rule now wins, asserted in `--verify`.
+
+Also: the headline now follows the same precedence as the dropdown's
+stage card (scanning and paused were missing, so a sleeping display
+showed "Monitoring paused" in one place and a stale alert in another); a
+suppressed alert is cleared when monitoring stops rather than outliving
+its condition; the menu bar no longer shows another network's speed test
+when the current one has none recorded; the Networks tab counts *checks*
+where it says "checks" (`check_count`, not every stored record — 28
+against 32 on this machine) and its list membership now matches Home's;
+Live's "Internet" number says it is a TCP connect time, not the ping the
+dropdown shows under the same word; and the Wi-Fi location banner no
+longer appears on a machine that has never had a Wi-Fi card.
+
 ### Fixed — an IPv6-only network no longer reads as no network at all
 
 `V6-1` has covered broken IPv6 alongside working IPv4 for versions. The
