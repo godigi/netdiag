@@ -1018,6 +1018,57 @@ HTTP status alone with `curl -o /dev/null`, so a portal answering 200 with
 its own login page — the common case — was reported as "No captive
 portal." See `captive_portal_classify`.
 
+## Rules about the traffic on the link
+
+One rule, one category (`traffic`). It is not a fault and never accuses
+the network of anything: it names what *this Mac* was doing while the
+network was being measured, because every other number in the report
+assumes the link was otherwise quiet.
+
+### TR-1 — your own Mac was using the connection
+
+- Trigger: `traffic_at_least "$THRESH_TRAFFIC_BUSY_MBPS"` — either
+  direction of the `nettop` sample in `lib/traffic.sh` carried at least
+  the floor, netdiag's own probes excluded.
+- Severity: `varies`. `info` alone; `warn` when `B1`, `B2`, `SP-1` or
+  `BL-1` also fired.
+- Evidence: the busier direction in Mb/s, and the busiest process by name.
+- Recommendation: on the `warn` path, pause the transfer and re-run
+  before concluding anything about the router or the ISP.
+
+**The defect it closes.** netdiag measured the path and never the traffic
+on it, so a bufferbloat grade of D with a backup uploading at 40 Mb/s was
+indistinguishable from a grade of D on an idle link. The report blamed
+the router's queue in both cases. One of those users needs a better
+router; the other needs to wait ten minutes, and they were being given
+the same advice. The same applies to a speed result measured alongside a
+sync — it reports the leftovers and reads as a slow ISP.
+
+**Why `info` on its own and `warn` only in company.** Traffic is a fact,
+not a fault: a Mac downloading something is a Mac working correctly, and
+a warning on every large download would be noise of exactly the kind
+`ND-1`'s `pending` state exists to avoid. It escalates only when it has
+become a *competing explanation* — when a verdict it undermines has
+actually fired and the user is about to act on it.
+
+**Why its own category and not `load`.** A category names the row whose
+number a rule judges. `load` is the Under-load row, and TR-1 passes no
+judgement on the router's queueing — it is the reason to distrust that
+row's number, which is a different statement. Tagging it `load` would
+tint the bufferbloat row amber every time a backup ran.
+
+**Why it runs inside the parallel batch.** `nettop` is a passive
+observer: it reads other processes' counters and generates no traffic, so
+unlike `internet_ping` and `bufferbloat` it does not need a quiet link and
+does not need its own slot in the run. The cost of that choice is
+netdiag's own batch traffic landing inside the sample window, which
+`helpers/traffic.py` excludes by process name — without it, netdiag would
+report itself as the busiest thing on the link on every run.
+
+**Why `--quick` skips it.** `nettop` needs about three seconds of startup
+before its first snapshot, so even a short window costs four or five
+seconds of a budget that is eight seconds in total.
+
 ## Rules about netdiag itself
 
 One rule, one category (`netdiag`), and the only entry in this document

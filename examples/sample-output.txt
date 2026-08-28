@@ -1,18 +1,18 @@
-netdiag  2026-08-28-152849
-log: /Users/bfreeman/net-diag/2026-08-28-152849.log
+netdiag  2026-08-28-184649
+log: /Users/bfreeman/net-diag/2026-08-28-184649.log
 
 ── Report ──
   ✓  Network             en0 · WiFi 5GHz ch149
-  ✓  Router              192.168.60.1 · 0% loss · 3.4 ms · ±0.9 ms jitter
+  ✓  Router              192.168.60.1 · 0% loss · 3.5 ms · ±0.9 ms jitter
   ✓  Internet            Cyber Info Provedor de Acesso LTDA ME ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 53 ms · ±3.5 ms jitter
+  ✓  Latency             1.1.1.1 · 55 ms · ±1.7 ms jitter
   ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
   ✓  DNS                 working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Packet size         1500 bytes · standard
   ✓  Router config       UPnP disabled (safer default)
   ✓  Hosts file          clean (only macOS defaults)
-  ✓  Background watcher  last ran 2 minutes ago
+  ✓  Background watcher  last ran 9 minutes ago
   ·  VPN                 not active
   ·  IPv6                not available (IPv4-only network)
   ·  Speed               measuring now — result prints below (~1 min)
@@ -28,8 +28,8 @@ log: /Users/bfreeman/net-diag/2026-08-28-152849.log
 
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 18.9 Mbps · Up 13.3 Mbps · 6.435 ms (jitter 0.297 ms)
+  ✓ Down 19.0 Mbps · Up 14.2 Mbps · 6.686 ms (jitter 0.247 ms)
   · Server: Cyber Info Serviços de Telecomunicações Ltda
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-28-152849.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-28-184649.log

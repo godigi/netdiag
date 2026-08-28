@@ -85,6 +85,12 @@ CATEGORIES = frozenset({
     # is broken, which is the same class of mistake as G1's green dot
     # beside "35% loss", only pointed the other way.
     "netdiag",
+    # Not a property of the path either: what this Mac itself was putting
+    # on the link while the path was being measured. It is its own family
+    # because it qualifies the load and speed rows without being a
+    # judgement about either — tagging it `load` would tint the Under-load
+    # row whenever a backup ran, which is the opposite of what it means.
+    "traffic",
 })
 
 # `category` names the measurement a rule is ABOUT — the row whose number
@@ -921,6 +927,25 @@ RULES: list[dict[str, str]] = [
             "a healthy idle watcher looks like."
         ),
         "doc": "DIAGNOSIS-RULES.md#nd-1--the-background-watcher-is-installed-and-not-running",
+    },
+    {
+        "id": "TR-1",
+        "title": "Your own Mac was using the connection",
+        "category": "traffic",
+        "severity": "varies",
+        "scope": "scan",
+        "blurb": (
+            "Something on this Mac — a backup, a cloud sync, a download, a "
+            "video call — was moving a substantial amount of data while the "
+            "check ran, and the busiest process is named in the diagnosis. "
+            "Nothing is broken. It matters because every speed and latency "
+            "figure in the report was measured alongside that traffic, so "
+            "they describe what was left over rather than what the line can "
+            "do. A warning rather than a note when a slowness or "
+            "under-load verdict also fired, because then it is a competing "
+            "explanation for a finding you were about to act on."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#tr-1--your-own-mac-was-using-the-connection",
     },
 ]
 

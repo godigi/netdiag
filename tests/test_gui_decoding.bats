@@ -85,9 +85,19 @@ PY
 @test "the parity guard would catch a key that is only declared" {
   # A grep-shaped guard that matches nothing passes for the wrong reason.
   # Plant one and prove the comparison actually fails.
+  # Insert the key by *structure*, not by matching one line's exact text:
+  # an earlier version of this test sed'd for a specific `case ...` line
+  # and silently stopped planting anything the first time a real key was
+  # added to it, which made the guard pass for the wrong reason.
   planted="$BATS_TEST_TMPDIR/planted.swift"
-  sed 's/^        case suitability, diagnosis, watcher$/        case suitability, diagnosis, watcher, plantedKey/' \
-    "$SNAPSHOT" > "$planted"
+  python3 - "$SNAPSHOT" "$planted" <<'PLANT'
+import re, sys
+src = open(sys.argv[1]).read()
+patched, n = re.subn(r'(\n    enum CodingKeys: String, CodingKey \{\n)',
+                     r'\1        case plantedKey\n', src, count=1)
+assert n == 1, "could not find RunSnapshot's CodingKeys block to plant into"
+open(sys.argv[2], 'w').write(patched)
+PLANT
   run grep -c 'plantedKey' "$planted"
   [ "$output" = "1" ]
   # Re-run the real parsers against the planted file.

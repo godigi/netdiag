@@ -343,3 +343,24 @@ THRESH_WATCHER_INTERVAL_S=900
 # runs — three quarters of an hour on the default cadence — is not
 # lateness, it is a watcher that has stopped.
 THRESH_WATCHER_STALE_FACTOR=3
+
+# ── Local traffic while we measured [TR-1] ───────────────────────────────
+# How long to watch, and how much traffic counts as "this link was already
+# busy" rather than the background hum every Mac makes.
+#
+# The window: nettop needs roughly three seconds of startup before its
+# first snapshot, so the wall-clock cost is startup + this, and the sample
+# runs inside the parallel batch where 2 s is absorbed by checks that take
+# 3 s anyway. Shorter than 2 s and a single burst dominates the average;
+# longer buys accuracy nobody is asking for, since the question is "was
+# something big running", not "exactly how much".
+THRESH_TRAFFIC_SAMPLE_S=2
+
+# The floor, in Mb/s in either direction. An idle Mac on this developer's
+# machine measures 0.02-0.05 Mb/s — mDNS chatter, a push connection, a
+# music client's keepalive. Two orders of magnitude above that is
+# comfortably clear of the hum and still low enough to catch a sync on a
+# slow line, which is exactly the case where a few Mb/s *is* the whole
+# link. Deliberately an absolute floor and not a fraction of capacity:
+# capacity is what the speed test measures, and it runs after this.
+THRESH_TRAFFIC_BUSY_MBPS=5

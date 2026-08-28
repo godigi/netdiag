@@ -10,8 +10,9 @@
 
 `netdiag` runs a battery of macOS-native checks (interface, WiFi, gateway,
 DNS, traceroute, bufferbloat, PMTU, mtr, IPv6, VPN, TCP reach, WiFi scan +
-disconnect history, NTP drift, ARP, DHCP, plus NAT/WAN topology — dual-WAN,
-double-NAT, UPnP/NAT-PMP), writes a timestamped JSON + human log, then
+disconnect history, NTP drift, ARP, DHCP, local traffic attribution, plus
+NAT/WAN topology — dual-WAN, double-NAT, UPnP/NAT-PMP), writes a
+timestamped JSON + human log, then
 prints a **Diagnosis** section that names a likely culprit with evidence
 and a recommendation. It also tracks a rolling baseline so intermittent
 regressions ("WiFi RSSI dropped from -55 to -78 since yesterday", "gateway
@@ -28,6 +29,12 @@ On a **metered link** — a phone's hotspot, or USB/Bluetooth tethering —
 the speed test is skipped by default and `MET-1` says so, because it
 would spend hundreds of megabytes of a cellular allowance to answer a
 question you did not ask. Pass `--speed` to run it anyway.
+
+It also watches **what your own Mac was doing** while it measured. A
+bufferbloat grade of D with a backup uploading at 40 Mb/s is not the same
+finding as a grade of D on an idle link — the first is the backup, the
+second is the router — and `TR-1` names the process rather than letting
+the report blame your router for your own transfer.
 
 ## Why
 

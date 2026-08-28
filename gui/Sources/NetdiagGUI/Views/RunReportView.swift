@@ -225,6 +225,7 @@ struct RunReportView: View {
     ///   | Local network        | lan, dhcp       |
     ///   | Clock                | clock           |
     ///   | Background watcher   | netdiag         |
+    ///   | Local traffic        | traffic         |
     ///
     /// Three things this table fixes, all of them the same underlying
     /// mistake — treating a category as a loose topic tag rather than as
@@ -268,6 +269,12 @@ struct RunReportView: View {
         // run where none is, and a row saying "not installed" in every
         // other report would be an advertisement rather than a finding.
         "Background watcher": ["netdiag"],
+        // Also not about the network: what this Mac was putting on the
+        // link while it was being measured. Its own row rather than a
+        // share of "Under load", because a backup running is not a
+        // judgement about the router's queue — it is the reason to
+        // distrust one.
+        "Local traffic": ["traffic"],
     ]
 
     private var rows: [Row] {
@@ -442,6 +449,19 @@ struct RunReportView: View {
         // that describes netdiag rather than the network, so it should
         // never sit above a measurement — and for the majority of runs,
         // where `watcher` is null, it should not exist at all.
+        // Only when there was traffic worth mentioning. The CLI decides
+        // that: it sends the object only when it measured one, and TR-1
+        // decides whether the number crossed the floor — so `fired`, not
+        // a comparison here.
+        if let traffic = s.traffic, fired("Local traffic") {
+            out.append(Row(label: "Local traffic",
+                           value: Self.trafficValue(traffic),
+                           health: health(["TR-1"], "Local traffic"),
+                           metricKey: nil,
+                           glossaryKey: nil,
+                           medianFormatter: nil,
+                           informational: true))
+        }
         if let watcher = s.watcher {
             out.append(Row(label: "Background watcher",
                            value: Self.watcherValue(watcher),
@@ -461,6 +481,18 @@ struct RunReportView: View {
     // honest answer is that the number on the wire does not describe the
     // link. Every branch keys off something the CLI emitted (a rule id, a
     // run mode, a flag); none of them compares a number to a threshold.
+
+    /// The Local traffic row's value: the busier direction, and who. No
+    /// threshold comparison — whether this row appears at all is decided
+    /// by whether TR-1 fired, which is the CLI's call.
+    private static func trafficValue(_ t: RunSnapshot.Traffic) -> String {
+        let down = t.downMbps ?? 0, up = t.upMbps ?? 0
+        let rate = up > down
+            ? String(format: "%g Mb/s up", up)
+            : String(format: "%g Mb/s down", down)
+        guard let top = t.topProcesses.first, !top.name.isEmpty else { return rate }
+        return "\(rate) · \(top.name)"
+    }
 
     /// The watcher row's value. Every branch keys off `state`, which the
     /// CLI already decided — nothing here compares an age to a cutoff, so

@@ -187,9 +187,10 @@ for r in d['rules']:
 import json, sys
 allowed = {'router', 'internet', 'dns', 'wifi', 'load', 'mtu', 'speed',
            'clock', 'ipv6', 'vpn', 'lan', 'dhcp', 'topology', 'baseline',
-           # The one category that is not a property of the network:
-           # netdiag judging its own background watcher (ND-1).
-           'netdiag'}
+           # The two categories that are not properties of the network:
+           # netdiag judging its own background watcher (ND-1), and what
+           # this Mac itself was putting on the link (TR-1).
+           'netdiag', 'traffic'}
 d = json.load(sys.stdin)
 for r in d['rules']:
     assert r['category'] in allowed, (r['id'], r['category'])

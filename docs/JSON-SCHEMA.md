@@ -53,6 +53,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `mtr` | object | `target`, `duration_s`, `hops[]`, `first_lossy_hop` |
 | `wan` | object | `load_balancing`, `double_nat`, `upnp` — see below |
 | `hosts_file` | object | `custom_count`, `suspicious_redirects[]` |
+| `traffic` | object | What this Mac itself was putting on the link while the path was measured — `sampled_s`, `down_mbps`, `up_mbps`, `top_processes[]`. **`null` under `--quick`** (the sample is skipped for budget) and whenever `nettop` gave nothing to difference: "not measured" and "measured zero" are different claims. Process names survive `--redact`; they identify software, not a person. See `DIAGNOSIS-RULES.md#tr-1--your-own-mac-was-using-the-connection`. |
 | `watcher` | object | netdiag's own launchd watcher, or **`null` when none is installed** — which is most runs. The only object here that describes netdiag rather than the network. See below. |
 | `timings` | object | `total_s`, `budget_s`, `over_budget`, and `phases{}` per stage |
 | `baseline` | object | comparison against history, or `null` — see below |

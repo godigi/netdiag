@@ -813,8 +813,8 @@ fi
 . "$LIB_DIR/globals.sh"
 for mod in iface vpn wifi wifi_scan wifi_disconnect dhcp arp gateway public \
            bufferbloat mtu dns ipv6 tcp_reach speedtest ntp traceroute mtr \
-           wan internet_ping hosts netid path watchdog headline diagnosis \
-           output gping; do
+           wan internet_ping hosts netid path traffic watchdog headline \
+           diagnosis output gping; do
   # shellcheck disable=SC1090
   . "$LIB_DIR/$mod.sh"
 done
@@ -949,6 +949,10 @@ launch_parallel wifi_disconnect wifi_disconnect_run
 launch_parallel wan_lb          wan_load_balancing_run
 launch_parallel wan_upnp        wan_upnp_run
 launch_parallel path            path_run
+# A passive observer: nettop reports other processes' counters and
+# generates no traffic itself, so it belongs in the batch rather than
+# lengthening the run by its own sample window. [TR-1]
+launch_parallel traffic         traffic_run
 progress_spin_start "Running parallel checks (DNS, IPv6, TCP, NTP, hosts, WiFi, dual-WAN, UPnP)"
 run_timed parallel_batch collect_parallel
 progress_spin_stop
