@@ -6,6 +6,63 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Docs — nothing was watching
+
+New `docs/design/nothing-was-watching.md`. Nothing implemented. The
+sibling document asks whether netdiag describes a network correctly;
+this one asks whether netdiag is a **monitor**, and concludes that it is
+a camera being sold as a security system. Every "what netdiag does
+today" claim is verified against the code at `6dc9fe5` and against the
+running app, not assumed.
+
+The finding that prompted it is a live one, on this machine:
+**`com.netdiag.watcher` has been failing on every invocation since 11
+August and nothing said so.** `launchctl list` reports exit status 126,
+`watcher.stderr.log` holds 1,386 identical `Operation not permitted`
+lines, and `watcher.stdout.log` is 0 bytes — indistinguishable from a
+healthy quiet run. The cause is not developer-specific: the plist points
+at whatever `netdiag` on `PATH` resolves to, `install.sh` run from a
+clone points that symlink at the clone, and a launchd agent has no TCC
+grant for `~/Documents`. Anyone who clones there gets the same
+permanently-broken, silently-broken watcher. `WD-1` is proposed so the
+tool that exists to notice silent failure notices its own.
+
+The rest follows from one observation: with monitoring enabled at a 5 s
+cadence, 75 seconds of sampling wrote **zero bytes** anywhere on disk,
+and the monitor died with the app. Both behaviours are documented and
+intentional — `lib/monitor.sh:7-8` promises exactly that — but they mean
+every transition the monitor is uniquely placed to see is observed,
+rendered, used to decide whether to notify, and then discarded. An
+"incident" in `helpers/summary.py:198` is a *run that had a diagnosis*,
+not a period with a start and an end, so uptime, outage count, longest
+outage and "your connection dropped six times last night, totalling
+eleven minutes" are all unanswerable.
+
+The proposal is an append-only `events.jsonl` of *transitions* (not
+samples), written by an opt-in `--monitor --journal PATH` so the
+existing no-disk contract still holds for other consumers; one
+launchd-managed recorder that survives a reboot, with the app as a
+viewer rather than a second monitor competing for the link; and
+`sleep`/`wake` boundaries recorded as first-class events, because an
+availability figure computed over a window the Mac spent asleep tells
+the same lie `MonitorSeries` already refuses to draw as a line.
+Availability becomes a fifth judge bound by the `lib/thresholds.sh`
+rule.
+
+Also catalogued: netdiag measures the path but never the traffic on it
+(no `nettop`, no `netstat -ib` anywhere — so a D bufferbloat grade earned
+while a backup saturates the uplink is indistinguishable from one earned
+on an idle link, and the report blames the router); the `arp -an` table
+is parsed for duplicates and then discarded rather than kept as a device
+inventory; nothing asks whether the printer still answers; and the app
+is self-signed with no notarization, no DMG and no Homebrew tap, so it
+cannot be handed to anyone else.
+
+Recommended order puts the two cheap items first — the watcher
+self-check, then traffic attribution, whose data was verified available
+unprivileged — ahead of the journal, which is the only item that changes
+what netdiag is.
+
 ### Fixed — `--history=N` no longer mixes two populations in one object
 
 `--limit` windowed `severity_counts`, `metric_samples` and `metric_stats`
