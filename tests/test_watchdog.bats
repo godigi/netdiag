@@ -227,3 +227,53 @@ watchdog_state_for() {
   run grep -q 'NETDIAG_WATCHER' "$REPO/lib/launchd.sh"
   [ "$status" -eq 0 ]
 }
+
+@test "watchdog_run reaches a verdict against a real plist, under set -eu" {
+  # An end-to-end smoke test of the one function the unit tests above
+  # deliberately do not call, because it shells out to PlistBuddy and
+  # launchctl. It asserts the whole path lands on a state rather than
+  # returning early — the failure it would catch is watchdog_run aborting
+  # or falling through, which leaves WATCHER_STATE at `absent` and reads
+  # as "no watcher installed" on a machine that has one.
+  #
+  # `set -eu` because the suite runs that way and bin/netdiag does not, so
+  # this is the stricter of the two environments. It is *not* a guard
+  # against an AND-list aborting the function: bash does not abort on a
+  # failing member of an AND-list, which was checked against the chain
+  # this file's `if` replaced rather than assumed.
+  fake_home="$BATS_TEST_TMPDIR/eh"
+  mkdir -p "$fake_home/Library/LaunchAgents"
+  cat > "$fake_home/Library/LaunchAgents/com.netdiag.watcher.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.netdiag.watcher</string>
+  <key>ProgramArguments</key><array><string>/usr/local/bin/netdiag</string></array>
+  <key>StartInterval</key><integer>900</integer>
+</dict>
+</plist>
+PLIST
+  # bash 5, the way bin/netdiag finds it: `bash` on PATH is macOS's 3.2,
+  # which has no EPOCHREALTIME and so cannot source lib/common.sh under
+  # `set -u` at all. Running this under 3.2 would fail for a reason that
+  # has nothing to do with what it is testing.
+  bash5=bash
+  for cand in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+    [ -x "$cand" ] && { bash5="$cand"; break; }
+  done
+  run "$bash5" -c "
+    set -eu
+    JSON_MODE=0 QUIET=0 QUICK=0 EXPERT=0 REDACT=0 LOG=/dev/null
+    LOG_DIR='$BATS_TEST_TMPDIR/logs'; mkdir -p \"\$LOG_DIR\"
+    HOME='$fake_home'
+    . '$REPO/lib/thresholds.sh'; . '$REPO/lib/common.sh'; . '$REPO/lib/globals.sh'
+    . '$REPO/lib/watchdog.sh'
+    watchdog_run >/dev/null
+    printf '%s %s' \"\$WATCHER_INSTALLED\" \"\$WATCHER_STATE\"
+  "
+  [ "$status" -eq 0 ]
+  # Installed, seen, and judged — not left at the pre-run defaults.
+  [[ "$output" == "1 "* ]] || { echo "got: $output"; return 1; }
+  [[ "$output" != *absent* ]] || { echo "got: $output"; return 1; }
+}

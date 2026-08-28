@@ -144,8 +144,16 @@ watchdog_run() {
     ''|*[!0-9]*) WATCHER_PLIST_INTERVAL_S="$THRESH_WATCHER_INTERVAL_S" ;;
   esac
 
-  [ -n "$WATCHER_PROGRAM" ] && watchdog_path_blocked "$WATCHER_PROGRAM" \
-    && WATCHER_PATH_BLOCKED=1
+  # An `if`, not a `[ … ] && … && assign` chain. Under `set -e` bash does
+  # not abort on a failing member of an AND-list (verified against the
+  # chain this replaced, which survives `set -eu` intact) — but such a
+  # chain still *evaluates to* the failure, so it silently becomes the
+  # function's return value if it ever ends up last, which is the shape
+  # add_diag's header documents biting this project once already. An `if`
+  # cannot acquire that property by being moved.
+  if [ -n "$WATCHER_PROGRAM" ] && watchdog_path_blocked "$WATCHER_PROGRAM"; then
+    WATCHER_PATH_BLOCKED=1
+  fi
 
   # Column 2 of `launchctl list` is the last exit status; column 1 is the
   # PID, or "-" when the job is not currently running. An interval job is
@@ -201,7 +209,7 @@ watchdog_run() {
   fi
 
   info "plist:     $plist"
-  [ -n "$WATCHER_PROGRAM" ] && info "runs:      $WATCHER_PROGRAM"
+  if [ -n "$WATCHER_PROGRAM" ]; then info "runs:      $WATCHER_PROGRAM"; fi
   info "every:     ${WATCHER_PLIST_INTERVAL_S}s"
   if [ -n "$WATCHER_LAST_EXIT" ]; then
     info "last exit: $WATCHER_LAST_EXIT"
