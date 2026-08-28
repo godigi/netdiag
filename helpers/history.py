@@ -122,6 +122,13 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, NoReturn
 
+# Same directory, so a plain import works when this is run as
+# `python3 helpers/history.py`. The shared pair-table --summary's text
+# reads too — see helpers/judgement.py's module docstring for why this
+# file's `judged` block and --summary's judged rows read literally the
+# same six cutoffs rather than two copies that could drift apart.
+from judgement import require_threshold, level, compose_summary, JUDGED_METRICS
+
 # macOS substitutes this when the caller lacks Location Services, and
 # --redact substitutes the other. Neither is a name; treating either as one
 # would collapse every affected machine into a single shared identity.
@@ -661,6 +668,61 @@ def population_stats(values: list[float], min_samples: int,
     }
 
 
+# ── judged: a network-level verdict, from the same metric_stats ──────────
+# `judged` is a sibling of `metric_stats`, not a replacement for it:
+# metric_stats states facts (median/p10/p90) with no verdict; judged states
+# a verdict, and only for the six metrics that have a policy threshold at
+# all (helpers/judgement.py's JUDGED_METRICS). It judges the median only —
+# the same discipline --summary's report_network has always held — so a
+# verdict is null exactly when the corresponding metric_stats entry is
+# null: one nullability rule, not two.
+
+
+def load_judged_thresholds() -> dict[str, tuple[float, float, bool, str]]:
+    """Every JUDGED_METRICS cutoff, read once before either mode does any
+    work — same discipline as THRESH_COMPARE_* in main() below, and the
+    same refusal to carry a default: see judgement.require_threshold.
+    """
+    return {
+        key: (require_threshold(warn_env), require_threshold(crit_env),
+              higher_is_worse, phrase)
+        for key, (warn_env, crit_env, higher_is_worse, phrase)
+        in JUDGED_METRICS.items()
+    }
+
+
+# Worst-wins ordering for judged.overall: critical beats warn beats ok.
+_VERDICT_RANK = {"ok": 1, "warn": 2, "critical": 3}
+
+
+def build_judged(metric_stats: dict[str, dict | None],
+                 judged_thresholds: dict[str, tuple[float, float, bool, str]],
+                 check_count: int) -> dict:
+    """One network's `judged` block: a verdict per JUDGED_METRICS key, the
+    worst of them, and the sentence --summary would print for the same
+    numbers.
+    """
+    metrics: dict[str, str | None] = {}
+    offenders: list[str] = []
+    worst = 0
+    for key, (warn, crit, higher_is_worse, phrase) in judged_thresholds.items():
+        stats = metric_stats.get(key)
+        if stats is None:
+            metrics[key] = None
+            continue
+        verdict = level(stats["median"], warn, crit, higher_is_worse)
+        metrics[key] = verdict
+        worst = max(worst, _VERDICT_RANK[verdict])
+        if verdict != "ok":
+            offenders.append(phrase)
+    overall = {v: k for k, v in _VERDICT_RANK.items()}.get(worst)
+    return {
+        "overall": overall,
+        "summary": compose_summary(overall, offenders, check_count),
+        "metrics": metrics,
+    }
+
+
 def build_comparison(rec: dict, network_runs: list[dict],
                      min_samples: int, tail_pctl: int) -> dict:
     """Every metric in METRICS, this run against every run on its network.
@@ -770,6 +832,15 @@ def main() -> None:
     # env_threshold.
     min_samples = env_threshold("THRESH_COMPARE_MIN_SAMPLES")
     tail_pctl = env_threshold("THRESH_COMPARE_TAIL_PCTL")
+
+    # The plain listing's `judged` block needs its six cutoffs too, read
+    # once here for the same reason as THRESH_COMPARE_* above: a broken
+    # install should say so before any work happens, not partway through
+    # building the networks[] array. --show does not read this dict, but
+    # main() reads it unconditionally in every mode regardless — the same
+    # discipline THRESH_COMPARE_* already holds even though only --show
+    # uses it directly today.
+    judged_thresholds = load_judged_thresholds()
 
     archive = args.archive
     if archive is None:
@@ -914,6 +985,15 @@ def main() -> None:
         # was actually returned.
         if g["run_count"] == 0:
             continue
+        # median/p10/p90 over the exact population metric_samples counts,
+        # null below THRESH_COMPARE_MIN_SAMPLES — see population_stats. No
+        # verdict, no direction: a chart's "normal band" needs what the
+        # network's numbers look like, not whether this run's reading was
+        # good.
+        metric_stats = {
+            mk: population_stats(g["metric_values"].get(mk, []), min_samples, tail_pctl)
+            for _p, mk, _lbl, _u, _d in METRICS
+        }
         networks.append({
             "id": key,
             "label": label_for(key, g),
@@ -927,20 +1007,19 @@ def main() -> None:
             "isps": g["isps"],
             "ssids": g["ssids"],
             "metric_samples": g["metric_samples"],
-            # median/p10/p90 over the exact population metric_samples
-            # counts, null below THRESH_COMPARE_MIN_SAMPLES — see
-            # population_stats. No verdict, no direction: a chart's
-            # "normal band" needs what the network's numbers look like,
-            # not whether this run's reading was good.
-            "metric_stats": {
-                mk: population_stats(g["metric_values"].get(mk, []), min_samples, tail_pctl)
-                for _p, mk, _lbl, _u, _d in METRICS
-            },
+            "metric_stats": metric_stats,
+            # A verdict, drawn from the metric_stats block right above —
+            # see build_judged. Sibling of metric_stats, never inside it:
+            # that block stays contractually verdict-free.
+            "judged": build_judged(metric_stats, judged_thresholds, g["check_count"]),
             "severity_counts": g["severity_counts"],
         })
 
     out = {
-        "schema": 1,
+        # 1 → 2: networks[] gained `judged`. --show's own "schema": 1
+        # (build_detail, above) is untouched — this bump is scoped to the
+        # plain listing only.
+        "schema": 2,
         "sources": {
             "live": str(args.history),
             "archive": str(archive) if archive.exists() else None,

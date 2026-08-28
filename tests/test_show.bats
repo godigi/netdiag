@@ -26,6 +26,15 @@ setup() {
   # shellcheck source=../lib/thresholds.sh
   . "$REPO/lib/thresholds.sh"
   export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL
+  # helpers/history.py's main() now requires the judged thresholds
+  # unconditionally, in every mode including --show, so the hist()/show()
+  # helpers below — which call history.py directly rather than through
+  # bin/netdiag — need them exported too. Same list bin/netdiag's
+  # _export_judging_thresholds exports.
+  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
+         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
+         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
 }
 
 NET='"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'

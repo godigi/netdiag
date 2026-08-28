@@ -20,10 +20,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import statistics
-import sys
 import textwrap
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -38,32 +36,15 @@ from typing import Any
 # rather than silently picking a winner.
 from history import group_key, clean, is_redacted
 
+# The shared pair-table --history's judged block reads too — see
+# helpers/judgement.py's module docstring for why there is exactly one of
+# these rather than a second copy of the same six cutoffs living here.
+from judgement import require_threshold, JUDGED_METRICS
+
 # Prose wrapping width. Not a threshold — nothing is judged against it and
 # no diagnosis depends on it; it is the shape of a paragraph, which is why
 # it lives here rather than in lib/thresholds.sh.
 DIAGNOSIS_WRAP_COLS = 68
-
-
-def _require_threshold(name: str) -> float:
-    """Read one cutoff from the environment, or refuse to run.
-
-    No defaults, ever. A default here would be a second home for a number
-    that has exactly one home (lib/thresholds.sh), and a stale second copy
-    still produces a plausible verdict — the failure nobody notices. Same
-    contract helpers/history.py holds for THRESH_COMPARE_*.
-    """
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        print(f"summary.py: {name} is not set. It is defined in "
-              f"lib/thresholds.sh and exported by bin/netdiag before this "
-              f"helper runs.", file=sys.stderr)
-        sys.exit(3)
-    try:
-        return float(raw)
-    except ValueError:
-        print(f"summary.py: {name}={raw!r} is not a number. It is defined "
-              f"in lib/thresholds.sh.", file=sys.stderr)
-        sys.exit(3)
 
 
 def load_jsonl(p: Path) -> list[dict]:
@@ -183,6 +164,23 @@ def stats(label: str, values: list[float | int], unit: str = "",
     return f"  {glyph}  {label:24s}  {body}"
 
 
+def _judged_kwargs(key: str) -> dict[str, float | bool]:
+    """(warn, crit, higher_is_worse) for one JUDGED_METRICS row, read fresh
+    on every call rather than cached — matching how every other threshold
+    in this file is read.
+
+    Reads warn/crit/direction out of judgement.JUDGED_METRICS instead of a
+    second, locally hardcoded set of cutoffs, so this file's judged rows
+    and --history's judged block are reading literally the same table.
+    """
+    warn_env, crit_env, higher_is_worse, _phrase = JUDGED_METRICS[key]
+    return {
+        "warn": require_threshold(warn_env),
+        "crit": require_threshold(crit_env),
+        "higher_is_worse": higher_is_worse,
+    }
+
+
 def report_network(label: str, records: list[dict]) -> None:
     """One network's block. Every figure here is scoped to `records`."""
     first_ts = parse_ts(records[0].get("timestamp"))
@@ -243,32 +241,25 @@ def report_network(label: str, records: list[dict]) -> None:
     print("     metric                    min / med / max")
     print(stats("gateway RTT (ms)", metric("gateway.rtt_avg_ms")))
     print(stats("gateway loss (%)", metric("gateway.loss_pct"),
-                warn=_require_threshold("LOSS_WARN_PCT"),
-                crit=_require_threshold("LOSS_CRIT_PCT")))
+                **_judged_kwargs("gateway_loss_pct")))
     print(stats("bufferbloat gw Δ (ms)", metric("bufferbloat.gw_delta_ms"),
-                warn=_require_threshold("THRESH_BUFFERBLOAT_B_MS"),
-                crit=_require_threshold("THRESH_BUFFERBLOAT_C_MS")))
+                **_judged_kwargs("bufferbloat_gw_ms")))
     print(stats("bufferbloat inet Δ (ms)", metric("bufferbloat.inet_delta_ms"),
-                warn=_require_threshold("THRESH_BUFFERBLOAT_B_MS"),
-                crit=_require_threshold("THRESH_BUFFERBLOAT_C_MS")))
+                **_judged_kwargs("bufferbloat_inet_ms")))
     # higher_is_worse=False, so judge() tests the critical cutoff first, and
     # a lower (more negative) dBm is worse. THRESH_WIFI_RSSI_WEAK_DBM (-75)
     # is worse than THRESH_WIFI_RSSI_G1_DBM (-70), so the weak cutoff is
     # crit and the G1 cutoff is warn. Swapping them would put every reading
     # at or below G1's cutoff into the critical band, leaving the warn band
     # unreachable: a signal a few dBm past G1 would read identically to one
-    # deep past the weak floor.
+    # deep past the weak floor. (Direction now lives in judgement.JUDGED_METRICS
+    # alongside the two cutoffs, so this reasoning has one home too.)
     print(stats("WiFi RSSI (dBm)", metric("wifi.rssi"),
-                warn=_require_threshold("THRESH_WIFI_RSSI_G1_DBM"),
-                crit=_require_threshold("THRESH_WIFI_RSSI_WEAK_DBM"),
-                higher_is_worse=False))
+                **_judged_kwargs("wifi_rssi_dbm")))
     print(stats("path MTU", metric("mtu.effective"),
-                warn=_require_threshold("THRESH_MTU_STANDARD"),
-                crit=_require_threshold("THRESH_MTU_CRIT"),
-                higher_is_worse=False))
+                **_judged_kwargs("mtu_effective")))
     print(stats("NTP drift (s)", metric("ntp.drift_seconds"),
-                warn=_require_threshold("THRESH_NTP_DRIFT_WARN_S"),
-                crit=_require_threshold("THRESH_NTP_DRIFT_CRIT_S")))
+                **_judged_kwargs("ntp_drift_s")))
     # Throughput has no absolute cutoff — "slow" is relative to what this
     # link has done before, which is BL-1's job in --show, not a number
     # that could live in thresholds.sh. Reported unjudged, deliberately.

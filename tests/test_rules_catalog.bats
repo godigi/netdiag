@@ -61,15 +61,16 @@ assert d['version'] == sys.argv[1], d['version']
 " "$VERSION"
 }
 
-@test "schema is 3" {
+@test "schema is 4" {
   # 1 -> 2 added the `metrics` glossary; 2 -> 3 added the optional
-  # per-rule `also` category. Both additive, per this schema's own
-  # promise in docs/JSON-SCHEMA.md.
+  # per-rule `also` category; 3 -> 4 added the optional per-metric
+  # `why_absent` field plus 16 new metrics entries. All additive, per
+  # this schema's own promise in docs/JSON-SCHEMA.md.
   run "$NETDIAG" --rules-catalog
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, sys
-assert json.load(sys.stdin)['schema'] == 3
+assert json.load(sys.stdin)['schema'] == 4
 "
 }
 
@@ -89,15 +90,17 @@ assert not missing, missing
 "
 }
 
-@test "every metrics entry has exactly key/label/help, all non-empty" {
+@test "every metrics entry has key/label/help plus optional why_absent, all non-empty" {
   run "$NETDIAG" --rules-catalog
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-fields = {'key', 'label', 'help'}
+required = {'key', 'label', 'help'}
+optional = {'why_absent'}
 for m in d['metrics']:
-    assert set(m.keys()) == fields, (m.get('key'), sorted(m.keys()))
+    keys = set(m.keys())
+    assert keys - optional == required, (m.get('key'), sorted(keys))
     for k, v in m.items():
         assert isinstance(v, str) and v.strip(), (m.get('key'), k, v)
 "
@@ -114,14 +117,44 @@ assert len(keys) == len(set(keys)), sorted(set(k for k in keys if keys.count(k) 
 "
 }
 
-@test "glossary help text embeds no numeric threshold — dBm, %, ms, or bare digits" {
+@test "catalog covers every --history METRICS key and every JUDGED_METRICS key" {
+  # A GUI HelpHint next to a Trends/Live chart title looks itself up by
+  # the exact --history metric key (or, for the live monitor, the
+  # monitor_* keys above). Read straight from the Python modules rather
+  # than hand-copying their key lists here, so a metric added to either
+  # table can't silently ship without a glossary entry.
+  run "$NETDIAG" --rules-catalog
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | python3 -c "
+import json, sys
+sys.path.insert(0, '$HELPERS')
+import history
+import judgement
+
+d = json.load(sys.stdin)
+keys = {m['key'] for m in d['metrics']}
+
+history_keys = {row[1] for row in history.METRICS}
+judged_keys = set(judgement.JUDGED_METRICS)
+
+missing = (history_keys | judged_keys) - keys
+assert not missing, sorted(missing)
+"
+}
+
+@test "glossary help/why_absent text embeds no numeric threshold — dBm, %, ms, or bare digits" {
   run "$NETDIAG" --rules-catalog
   [ "$status" -eq 0 ]
   printf '%s' "$output" | python3 -c "
 import json, re, sys
 d = json.load(sys.stdin)
 pattern = re.compile(r'[0-9](?:\s?(?:dbm|db|ms|%|seconds?|bytes?))', re.IGNORECASE)
-bad = [(m['key'], pattern.findall(m['help'])) for m in d['metrics'] if pattern.search(m['help'])]
+bad = []
+for m in d['metrics']:
+    for field in ('help', 'why_absent'):
+        text = m.get(field)
+        if text and pattern.search(text):
+            bad.append((m['key'], field, pattern.findall(text)))
 assert not bad, bad
 "
 }

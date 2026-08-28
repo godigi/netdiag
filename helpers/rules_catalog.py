@@ -46,7 +46,9 @@ same question `rules` does ("what does this word on screen mean?") for the
 same consumer (a `questionmark.circle` hint in `RunReportView`), and a
 second CLI mode would just be a second round trip and a second cache file
 for something this small. `SCHEMA_RULES_CATALOG` bumped 1 → 2 for the
-addition, and 2 → 3 for the optional per-rule `also` category — both
+addition, 2 → 3 for the optional per-rule `also` category, and 3 → 4 for
+an optional per-metric `why_absent` plus 16 new metrics entries (the
+`--history` metric keys and the live monitor's chart measurements) — all
 additive only, per this schema's own promise in docs/JSON-SCHEMA.md, so a
 build that reads only `rules`, or only `category`, keeps working
 unchanged.
@@ -65,7 +67,10 @@ import sys
 # This file's own schema: the shape of the --rules-catalog document.
 # v1 → v2: added the sibling `metrics` glossary array.
 # v2 → v3: added the optional per-rule `also` category (see CATEGORIES).
-SCHEMA_RULES_CATALOG = 3
+# v3 → v4: added the optional per-metric `why_absent` field, plus 16 new
+# `metrics` entries — the 13 `--history` metric keys and 3 for the live
+# monitor's chart measurements.
+SCHEMA_RULES_CATALOG = 4
 
 # The measurement family each rule judges — the GUI tints a report-card
 # row by this, not by severity, so a "varies"-severity rule like B1 still
@@ -1033,6 +1038,223 @@ METRICS: list[dict[str, str]] = [
             "make a call or a game feel unpredictable and stuttery."
         ),
     },
+
+    # ── `--history` metric keys ────────────────────────────────────────
+    # One entry per key in helpers/history.py's METRICS table — the exact
+    # keys `--history`'s `metric_stats` and `judged.metrics` use, not the
+    # generic report-card terms above. `label` matches history's own label
+    # for the key verbatim, so a GUI chart title and this glossary entry
+    # never say the metric two different ways. `why_absent` is present
+    # only where a chart's empty state has a knowable cause — a check mode
+    # that skips the metric, or a privilege it needs — migrated from (and
+    # replacing) `HistoryView.hint(for:)`'s Swift switch, rephrased
+    # neutrally: no UI instructions, since the GUI supplies its own
+    # button.
+    {
+        "key": "gateway_rtt_ms",
+        "label": "Gateway RTT",
+        "help": (
+            "How long it takes a message to make a round trip between "
+            "your Mac and your router, averaged across this check's "
+            "pings. It's the fastest hop in the report, so even a small "
+            "rise here is worth noticing."
+        ),
+    },
+    {
+        "key": "gateway_loss_pct",
+        "label": "Gateway loss",
+        "help": (
+            "The share of pings to your router that never got a reply. "
+            "Loss this close to home usually points at the router "
+            "itself, the cable, or the wireless link, rather than "
+            "anything further out on the internet."
+        ),
+    },
+    {
+        "key": "gateway_jitter_ms",
+        "label": "Gateway jitter",
+        "help": (
+            "How much the round-trip time to your router varies from "
+            "one ping to the next, over this check. Steady jitter this "
+            "close to home is what makes calls and games feel choppy "
+            "even when the average looks fine."
+        ),
+    },
+    {
+        "key": "inet_rtt_ms",
+        "label": "Internet RTT",
+        "help": (
+            "How long it takes a message to reach a site out on the "
+            "internet and come back, rather than just your router. It's "
+            "naturally higher than the gateway figure — the gap between "
+            "the two is roughly how much delay your provider and the "
+            "wider internet are adding."
+        ),
+        "why_absent": (
+            "The internet loss probe is skipped by the quick check that "
+            "the background watcher runs."
+        ),
+    },
+    {
+        "key": "inet_loss_pct",
+        "label": "Internet loss",
+        "help": (
+            "The share of pings sent out to the internet that never got "
+            "a reply, measured past your router. Loss here points "
+            "further from home — your provider's network or somewhere "
+            "beyond it — rather than your own equipment."
+        ),
+        "why_absent": (
+            "The internet loss probe is skipped by the quick check that "
+            "the background watcher runs."
+        ),
+    },
+    {
+        "key": "wifi_rssi_dbm",
+        "label": "WiFi signal",
+        "help": (
+            "How strong the wireless signal is where your Mac sits, "
+            "measured by the radio itself. A weak reading here explains "
+            "stalls and dropouts even when everything past the router "
+            "looks healthy."
+        ),
+        "why_absent": (
+            "Signal strength is only recorded by a privileged run — "
+            "`sudo netdiag` in a terminal."
+        ),
+    },
+    {
+        "key": "wifi_snr_db",
+        "label": "WiFi SNR",
+        "help": (
+            "How far your wireless signal sits above the background "
+            "radio noise. A shrinking gap here means interference is "
+            "crowding out the signal, even when the raw signal strength "
+            "alone still looks fine."
+        ),
+        "why_absent": (
+            "Signal strength is only recorded by a privileged run — "
+            "`sudo netdiag` in a terminal."
+        ),
+    },
+    {
+        "key": "mtu_effective",
+        "label": "Path MTU",
+        "help": (
+            "The largest chunk of data that can travel the full path to "
+            "the internet without being broken up. When it drops below "
+            "the usual size, some sites and services hang instead of "
+            "loading normally."
+        ),
+        "why_absent": (
+            "Path MTU is only measured by a full check — the quick "
+            "check and the background watcher both skip it."
+        ),
+    },
+    {
+        "key": "bufferbloat_gw_ms",
+        "label": "Bufferbloat (router)",
+        "help": (
+            "How much slower your router answers while your connection "
+            "is busy uploading or downloading, compared with when it's "
+            "idle. A router that bloats under load is what makes a call "
+            "turn choppy the moment someone else starts a big download."
+        ),
+        "why_absent": (
+            "Latency under load is only measured by a full check, and "
+            "is skipped entirely while the connection is already "
+            "failing."
+        ),
+    },
+    {
+        "key": "bufferbloat_inet_ms",
+        "label": "Bufferbloat (ISP)",
+        "help": (
+            "How much slower a reply from out on the internet arrives "
+            "while your connection is busy, compared with when it's "
+            "idle. When this rises but the router figure doesn't, the "
+            "delay is being added by your provider's equipment rather "
+            "than your own."
+        ),
+        "why_absent": (
+            "Latency under load is only measured by a full check, and "
+            "is skipped entirely while the connection is already "
+            "failing."
+        ),
+    },
+    {
+        "key": "speed_down_mbps",
+        "label": "Download",
+        "help": (
+            "How fast data arrives from the internet during this "
+            "check's speed test — the number that governs how quickly "
+            "pages, downloads, and streams arrive."
+        ),
+        "why_absent": (
+            "Speed is only measured by a full check, not a quick one — "
+            "though netdiag also runs a full check automatically the "
+            "first time you join a new network."
+        ),
+    },
+    {
+        "key": "speed_up_mbps",
+        "label": "Upload",
+        "help": (
+            "How fast data leaves your Mac for the internet during this "
+            "check's speed test — the number that matters for sending "
+            "files, video calls, and backups."
+        ),
+        "why_absent": (
+            "Speed is only measured by a full check, not a quick one — "
+            "though netdiag also runs a full check automatically the "
+            "first time you join a new network."
+        ),
+    },
+    {
+        "key": "ntp_drift_s",
+        "label": "Clock drift",
+        "help": (
+            "How far your Mac's clock had wandered from true time when "
+            "this check ran. A clock that drifts too far can start "
+            "breaking secure connections, since those rely on the "
+            "system clock matching the real time."
+        ),
+    },
+
+    # ── Live monitor chart measurements ────────────────────────────────
+    # Three entries for the measurement methods behind the Live tab's
+    # charts (`lib/monitor.sh`, `_mon_*` fast/medium tiers) — not
+    # `--history` keys, and not judged by anything. `help` is the
+    # chart-subtitle prose a GUI would otherwise author itself.
+    {
+        "key": "monitor_gateway_rtt",
+        "label": "Router round-trip",
+        "help": (
+            "A small ping to your router, taken every cycle of the "
+            "monitor's fast tier — the quickest, most frequent reading "
+            "the live view has."
+        ),
+    },
+    {
+        "key": "monitor_internet_tcp",
+        "label": "Internet (TCP connect)",
+        "help": (
+            "Time to open a TCP connection to a well-known internet "
+            "service, using the fastest of several targets. This is not "
+            "a ping, so it can read differently from the ping-based "
+            "internet figures shown elsewhere."
+        ),
+    },
+    {
+        "key": "monitor_gateway_loss",
+        "label": "Router packet loss",
+        "help": (
+            "The share of recent pings to your router that got no "
+            "reply, measured over a rolling window of probes rather "
+            "than any single one — so one dropped ping alone will not "
+            "move it much."
+        ),
+    },
 ]
 
 
@@ -1041,6 +1263,13 @@ _FIELDS = frozenset({"id", "title", "category", "severity", "scope", "blurb", "d
 # CATEGORIES for what it means and why exactly one is enough.
 _OPTIONAL_FIELDS = frozenset({"also"})
 _METRIC_FIELDS = frozenset({"key", "label", "help"})
+# Optional, and the only optional field a metric has. Present on a metric
+# whose absence has a knowable cause (a check mode that skips it, a
+# privilege it needs) — see the `--history` metric entries below. A
+# metric with no reliably knowable cause (it's either measured or the
+# network has never been checked) omits it, same as a rule omits `also`
+# when it has no secondary category.
+_METRIC_OPTIONAL_FIELDS = frozenset({"why_absent"})
 
 
 def _validate(rules: list[dict[str, str]]) -> None:
@@ -1074,7 +1303,9 @@ def _validate_metrics(metrics: list[dict[str, str]]) -> None:
     """Same discipline as `_validate`, for the glossary array."""
     seen_keys: set[str] = set()
     for m in metrics:
-        assert set(m) == _METRIC_FIELDS, f"entry has the wrong field set: {m}"
+        assert set(m) - _METRIC_OPTIONAL_FIELDS == _METRIC_FIELDS, (
+            f"entry has the wrong field set: {m}"
+        )
         for k, v in m.items():
             assert isinstance(v, str) and v.strip(), f"{m.get('key')}.{k} is empty"
         assert m["key"] not in seen_keys, f"duplicate metric key: {m['key']}"

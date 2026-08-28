@@ -48,9 +48,9 @@ SCHEMA_CAPABILITIES = 1
 # per source, not a literal buried in the dict below.
 SCHEMA_RUN = 1            # no embedded field yet (see docstring)
 SCHEMA_MONITOR = 2        # lib/monitor.sh: NETDIAG_MON_SCHEMA
-SCHEMA_HISTORY = 1        # helpers/history.py main(): "schema"
+SCHEMA_HISTORY = 2        # helpers/history.py main(): "schema"
 SCHEMA_SHOW = 1           # helpers/history.py build_detail(): "schema"
-SCHEMA_RULES_CATALOG = 3  # helpers/rules_catalog.py: SCHEMA_RULES_CATALOG
+SCHEMA_RULES_CATALOG = 4  # helpers/rules_catalog.py: SCHEMA_RULES_CATALOG
 SCHEMA_SIGNAL_SCALE = 1   # helpers/signal_scale.py: SCHEMA_SIGNAL_SCALE
 SCHEMA_PROGRESS = 1       # no embedded field yet (see docstring)
 

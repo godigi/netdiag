@@ -46,6 +46,7 @@ setup() {
            THRESH_BUFFERBLOAT_D_MS THRESH_COMPARE_MIN_SAMPLES \
            THRESH_COMPARE_TAIL_PCTL THRESH_MON_LOSS_CONFIRM_CYCLES \
            THRESH_SPEED_DROP_FACTOR THRESH_SPEED_CONFIRM_RUNS \
+           THRESH_BASELINE_GW_RTT_FLOOR_MS \
            THRESH_MTR_HOP_LOSS_PCT THRESH_WIFI_GOODPUT_CEILING_PCT \
            THRESH_WIFI_EVENTS_STORED THRESH_MON_GAP_FACTOR \
            THRESH_WATCHER_INTERVAL_S THRESH_WATCHER_STALE_FACTOR; do
@@ -201,6 +202,39 @@ setup() {
 @test "grade_bufferbloat boundaries are exclusive at the lower edge" {
   [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_A_MS")" = B ]
   [ "$(grade_bufferbloat "$THRESH_BUFFERBLOAT_D_MS")" = F ]
+}
+
+@test "helpers/judgement.py carries no inline numeric cutoff either" {
+  # judgement.py is the shared pair-table both history.py's judged block
+  # and summary.py's judged rows now read, so a cutoff creeping back in
+  # here as a Python literal is the single worst place for it: it would
+  # silently retune both consumers at once. Same guard, same reasoning as
+  # the history.py and summary.py checks above.
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$REPO/helpers/judgement.py"
+  [ "$status" -ne 0 ] || { echo "inline cutoff in judgement.py:"; echo "$output"; return 1; }
+}
+
+@test "the guard would actually catch a cutoff planted in judgement.py" {
+  cp "$REPO/helpers/judgement.py" "$BATS_TEST_TMPDIR/planted_judgement.py"
+  printf '\nif False:\n    pass  # if value >= 20:\n' >> "$BATS_TEST_TMPDIR/planted_judgement.py"
+  run grep -nE '(<=|>=|<|>) *-?[1-9][0-9]*' "$BATS_TEST_TMPDIR/planted_judgement.py"
+  [ "$status" -eq 0 ]
+}
+
+@test "helpers/history.py refuses to build judged verdicts without the judging thresholds" {
+  # Distinct from "helpers/history.py refuses to judge without the
+  # thresholds" above: that test covers THRESH_COMPARE_* (--show's
+  # comparison); this one covers the six JUDGED_METRICS cutoffs the plain
+  # --history listing's judged block now reads in every mode, main()
+  # requires them unconditionally so this is not scoped to --show.
+  printf '{"timestamp":"2026-01-01T00:00:00Z","network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}}\n' \
+    > "$BATS_TEST_TMPDIR/baseline.jsonl"
+  run env THRESH_COMPARE_MIN_SAMPLES="$THRESH_COMPARE_MIN_SAMPLES" \
+          THRESH_COMPARE_TAIL_PCTL="$THRESH_COMPARE_TAIL_PCTL" \
+      python3 "$REPO/helpers/history.py" --history "$BATS_TEST_TMPDIR/baseline.jsonl"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"LOSS_WARN_PCT"* ]] || return 1
+  [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
 @test "helpers/summary.py carries no inline numeric cutoff either" {

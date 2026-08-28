@@ -123,6 +123,28 @@ _require_python3() {
   fi
 }
 
+# The ten judging cutoffs helpers/judgement.py's JUDGED_METRICS names —
+# --summary's text and, now, --history's and --show's judged JSON block all
+# read the exact same set, through the exact same handshake THRESH_COMPARE_*
+# already uses: lib/thresholds.sh owns the values, the helper refuses to run
+# without them, and a Python default would be a second home for a number
+# that has exactly one (see judgement.require_threshold).
+#
+# One function rather than a copy of this list at every call site, so a
+# JUDGED_METRICS row gaining or losing a cutoff is a one-line change here
+# instead of a hunt through every mode that now needs it.
+#
+# Assumes lib/thresholds.sh is already sourced in the caller's scope: every
+# call site sources it immediately before calling this, for its own
+# exports, so sourcing it again here would just be a second read of the
+# same file.
+_export_judging_thresholds() {
+  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
+         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
+         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
+}
+
 # ── Argument parsing ───────────────────────────────────────────────────────
 # gping starts off by default in v0.4+; the user either opts in with --gping
 # or answers the post-report prompt. GPING_DECISION tracks whether the user
@@ -594,13 +616,10 @@ if [ "$SUMMARY" -eq 1 ]; then
   # --summary now judges each metric line, so it needs the cutoffs, and
   # they reach Python through the environment exactly as --history's and
   # --show's do. The helper refuses to start without them rather than
-  # carrying a default — see summary.py's _require_threshold.
+  # carrying a default — see helpers/judgement.py's require_threshold.
   # shellcheck source=lib/thresholds.sh
   . "$LIB_DIR/thresholds.sh"
-  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
-         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
-         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
-         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
+  _export_judging_thresholds
   python3 "$HELPERS_DIR/summary.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --window "$SUMMARY_WINDOW_HOURS" || exit 3
@@ -615,13 +634,14 @@ if [ "$HISTORY" -eq 1 ]; then
     ''|*[!0-9]*) printf 'netdiag: --history expects a run count (got: %s)\n' "$HISTORY_LIMIT" >&2; exit 3 ;;
   esac
   # Every network row now carries metric_stats — median/p10/p90 over the
-  # same population --show already judges runs against — so the plain
-  # listing needs THRESH_COMPARE_* too, the same cutoffs and the same
-  # refusal to carry a default. See lib/thresholds.sh and the --show
-  # block below.
+  # same population --show already judges runs against — and a judged
+  # verdict block derived from it, so the plain listing needs
+  # THRESH_COMPARE_* and the judging cutoffs too, the same refusal to
+  # carry a default. See lib/thresholds.sh and the --show block below.
   # shellcheck source=lib/thresholds.sh
   . "$LIB_DIR/thresholds.sh"
   export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL
+  _export_judging_thresholds
   python3 "$HELPERS_DIR/history.py" \
     --history "$LOG_DIR/baseline.jsonl" \
     --limit "$HISTORY_LIMIT" || exit 3
@@ -634,14 +654,16 @@ if [ "$SHOW" -eq 1 ]; then
   if [ -z "$SHOW_ID" ]; then
     printf 'netdiag: --show expects a run id (see --history)\n' >&2; exit 3
   fi
-  # This is the one mode where history.py judges rather than reports, so
-  # it is the one mode that needs the cutoffs. They go through the
-  # environment like every other helper's input, and the helper refuses to
-  # start without them — a Python default would be a second home for a
+  # This is the mode where history.py judges one run against its network's
+  # history, so it needs THRESH_COMPARE_*; main() now also requires the
+  # judging cutoffs unconditionally, in every mode, so they go through the
+  # same environment handshake here too. The helper refuses to start
+  # without any of them — a Python default would be a second home for a
   # number that has exactly one.
   # shellcheck source=lib/thresholds.sh
   . "$LIB_DIR/thresholds.sh"
   export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL NETDIAG_VERSION
+  _export_judging_thresholds
   # An unknown id, a missing store, or a helper that crashed are all "3":
   # python's own argparse exits 2, which would read as a critical
   # diagnosis to anything watching the status.
@@ -658,12 +680,15 @@ if [ "$SHARE" -eq 1 ]; then
     python3 "$HELPERS_DIR/share.py" || exit 3
     exit 0
   fi
-  # Sourced before the id lookup, not after: history.py refuses to start
-  # without THRESH_COMPARE_*, including for a plain --history listing,
-  # because every network row carries metric_stats.
+  # Sourced before the id lookup, not after: history.py's main() now
+  # refuses to start without THRESH_COMPARE_* and the judging cutoffs in
+  # every mode it runs in — including the plain --history listing this
+  # branch uses below to find the newest run when no id was given, and the
+  # --show call after it.
   # shellcheck source=lib/thresholds.sh
   . "$LIB_DIR/thresholds.sh"
   export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL NETDIAG_VERSION
+  _export_judging_thresholds
   _share_id="$SHARE_ID"
   if [ -z "$_share_id" ]; then
     # Bare --share: the newest run in the store. --history's `runs` is a

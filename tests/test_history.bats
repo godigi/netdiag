@@ -23,6 +23,13 @@ setup() {
   # shellcheck source=../lib/thresholds.sh
   . "$REPO/lib/thresholds.sh"
   export THRESH_COMPARE_MIN_SAMPLES THRESH_COMPARE_TAIL_PCTL
+  # The judged block reads the same six cutoffs helpers/judgement.py's
+  # JUDGED_METRICS names, and main() now requires them in every mode —
+  # bin/netdiag's _export_judging_thresholds exports exactly this list.
+  export LOSS_WARN_PCT LOSS_CRIT_PCT THRESH_BUFFERBLOAT_B_MS \
+         THRESH_BUFFERBLOAT_C_MS THRESH_WIFI_RSSI_WEAK_DBM \
+         THRESH_WIFI_RSSI_G1_DBM THRESH_MTU_STANDARD THRESH_MTU_CRIT \
+         THRESH_NTP_DRIFT_WARN_S THRESH_NTP_DRIFT_CRIT_S
 }
 
 # rec <file> <ts> <json-body…> — append one record. The body is spliced in
@@ -523,6 +530,121 @@ print(sorted(s))'
   [ "$status" -eq 3 ]
   [[ "$output" == *"THRESH_COMPARE_MIN_SAMPLES"* ]] || return 1
   [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
+}
+
+# ── judged: a network-level verdict, from the same metric_stats ──────────
+# judged.metrics judges only the six helpers/judgement.py JUDGED_METRICS
+# keys, against the median metric_stats already computed — one nullability
+# rule (verdict is null exactly when metric_stats is null), one shared
+# table with --summary's judged rows.
+
+# flat_loss <n> <loss-pct> — n records on one network, one per day,
+# identical gateway loss, so the median is exactly the planted value.
+flat_loss() {
+  local n="$1" loss="$2" i
+  for i in $(seq 1 "$n"); do
+    rec "$LIVE" "$(printf '2026-03-%02dT00:00:00Z' "$i")" \
+      "\"network\":{\"id\":\"wifi:mac=aa:bb:cc:dd:ee:ff\"},\"gateway\":{\"loss_pct\":$loss}"
+  done
+}
+
+# flat_rssi <n> <dbm> — same shape, for wifi.rssi.
+flat_rssi() {
+  local n="$1" dbm="$2" i
+  for i in $(seq 1 "$n"); do
+    rec "$LIVE" "$(printf '2026-04-%02dT00:00:00Z' "$i")" \
+      "\"network\":{\"id\":\"wifi:mac=aa:bb:cc:dd:ee:ff\"},\"wifi\":{\"rssi\":$dbm}"
+  done
+}
+
+@test "judged.metrics.<key> flips from ok to warn when the env cutoff moves" {
+  flat_loss "$THRESH_COMPARE_MIN_SAMPLES" 5
+  run hget networks.0.judged.metrics.gateway_loss_pct
+  [ "$output" = '"ok"' ]
+
+  # Move LOSS_WARN_PCT below the planted median (5) and the same
+  # metric_stats median must now read warn — proof this is live wiring
+  # against lib/thresholds.sh, not a parallel verdict computed some other
+  # way.
+  LOSS_WARN_PCT=1 run hget networks.0.judged.metrics.gateway_loss_pct
+  [ "$output" = '"warn"' ]
+}
+
+@test "judged.overall is the worst of the judged metrics, not the first or the last" {
+  # gateway_loss_pct at 25 is critical (LOSS_CRIT_PCT=20); nothing else on
+  # this record is judged, so metrics beyond it stay null and must not
+  # drag overall back down.
+  flat_loss "$THRESH_COMPARE_MIN_SAMPLES" 25
+  run hget networks.0.judged.metrics.gateway_loss_pct
+  [ "$output" = '"critical"' ]
+  run hget networks.0.judged.overall
+  [ "$output" = '"critical"' ]
+}
+
+@test "a network below THRESH_COMPARE_MIN_SAMPLES gets all-null judged verdicts" {
+  local i
+  for i in $(seq 1 $((THRESH_COMPARE_MIN_SAMPLES - 1))); do
+    rec "$LIVE" "$(printf '2026-03-%02dT00:00:00Z' "$i")" \
+      "\"network\":{\"id\":\"wifi:mac=aa:bb:cc:dd:ee:ff\"},\"gateway\":{\"loss_pct\":25}"
+  done
+  run hpy 'import json,sys
+m = json.load(sys.stdin)["networks"][0]["judged"]["metrics"]
+print(all(v is None for v in m.values()))'
+  [ "$output" = "True" ]
+  run hget networks.0.judged.overall
+  [ "$output" = "null" ]
+  run hget networks.0.judged.summary
+  [ "$output" = '"Not enough checks on this network to judge it yet."' ]
+}
+
+@test "unjudged keys never appear in judged.metrics" {
+  # gateway_rtt_ms and speed_down_mbps are real metric_stats entries with
+  # no policy threshold — absent from JUDGED_METRICS, and so absent here.
+  # Their absence must not be read as a verdict of "healthy".
+  flat_loss "$THRESH_COMPARE_MIN_SAMPLES" 0
+  run hpy 'import json,sys
+m = json.load(sys.stdin)["networks"][0]["judged"]["metrics"]
+print("gateway_rtt_ms" in m, "speed_down_mbps" in m)'
+  [ "$output" = "False False" ]
+}
+
+@test "an RSSI median between G1 and WEAK yields warn" {
+  # THRESH_WIFI_RSSI_G1_DBM=-70 (milder), THRESH_WIFI_RSSI_WEAK_DBM=-75
+  # (more severe) — -72 sits strictly between them.
+  flat_rssi "$THRESH_COMPARE_MIN_SAMPLES" -72
+  run hget networks.0.judged.metrics.wifi_rssi_dbm
+  [ "$output" = '"warn"' ]
+}
+
+@test "judged.summary is a non-empty string on every emitted network" {
+  flat_loss "$THRESH_COMPARE_MIN_SAMPLES" 0
+  rec "$LIVE" 2026-05-01T00:00:00Z '"network":{"id":"wifi:mac=11:22:33:44:55:66"}'
+  run hpy 'import json,sys
+for n in json.load(sys.stdin)["networks"]:
+    s = n["judged"]["summary"]
+    assert isinstance(s, str) and s, n
+print("ok")'
+  [ "$output" = "ok" ]
+}
+
+@test "--limit windows judged along with metric_stats" {
+  flat_loss "$THRESH_COMPARE_MIN_SAMPLES" 0
+  # Unlimited: enough samples for a real verdict.
+  run hget networks.0.judged.metrics.gateway_loss_pct
+  [ "$output" = '"ok"' ]
+  # Windowed to fewer than THRESH_COMPARE_MIN_SAMPLES of the most recent
+  # runs: metric_stats goes null, and judged must follow it rather than
+  # judging a population --limit already excluded.
+  run hget networks.0.judged.metrics.gateway_loss_pct --limit 5
+  [ "$output" = "null" ]
+  run hget networks.0.judged.overall --limit 5
+  [ "$output" = "null" ]
+}
+
+@test "top-level schema is 2" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget schema
+  [ "$output" = "2" ]
 }
 
 @test "--limit windows every quantity a network reports" {
