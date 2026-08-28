@@ -6,6 +6,74 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Added — netdiag notices when its own watcher stops [ND-1]
+
+The first item from `docs/design/nothing-was-watching.md`, and a bug
+before it is a feature: `com.netdiag.watcher` failed **1,386 consecutive
+times over seventeen days** on this project's own machine while every
+visible signal said it was fine. `launchctl list` reported exit status
+126 throughout. `watcher.stderr.log` grew to 124 KB of a single repeated
+`Operation not permitted`. `watcher.stdout.log` — the file the install
+message tells you to `tail -f` — stayed at **0 bytes**, which is exactly
+what a healthy watcher with nothing to report looks like.
+
+The cause is TCC and it is not developer-specific. The plist runs
+whatever `netdiag` on `PATH` resolves to; `install.sh` run from inside a
+clone points that symlink at the clone; and a launchd agent has no
+consent grant for `~/Documents`, `~/Desktop` or `~/Downloads`. Clone
+netdiag into any of the three, install from it, and the watcher can
+never execute. There is no grant to ask for either — the TCC prompt
+would be attributed to Homebrew's bash, and "give bash Full Disk Access"
+is worse advice than shipping no watcher at all.
+
+Four changes, in the order they matter:
+
+- **`--install-watcher` refuses those paths** and prints what to do
+  instead, exiting 3 and writing no plist. A plist that exists is a
+  plist launchd keeps failing to run every fifteen minutes forever.
+- **A heartbeat, not just an exit status.** The plist now sets
+  `NETDIAG_WATCHER=1`, and `bin/netdiag` writes
+  `~/net-diag/watcher.heartbeat` on its normal exit path when it sees
+  that variable. Exit status says a process started and returned;
+  it cannot say a run reached the end. Nothing but the plist sets the
+  variable, so an interactive run can never make a dead watcher look
+  alive — and it is deliberately not written from the `EXIT` trap,
+  because a run that aborted did not complete.
+- **New `lib/watchdog.sh`** reads the plist, `launchctl`'s exit status
+  and that heartbeat, and decides one state: `ok`, `pending`, `stale`,
+  `never`, `failing` or `blocked`. One decision, read by the Report
+  card row, by `ND-1` and by the app — three consumers that could
+  otherwise describe the same watcher three different ways.
+- **`ND-1` (warn, new `netdiag` category)** fires on the four broken
+  states. `pending` — installed more recently than
+  `THRESH_WATCHER_INTERVAL_S × THRESH_WATCHER_STALE_FACTOR` — stays
+  quiet, because a watcher installed a minute ago has not run yet and
+  accusing it then teaches users to ignore the rule.
+
+`netdiag` is its own category rather than borrowing `baseline` because a
+category names the row whose number a rule judges, and tinting the Speed
+row red over a broken launchd agent is the same mistake as `G1`'s green
+dot beside "35% loss", pointed the other way. The Report card row is
+capped at `warn` for a related reason: `bad` rows sort above the network
+itself, and nothing about the network is wrong when this fires.
+
+The `watcher` object in `--json` is **`null` when none is installed**,
+which is most runs — an object of nulls would claim "installed, and
+nothing about it is known". `program` is dropped under `--redact` rather
+than masked: it is an absolute path under `$HOME`, so it carries the
+account name whether or not that string is anything `redact()` knows to
+look for.
+
+`THRESH_WATCHER_INTERVAL_S` also retires the inline `900` that used to
+live in `lib/launchd.sh` — the cadence now decides a verdict, so it
+belongs where every other number that decides a verdict lives.
+
+21 new tests in `tests/test_watchdog.bats`, including a guard that every
+state the machine can produce is one both `lib/diagnosis.sh` and
+`lib/headline.sh` handle: a seventh state added in one place would
+otherwise render as nothing at all, which is the exact failure this
+whole rule exists to end.
+
 ### Docs — nothing was watching
 
 New `docs/design/nothing-was-watching.md`. Nothing implemented. The
@@ -24,8 +92,10 @@ healthy quiet run. The cause is not developer-specific: the plist points
 at whatever `netdiag` on `PATH` resolves to, `install.sh` run from a
 clone points that symlink at the clone, and a launchd agent has no TCC
 grant for `~/Documents`. Anyone who clones there gets the same
-permanently-broken, silently-broken watcher. `WD-1` is proposed so the
-tool that exists to notice silent failure notices its own.
+permanently-broken, silently-broken watcher. `ND-1` is proposed so the
+tool that exists to notice silent failure notices its own. (This entry
+and the design document originally called it `WD-1`, which was already
+taken by the WiFi-flapping rule; both now say `ND-1`.)
 
 The rest follows from one observation: with monitoring enabled at a 5 s
 cadence, 75 seconds of sampling wrote **zero bytes** anywhere on disk,

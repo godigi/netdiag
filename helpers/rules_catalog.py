@@ -73,6 +73,13 @@ SCHEMA_RULES_CATALOG = 3
 CATEGORIES = frozenset({
     "router", "internet", "dns", "wifi", "load", "mtu", "speed", "clock",
     "ipv6", "vpn", "lan", "dhcp", "topology", "baseline",
+    # The one category that is not a property of the network: netdiag
+    # judging its own background watcher. It earns a category rather than
+    # borrowing `baseline` because borrowing would tint the Speed row —
+    # putting a red mark on a throughput number because a launchd agent
+    # is broken, which is the same class of mistake as G1's green dot
+    # beside "35% loss", only pointed the other way.
+    "netdiag",
 })
 
 # `category` names the measurement a rule is ABOUT — the row whose number
@@ -890,6 +897,25 @@ RULES: list[dict[str, str]] = [
             "is only waiting to cut it off."
         ),
         "doc": "DIAGNOSIS-RULES.md#cp-1--captive-portal-blocking-real-access",
+    },
+    {
+        "id": "ND-1",
+        "title": "Background watcher installed but not running",
+        "category": "netdiag",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "The launchd agent that records a check in the background is "
+            "installed and is not producing runs — because it sits in a "
+            "folder macOS keeps background agents out of, because launchd "
+            "reports it exiting with an error, or because it has simply "
+            "stopped. Nothing about the network is wrong. What is wrong "
+            "is the history: the baseline every later report compares "
+            "against has a hole in it for as long as this lasts, and the "
+            "watcher's own log stays empty either way, which is also what "
+            "a healthy idle watcher looks like."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#nd-1--the-background-watcher-is-installed-and-not-running",
     },
 ]
 

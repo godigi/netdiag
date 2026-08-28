@@ -323,6 +323,28 @@ headline_run() {
     _row ok "Hosts file" "clean (only macOS defaults)"
   fi
 
+  # ── Background watcher (only when one is installed) ─────────────────
+  # No row at all for the overwhelming majority of runs, where no watcher
+  # exists: a "not installed" line in every report is an advertisement,
+  # not a finding. The state comes from watchdog_run, the same value ND-1
+  # reads, so this row and that diagnosis cannot contradict each other.
+  #
+  # Every fault state is `warn`, never `bad`, and that is a deliberate
+  # ceiling rather than an accident of wording. `bad` rows sort to the
+  # very top of this card, above the network itself, and nothing about
+  # the network is wrong when this fires — a red mark over "can't run
+  # from this folder" as the first thing in a report about a healthy
+  # connection is the wrong altitude. It matches ND-1's own severity,
+  # so the row and the diagnosis rank the same fact the same way.
+  case "${WATCHER_STATE:-absent}" in
+    blocked) _row warn "Background watcher" "can't run from this folder" ;;
+    failing) _row warn "Background watcher" "last run exited ${WATCHER_LAST_EXIT}" ;;
+    never)   _row warn "Background watcher" "has never run" ;;
+    stale)   _row warn "Background watcher" "last ran $(watchdog_fmt_age "$WATCHER_HEARTBEAT_AGE_S") ago" ;;
+    pending) _row ""   "Background watcher" "installed, hasn't run yet" ;;
+    ok)      _row ok   "Background watcher" "last ran $(watchdog_fmt_age "$WATCHER_HEARTBEAT_AGE_S") ago" ;;
+  esac
+
   # ── Emit in priority order ──────────────────────────────────────────
   # Bad first (need-attention), then warnings, then healthy items, then
   # neutral/informational. A blank line separates the warn tier from

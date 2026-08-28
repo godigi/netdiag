@@ -499,6 +499,29 @@ def main() -> None:
             "proxy_detail": _env("PATH_PROXY_DETAIL"),
             "network_filters": (_env("PATH_FILTERS") or "").split(),
         },
+        # netdiag's own background watcher. The only object in this
+        # document that describes netdiag rather than the network, and
+        # null for the majority of runs, where no watcher is installed —
+        # an object full of nulls would read as "installed, nothing
+        # known", which is a different and much worse claim.
+        #
+        # `state` is the single verdict lib/watchdog.sh decided; the raw
+        # fields beside it are the evidence for it, so a consumer can
+        # show why without re-deriving the answer. See ND-1.
+        "watcher": ({
+            "state": _env("WATCHER_STATE"),
+            # Dropped under --redact rather than masked: it is an
+            # absolute path under $HOME, so it carries the account name
+            # whether or not that string appears anywhere redact() knows
+            # to look for. The state and the exit status carry the
+            # diagnosis; the path is only ever context.
+            "program": (None if _bool("REDACT") else _env("WATCHER_PROGRAM")),
+            "interval_s": _maybe_int("WATCHER_PLIST_INTERVAL_S"),
+            "last_exit": _maybe_int("WATCHER_LAST_EXIT"),
+            "last_run_age_s": _maybe_int("WATCHER_HEARTBEAT_AGE_S"),
+            "installed_age_s": _maybe_int("WATCHER_INSTALLED_AGE_S"),
+            "path_blocked": _bool("WATCHER_PATH_BLOCKED"),
+        } if _bool("WATCHER_INSTALLED") else None),
         "wifi_scan": ({
             "current_channel": _env("WIFI_SCAN_CURRENT_CHANNEL"),
             "current_band": _env("WIFI_SCAN_CURRENT_BAND"),

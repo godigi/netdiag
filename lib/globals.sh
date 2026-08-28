@@ -214,6 +214,17 @@ PATH_PROXY_DETAIL=""       # host:port, or the PAC URL
 PATH_FILTERS=""            # NetworkExtension filter bundle ids [FW-1]
 PATH_FILTER_COUNT=0
 
+# netdiag's own background watcher (lib/watchdog.sh) — not a property of
+# the network, and the only check here that judges netdiag itself. [ND-1]
+WATCHER_INSTALLED=0        # 1 = a com.netdiag.watcher plist exists
+WATCHER_PROGRAM=""         # what the plist actually runs
+WATCHER_PLIST_INTERVAL_S="" # StartInterval read back out of the plist
+WATCHER_LAST_EXIT=""       # launchctl's last exit status; "" = not loaded
+WATCHER_HEARTBEAT_AT=""    # epoch of the last completed watcher run
+WATCHER_HEARTBEAT_AGE_S="" # ...as an age, "" when never recorded
+WATCHER_INSTALLED_AGE_S="" # how long the plist has existed
+WATCHER_PATH_BLOCKED=0     # 1 = it runs from a TCC-protected folder
+
 # Output / baseline (lib/output.sh)
 DIAGNOSIS_LINES=""       # one "SEV|MSG" per line (SEV ∈ critical/warn/info)
 BASELINE_JSON=""         # raw JSON from helpers/baseline.py

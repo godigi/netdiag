@@ -224,6 +224,7 @@ struct RunReportView: View {
     ///   | NAT topology         | topology        |
     ///   | Local network        | lan, dhcp       |
     ///   | Clock                | clock           |
+    ///   | Background watcher   | netdiag         |
     ///
     /// Three things this table fixes, all of them the same underlying
     /// mistake — treating a category as a loose topic tag rather than as
@@ -262,6 +263,11 @@ struct RunReportView: View {
         "NAT topology": ["topology"],
         "Local network": ["lan", "dhcp"],
         "Clock": ["clock"],
+        // The one row that is not about the network. It appears only when
+        // a watcher is installed — the CLI sends `watcher: null` for every
+        // run where none is, and a row saying "not installed" in every
+        // other report would be an advertisement rather than a finding.
+        "Background watcher": ["netdiag"],
     ]
 
     private var rows: [Row] {
@@ -432,6 +438,19 @@ struct RunReportView: View {
                        metricKey: "ntp_drift_s",
                        glossaryKey: "clock",
                        medianFormatter: { String(format: "%+.2f s", $0) }))
+        // Last, and only when one is installed. It is the one row here
+        // that describes netdiag rather than the network, so it should
+        // never sit above a measurement — and for the majority of runs,
+        // where `watcher` is null, it should not exist at all.
+        if let watcher = s.watcher {
+            out.append(Row(label: "Background watcher",
+                           value: Self.watcherValue(watcher),
+                           health: health(["ND-1"], "Background watcher"),
+                           metricKey: nil,
+                           glossaryKey: nil,
+                           medianFormatter: nil,
+                           informational: true))
+        }
         return out
     }
 
@@ -442,6 +461,27 @@ struct RunReportView: View {
     // honest answer is that the number on the wire does not describe the
     // link. Every branch keys off something the CLI emitted (a rule id, a
     // run mode, a flag); none of them compares a number to a threshold.
+
+    /// The watcher row's value. Every branch keys off `state`, which the
+    /// CLI already decided — nothing here compares an age to a cutoff, so
+    /// this view cannot disagree with ND-1 about whether a watcher has
+    /// stopped. An unrecognised state (an older or newer CLI) falls
+    /// through to the state string itself rather than to a guess.
+    private static func watcherValue(_ w: RunSnapshot.Watcher) -> String {
+        func ago(_ seconds: Int?) -> String? {
+            guard let seconds else { return nil }
+            return RelativeTime.string(from: Date().addingTimeInterval(-Double(seconds)))
+        }
+        switch w.state {
+        case "ok":      return ago(w.lastRunAgeS).map { "last ran \($0)" } ?? "running"
+        case "stale":   return ago(w.lastRunAgeS).map { "last ran \($0)" } ?? "not running"
+        case "blocked": return "can't run from this folder"
+        case "failing": return w.lastExit.map { "last run exited \($0)" } ?? "failing"
+        case "never":   return "has never run"
+        case "pending": return "installed, hasn't run yet"
+        default:        return w.state ?? "unknown"
+        }
+    }
 
     /// Which rules this run fired, for the render-time questions below.
     private var firedRules: Set<String> {

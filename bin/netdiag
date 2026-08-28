@@ -575,14 +575,19 @@ fi
 _require_python3 || exit 3
 
 # ── Mode dispatch (exit after handling) ────────────────────────────────────
-if [ "$INSTALL_WATCHER" -eq 1 ]; then
+if [ "$INSTALL_WATCHER" -eq 1 ] || [ "$UNINSTALL_WATCHER" -eq 1 ]; then
+  # watchdog.sh owns the plist path, the label and the TCC-protected-folder
+  # test; thresholds.sh owns the interval it writes. Both halves of the
+  # feature read the same three facts from the same place — the install
+  # and the check disagreeing about where the plist lives is precisely the
+  # bug ND-1 exists to catch, so it must not be possible.
+  # shellcheck source=lib/thresholds.sh
+  . "$LIB_DIR/thresholds.sh"
+  # shellcheck source=lib/watchdog.sh
+  . "$LIB_DIR/watchdog.sh"
   # shellcheck source=lib/launchd.sh
   . "$LIB_DIR/launchd.sh"
-  install_watcher_run
-fi
-if [ "$UNINSTALL_WATCHER" -eq 1 ]; then
-  # shellcheck source=lib/launchd.sh
-  . "$LIB_DIR/launchd.sh"
+  [ "$INSTALL_WATCHER" -eq 1 ] && install_watcher_run
   uninstall_watcher_run
 fi
 if [ "$SUMMARY" -eq 1 ]; then
@@ -783,7 +788,8 @@ fi
 . "$LIB_DIR/globals.sh"
 for mod in iface vpn wifi wifi_scan wifi_disconnect dhcp arp gateway public \
            bufferbloat mtu dns ipv6 tcp_reach speedtest ntp traceroute mtr \
-           wan internet_ping hosts netid path headline diagnosis output gping; do
+           wan internet_ping hosts netid path watchdog headline diagnosis \
+           output gping; do
   # shellcheck disable=SC1090
   . "$LIB_DIR/$mod.sh"
 done
@@ -939,6 +945,12 @@ run_timed traceroute  traceroute_run
 run_timed nat         wan_double_nat_run  # pure parse over TRACE_LINES
 run_timed mtr         mtr_run
 
+# netdiag's own background watcher: is it installed, and has it actually
+# run? A plist read, a `launchctl list` and a file mtime — no network
+# traffic at all, which is why it sits outside the parallel batch rather
+# than competing for a slot in it. [ND-1]
+run_timed watchdog    watchdog_run
+
 # The second reading, before anything judges the numbers. Everything
 # between here and NETID_FP_START was measured on the network this
 # compares against — if it changed, the measurements straddle two. [DQ-1]
@@ -987,6 +999,13 @@ if [ "$GPING_DECISION" = "unset" ] \
   esac
 fi
 gping_run
+
+# A watcher run records that it finished. No-op for every other run: the
+# plist is the only thing that sets NETDIAG_WATCHER, so an interactive run
+# can never make a dead watcher look alive. Deliberately here rather than
+# in the EXIT trap — a run that aborted did not complete, and the point of
+# the heartbeat is to distinguish those two.
+watchdog_heartbeat "$MAX_SEVERITY"
 
 # Spec exit codes: 0 healthy · 1 warn · 2 critical · 3 script error.
 # NETDIAG_COMPLETED tells the EXIT trap this status is a real verdict and

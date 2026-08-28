@@ -404,6 +404,24 @@ through `jq` for ad-hoc analysis. Once it passes its retention cap the
 oldest records roll into `baseline-archive.jsonl` rather than being
 deleted — `--history` reads both.
 
+**netdiag can't install the watcher from `~/Documents`, `~/Desktop` or
+`~/Downloads`, and will tell you so.** A launchd agent gets no access to
+those folders and cannot ask for any, so a watcher installed from a clone
+in one of them fails with `Operation not permitted` on every run —
+forever, and silently, since the log it writes stays empty either way.
+That happened to this project for seventeen days and 1,386 failed runs
+before anything noticed. `--install-watcher` now refuses those paths and
+says what to do instead; if you installed one before that landed, any
+run will report it as `ND-1`:
+
+```
+⚠  Background watcher   can't run from this folder
+```
+
+Fix it by installing netdiag outside those folders — the one-line
+installer puts it in `~/.local/share/netdiag` — then
+`netdiag --uninstall-watcher && netdiag --install-watcher`.
+
 ### `--watch` vs `--monitor`
 
 Two different tools that both repeat, and it is worth being clear which

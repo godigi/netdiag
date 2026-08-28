@@ -53,6 +53,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `mtr` | object | `target`, `duration_s`, `hops[]`, `first_lossy_hop` |
 | `wan` | object | `load_balancing`, `double_nat`, `upnp` — see below |
 | `hosts_file` | object | `custom_count`, `suspicious_redirects[]` |
+| `watcher` | object | netdiag's own launchd watcher, or **`null` when none is installed** — which is most runs. The only object here that describes netdiag rather than the network. See below. |
 | `timings` | object | `total_s`, `budget_s`, `over_budget`, and `phases{}` per stage |
 | `baseline` | object | comparison against history, or `null` — see below |
 | `diagnosis` | array | `severity` (`info`/`warn`/`critical`), `rule`, `summary` |
@@ -163,6 +164,51 @@ documentation.
 `detected` means *home-side* double-NAT only. ISP-side private transit
 (carrier-grade NAT) lands in `isp_transit_chain` instead, because it is
 normal for the carrier and not something the user can fix.
+
+## `watcher`
+
+```json
+{
+  "state": "blocked",
+  "program": "/Users/you/Documents/netdiag/bin/netdiag",
+  "interval_s": 900,
+  "last_exit": 126,
+  "last_run_age_s": null,
+  "installed_age_s": 1471984,
+  "path_blocked": true
+}
+```
+
+**`null` when no watcher is installed**, which is the ordinary case. An
+object of nulls would say "installed, and nothing about it is known" —
+a different and much worse claim than "there isn't one".
+
+`state` is the verdict, decided once in `lib/watchdog.sh` so that the
+Report card row, `ND-1` and the app cannot describe the same watcher
+differently. The fields beside it are the evidence for it, not inputs a
+consumer should re-judge:
+
+| `state` | meaning | `ND-1` |
+|---|---|---|
+| `ok` | completed a run within the tolerated window | — |
+| `pending` | installed too recently to have run yet | — |
+| `stale` | ran once, but not recently enough | fires |
+| `never` | installed long enough to have run, and never has | fires |
+| `failing` | launchd ran it and it exited non-zero | fires |
+| `blocked` | installed somewhere a launchd agent can never execute | fires |
+
+The window is `interval_s × THRESH_WATCHER_STALE_FACTOR`, read back from
+the plist rather than assumed, because a plist written by an older
+version may carry a different interval.
+
+`program` is **absent under `--redact`** rather than masked: it is an
+absolute path under `$HOME`, so it carries the account name whether or
+not that string appears anywhere `redact()` knows to look. `state` and
+`last_exit` carry the finding; the path is only ever context.
+
+Consumers should treat `state` as an open set. A build that has never
+heard of a state should show it neutrally rather than fail — the same
+tolerance the rules catalog asks for around an unknown `category`.
 
 ## `baseline`
 

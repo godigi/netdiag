@@ -153,7 +153,10 @@ for r in d['rules']:
   printf '%s' "$output" | python3 -c "
 import json, sys
 allowed = {'router', 'internet', 'dns', 'wifi', 'load', 'mtu', 'speed',
-           'clock', 'ipv6', 'vpn', 'lan', 'dhcp', 'topology', 'baseline'}
+           'clock', 'ipv6', 'vpn', 'lan', 'dhcp', 'topology', 'baseline',
+           # The one category that is not a property of the network:
+           # netdiag judging its own background watcher (ND-1).
+           'netdiag'}
 d = json.load(sys.stdin)
 for r in d['rules']:
     assert r['category'] in allowed, (r['id'], r['category'])

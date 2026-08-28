@@ -321,3 +321,25 @@ THRESH_MTR_HOP_LOSS_PCT=2
 # --quick budget survives it. Paid only on the failing path, which is rare
 # by construction — a network with a route never reaches the re-read.
 THRESH_ROUTE_RECHECK_DELAY_S=1
+
+# ── The background watcher's own health [ND-1] ───────────────────────────
+# How often the launchd watcher runs, and how many missed runs it takes
+# before netdiag calls it broken rather than late.
+#
+# Why a threshold and not a literal in lib/launchd.sh, where the interval
+# used to live: ND-1 compares the age of the watcher's heartbeat against
+# this cadence to decide whether to fire, so the number now decides a
+# verdict — and every number that decides a verdict lives here. The plist
+# is still the authority for an *installed* watcher (watchdog_run reads
+# StartInterval back out of it, because a plist written by an older
+# version may say something else); this is the value new installs write
+# and the fallback when the plist cannot be read.
+THRESH_WATCHER_INTERVAL_S=900
+
+# Missed runs tolerated before ND-1 fires. Same shape of judgement as
+# THRESH_MON_GAP_FACTOR above and the same reasoning: a launchd agent
+# legitimately slips a cycle when the machine is asleep, busy, or has
+# just woken, and warning on one late run would be noise. Three missed
+# runs — three quarters of an hour on the default cadence — is not
+# lateness, it is a watcher that has stopped.
+THRESH_WATCHER_STALE_FACTOR=3

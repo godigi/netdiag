@@ -55,13 +55,19 @@ struct RunSnapshot: Decodable, Sendable {
     var mtr: MTR = .init()
     var timings: Timings = .init()
     var suitability: Suitability?
+    /// netdiag's own background watcher, or `nil` when none is installed —
+    /// which is most runs. Optional rather than defaulted for the reason
+    /// the CLI emits `null`: a struct full of zeroes would say "installed,
+    /// and everything about it is unknown", which is a different and much
+    /// worse claim than "there isn't one". See ND-1.
+    var watcher: Watcher?
     var diagnosis: [Diagnosis] = []
     var mostLikelyRootCause: String?
 
     enum CodingKeys: String, CodingKey {
         case version, timestamp, network, wifi, gateway, dns, traceroute
         case bufferbloat, mtu, ipv6, wan, vpn, speedtest, ntp, dhcp, mtr, timings
-        case suitability, diagnosis
+        case suitability, diagnosis, watcher
         case runMode = "run_mode"
         case runID = "run_id"
         case interfaceInfo = "interface"
@@ -334,6 +340,34 @@ struct RunSnapshot: Decodable, Sendable {
         }
     }
 
+    /// The launchd watcher's own state, as the CLI decided it — this type
+    /// carries no logic beyond formatting, because `state` is already the
+    /// verdict `lib/watchdog.sh` reached and re-deriving it from the raw
+    /// fields beside it is how the app ends up contradicting the report.
+    struct Watcher: Decodable, Sendable {
+        /// `ok` · `stale` · `blocked` · `failing` · `never` · `pending`.
+        /// A `String`, not an enum: an older or newer CLI is free to add
+        /// a state, and a build that has never heard of it should show
+        /// something neutral rather than fail to decode the whole run.
+        var state: String?
+        /// Absent under `--redact` — it is an absolute path under $HOME.
+        var program: String?
+        var intervalS: Int?
+        var lastExit: Int?
+        var lastRunAgeS: Int?
+        var installedAgeS: Int?
+        var pathBlocked: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case state, program
+            case intervalS = "interval_s"
+            case lastExit = "last_exit"
+            case lastRunAgeS = "last_run_age_s"
+            case installedAgeS = "installed_age_s"
+            case pathBlocked = "path_blocked"
+        }
+    }
+
     struct MTR: Decodable, Sendable {
         var hops: [Traceroute.Hop] = []
         var firstLossyHop: String?
@@ -457,6 +491,7 @@ extension RunSnapshot {
         dhcp = c.lenient(.dhcp, .init())
         mtr = c.lenient(.mtr, .init())
         timings = c.lenient(.timings, .init())
+        watcher = c.lenient(.watcher)
         diagnosis = c.lenient(.diagnosis, [])
         mostLikelyRootCause = c.lenient(.mostLikelyRootCause)
     }

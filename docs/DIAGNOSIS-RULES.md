@@ -1018,6 +1018,75 @@ HTTP status alone with `curl -o /dev/null`, so a portal answering 200 with
 its own login page — the common case — was reported as "No captive
 portal." See `captive_portal_classify`.
 
+## Rules about netdiag itself
+
+One rule, one category (`netdiag`), and the only entry in this document
+that judges the tool rather than the network. It earns its own category
+rather than borrowing `baseline` because a category names the row whose
+number a rule is judging, and tinting the Speed row red because a
+launchd agent is broken is the same mistake as `G1`'s green dot beside
+"35% loss", pointed the other way.
+
+### ND-1 — the background watcher is installed and not running
+
+- Trigger: `WATCHER_STATE` (set by `watchdog_run`, `lib/watchdog.sh`) is
+  `blocked`, `failing`, `never` or `stale`.
+- Severity: `warn`.
+- Evidence: the program path for `blocked`, launchd's exit status for
+  `failing`, the age of the last completed run for `stale`, and the age
+  of the plist for `never`.
+- Recommendation: `netdiag --uninstall-watcher && netdiag
+  --install-watcher`, which now refuses to install a watcher somewhere
+  it could never run.
+
+**The defect it closes, measured on this project's own machine.**
+`com.netdiag.watcher` failed on every one of 1,386 invocations between
+11 and 28 August 2026 — once every fifteen minutes for seventeen days —
+and nothing said so. `launchctl list` reported exit status 126 the
+entire time. `watcher.stderr.log` grew to 124 KB of a single repeated
+line: `Operation not permitted`. And `watcher.stdout.log`, the file the
+install message tells you to `tail -f`, sat at **0 bytes** — which is
+exactly what a healthy watcher with nothing to report looks like.
+
+**The cause is TCC, and it is not developer-specific.** The plist runs
+whatever `netdiag` on `PATH` resolves to; `install.sh` run from inside a
+clone deliberately points that symlink at the clone; and a launchd agent
+has no consent grant for `~/Documents`, `~/Desktop` or `~/Downloads`.
+Clone netdiag into any of the three, install from it, and the watcher
+can never execute. There is also no grant to ask for: the TCC prompt
+would be attributed to the *executable*, which is Homebrew's bash, and
+"give bash Full Disk Access" is worse advice than shipping no watcher.
+So `install_watcher_run` now refuses those paths outright and says what
+to do instead, and this rule catches the watchers installed before it
+did.
+
+**The four broken states, and the two that are not.** `pending` (a
+watcher installed more recently than
+`THRESH_WATCHER_INTERVAL_S × THRESH_WATCHER_STALE_FACTOR`) does not
+fire: it has not had time to run, and accusing it then teaches the user
+to ignore the rule. `ok` obviously does not fire. The tolerance itself
+is the same judgement `THRESH_MON_GAP_FACTOR` makes — a launchd agent
+legitimately slips a cycle around sleep, and warning on one late run
+would be noise.
+
+**Why a heartbeat and not just launchd's exit status.** Exit status
+answers "did the process start and what did it return", which a crash
+loop and a healthy run can share; it says nothing about whether the run
+reached the end. `bin/netdiag` writes `~/net-diag/watcher.heartbeat` on
+its normal exit path, and only when `NETDIAG_WATCHER=1` — a variable set
+by nothing but the plist, so an interactive run can never make a dead
+watcher look alive. Deliberately not written from the `EXIT` trap: a run
+that aborted did not complete, and distinguishing those two is the whole
+point.
+
+**warn, not critical.** Nothing about the network is wrong, and a run
+exiting 2 over a background job would be crying wolf. Not `info`
+either — the user asked for continuous history, has been getting none,
+and every baseline comparison they have seen since is thinner than they
+think. The Report card row is capped at the same severity for the same
+reason: `bad` rows sort above the network itself, and this belongs
+below anything actually wrong with the connection.
+
 ## Rules under active development
 
 The internet-side loss family (`G3`, `L1`, `L2`, `ICMP-1`) is being

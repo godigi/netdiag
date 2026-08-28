@@ -90,7 +90,9 @@ notice.
    rather than an inference from an empty log.
 3. A run should read that heartbeat and `launchctl list`'s exit status.
 
-**Rule.** `WD-1` (warn, `netdiag`): "You installed the background
+**Rule.** `ND-1` (warn, `netdiag`) — this document first proposed it as
+`WD-1`, which was wrong: `WD-1` has been the WiFi-flapping rule since
+v0.2. "You installed the background
 watcher, but it has not completed a run since <date> — it exits
 immediately with 'Operation not permitted'. Nothing has been recorded in
 the meantime." netdiag already refuses to lie about the network; it
@@ -367,7 +369,7 @@ independent and cheaper. Both are gating for anyone but the author.
 
 Everything above is a candidate; this is the argued shortlist.
 
-1. **§0.1 the watcher self-check (`WD-1`)** — a shipped component has
+1. **§0.1 the watcher self-check (`ND-1`)** — a shipped component has
    been silently dead for two weeks. Nothing else in this document
    matters if the always-on path can fail this quietly. Smallest item
    here, and it is a bug, not a feature.

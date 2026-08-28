@@ -509,6 +509,42 @@ diagnosis_run() {
     add_diag info DH-2 "Your router suggested $DHCP_DNS_SERVERS for name lookups, but your Mac is using $(dns_routable_resolvers "$SYS_RES_ALL") instead — somebody manually overrode it. Fine if you did it on purpose (1.1.1.1 and 8.8.8.8 are common choices); surprising if you didn't."
   fi
 
+  # ND-1 — the background watcher is installed and is not running.
+  #
+  # The only rule in this file that judges netdiag rather than the
+  # network, and it exists because the failure it catches is invisible by
+  # construction. A launchd agent that cannot execute writes nothing but
+  # a line to a stderr log nobody opens, and its stdout log — the one the
+  # install message tells you to tail — stays at zero bytes, which is
+  # also what a healthy quiet watcher looks like. On this developer's
+  # machine that state lasted seventeen days and 1,386 failed runs.
+  #
+  # warn, not critical: nothing about the *network* is wrong, and a run
+  # that exits 2 because a background job is broken would be crying wolf.
+  # But not info either — the user asked for continuous history, has been
+  # getting none, and every baseline comparison they have seen since is
+  # thinner than they think.
+  #
+  # Ordered here, last, for the same reason: it is a fact about the tool,
+  # and it should never displace a finding about the network.
+  # The state itself is decided once, in watchdog_run, so this rule and
+  # the Report card row can never describe it differently. Here it is
+  # only turned into a sentence.
+  local _nd_why=""
+  case "${WATCHER_STATE:-absent}" in
+    blocked)
+      _nd_why="it runs from ${WATCHER_PROGRAM}, and macOS keeps background agents out of Documents, Desktop and Downloads — so every attempt fails with \"Operation not permitted\" before netdiag even starts" ;;
+    failing)
+      _nd_why="launchd reports that its last run exited ${WATCHER_LAST_EXIT}" ;;
+    never)
+      _nd_why="it has never completed a run, in the $(watchdog_fmt_age "$WATCHER_INSTALLED_AGE_S") since you installed it" ;;
+    stale)
+      _nd_why="its last completed run was $(watchdog_fmt_age "$WATCHER_HEARTBEAT_AGE_S") ago, and it is meant to run every $(watchdog_fmt_age "${WATCHER_PLIST_INTERVAL_S:-$THRESH_WATCHER_INTERVAL_S}")" ;;
+  esac
+  if [ -n "$_nd_why" ]; then
+    add_diag warn ND-1 "netdiag's background watcher is installed but isn't running: ${_nd_why}. Nothing about your network is wrong — but nothing has been recorded in the meantime either, so the history this report compares against has a hole in it. Re-install it with: netdiag --uninstall-watcher && netdiag --install-watcher, which now refuses to install a watcher somewhere it could never run."
+  fi
+
   # WAN-1 / WAN-1b / NAT-1 / UP-1 live in lib/wan.sh's diagnosis hook so
   # this file stays scoped to the older rules. The hook is a no-op stub
   # until the NAT/WAN section ships.
