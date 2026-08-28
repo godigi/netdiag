@@ -63,6 +63,7 @@ private enum VerifyHarness {
         NSApp?.setActivationPolicy(.accessory)
         runStageTests()
         runFullCheckPolicyTests()
+        runHeadlineRuleTests()
         runSnapshots()
         print("")
         if failures.isEmpty {
@@ -196,6 +197,81 @@ private enum VerifyHarness {
         let unsafeHelp = FullCheckPolicy.controlHelp(isSafe: false)
         equal(unsafeHelp.contains("is failing"), false, "unsafe help never claims the connection is failing")
         equal(unsafeHelp.contains("speed test"), true, "unsafe help discloses the speed test is skipped too")
+    }
+
+    // MARK: - Headline rule selection
+    //
+    // `lib/monitor.sh`'s `_mon_rules` appends rules in the order it
+    // evaluates them, not by severity: TCP-1, the G-loss rules, P-reach,
+    // D1, CP-1, VPN-1, ICMP-1, then the L-loss rules. So an `info` VPN-1
+    // routinely sits ahead of a `critical` L1 in `status.rules`, and the
+    // headline used to take the first rule it could look up — putting "A
+    // VPN is carrying your traffic right now" under a red "Detecting a
+    // network problem" card while the user lost most of their packets.
+    //
+    // This is invisible on inspection (both orderings look reasonable) and
+    // only reproduces on a machine with a VPN up and a failing link, which
+    // is why it is asserted here rather than left to be noticed.
+
+    private static func runHeadlineRuleTests() {
+        print("\nHeadline rule selection")
+
+        // A stand-in catalog rather than the real one: the harness runs
+        // headless with no CLI to query, and the behaviour under test is
+        // the ranking, not the catalog's contents.
+        let catalog = stubCatalog([
+            ("VPN-1", "info", "A VPN is carrying your traffic right now."),
+            ("L1", "critical", "Severe internet packet loss."),
+            ("D1", "warn", "DNS resolver flaky."),
+        ])
+
+        equal(NetdiagCoordinator.headlineText(forRulesIn: ["VPN-1", "L1"], catalog: catalog),
+              "Severe internet packet loss.",
+              "a critical rule outranks an info one that precedes it")
+        equal(NetdiagCoordinator.headlineText(forRulesIn: ["VPN-1", "D1"], catalog: catalog),
+              "DNS resolver flaky.",
+              "a warn rule outranks an info one that precedes it")
+        equal(NetdiagCoordinator.headlineText(forRulesIn: ["L1", "D1", "VPN-1"], catalog: catalog),
+              "Severe internet packet loss.",
+              "the worst rule wins regardless of position")
+        equal(NetdiagCoordinator.headlineText(forRulesIn: ["VPN-1"], catalog: catalog),
+              "A VPN is carrying your traffic right now.",
+              "a lone info rule is still shown")
+        // A rule this build's catalog has never heard of must not win by
+        // default and blank the headline.
+        equal(NetdiagCoordinator.headlineText(forRulesIn: ["ZZ-9", "L1"], catalog: catalog),
+              "Severe internet packet loss.",
+              "an unknown rule id never outranks a known one")
+        equal(NetdiagCoordinator.headlineText(forRulesIn: ["ZZ-9"], catalog: catalog),
+              nil,
+              "only unknown rules yields no headline, not an empty one")
+        equal(NetdiagCoordinator.headlineText(forRulesIn: [], catalog: catalog),
+              nil,
+              "no firing rules yields no headline")
+        equal(NetdiagCoordinator.headlineText(forRulesIn: ["L1"], catalog: nil),
+              nil,
+              "no catalog yields no headline rather than a rule id")
+
+        // Ranking itself, including the vocabulary the CLI actually emits.
+        equal(NetdiagCoordinator.severityRank("critical") > NetdiagCoordinator.severityRank("warn"),
+              true, "critical outranks warn")
+        equal(NetdiagCoordinator.severityRank("warn") > NetdiagCoordinator.severityRank("info"),
+              true, "warn outranks info")
+        equal(NetdiagCoordinator.severityRank("info") > NetdiagCoordinator.severityRank("varies"),
+              true, "a known severity outranks one this build cannot rank")
+    }
+
+    /// A minimal `RulesCatalog` built from (id, severity, blurb) triples,
+    /// via the type's own decoder so the harness exercises the same path
+    /// the app does rather than a hand-built value the decoder might
+    /// disagree with.
+    private static func stubCatalog(_ rules: [(String, String, String)]) -> RulesCatalog? {
+        let payload: [String: Any] = [
+            "schema": 3,
+            "rules": rules.map { ["id": $0.0, "severity": $0.1, "blurb": $0.2] },
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        return try? JSONDecoder().decode(RulesCatalog.self, from: data)
     }
 
     // MARK: - 2. Stage-card visual contract (offscreen render → PNG)

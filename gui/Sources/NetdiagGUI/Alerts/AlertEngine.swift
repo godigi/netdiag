@@ -230,6 +230,28 @@ final class AlertEngine {
             // suppressed has not held in the sense the dwell measures.
             conditionSince.removeValue(forKey: def.id)
             log.debug("\(def.id, privacy: .public) suppressed: \(reason, privacy: .public)")
+            // `monitoringPaused` is the one suppressor that means "this
+            // alert is no longer current" rather than "hold judgement, we
+            // can't measure right now". Scanning and the network-just-
+            // changed grace period are both bounded to seconds and a fresh
+            // sample re-evaluates the condition honestly the moment either
+            // lifts — clearing `active` for those would just make the
+            // alert flicker off and back on. Monitoring paused (which also
+            // covers monitoring switched off entirely — see
+            // `setMonitoring(enabled:)`) has no such guarantee: it can last
+            // indefinitely, and while it holds no sample ever arrives to
+            // walk this alert through the `!holds` branch above. Without
+            // this, pausing monitoring during an active alert left that
+            // alert in `active` forever, still feeding `headline` and the
+            // dropdown long after pausing made it stale.
+            //
+            // Removed directly rather than through `deliverResolved`: the
+            // alert was suppressed, not resolved, and a "resolved"
+            // notification every time someone pauses monitoring would be
+            // its own false signal.
+            if monitoringPaused {
+                active.removeValue(forKey: def.id)
+            }
             return
         }
 

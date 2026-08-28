@@ -149,14 +149,13 @@ final class NetdiagCoordinator {
         // severity instead of raise order — read live off the catalog each
         // call, so a rank asked for before the catalog resolves degrades to
         // 0 (raised-time order) rather than needing a second wiring step
-        // once the fetch completes.
+        // once the fetch completes. `headline` below needs the identical
+        // ranking to pick the worst *firing* rule rather than the first one
+        // in evaluation order, so the rank itself lives in one method
+        // (`severityRank(forRuleID:)`) both this closure and `headline`
+        // call, instead of two copies of the same switch drifting apart.
         alerts.severityRank = { [weak self] ruleID in
-            switch self?.rulesCatalog.catalog?[ruleID]?.severity {
-            case "critical": return 3
-            case "warn", "warning": return 2
-            case "info": return 1
-            default: return 0
-            }
+            self?.severityRank(forRuleID: ruleID) ?? 0
         }
         if Defaults.monitoringEnabled { monitor.start() }
 
@@ -679,36 +678,129 @@ final class NetdiagCoordinator {
         return .warning
     }
 
+    /// The CLI's severity for one rule ID, ranked so the worst of a set can
+    /// be picked out — higher is worse. The single place both
+    /// `alerts.severityRank` (ranking *active alerts*, each of which can
+    /// back more than one rule) and `headline` (ranking the rule IDs on one
+    /// sample) ask this question, so the two never drift into disagreeing
+    /// about which of two rules is worse. Degrades to 0 before the catalog
+    /// loads, or for a rule the catalog doesn't name, so an unranked rule
+    /// sorts as least urgent rather than winning a comparison by default.
+    func severityRank(forRuleID ruleID: String) -> Int {
+        Self.severityRank(rulesCatalog.catalog?[ruleID]?.severity)
+    }
+
+    /// The catalog's severity as a comparable rank, higher being worse.
+    /// Static and total: an unknown or absent severity ranks 0 rather than
+    /// throwing, so a rule this build has never heard of sorts below every
+    /// rule it has.
+    static func severityRank(_ severity: String?) -> Int {
+        switch severity {
+        case "critical": return 3
+        case "warn", "warning": return 2
+        case "info": return 1
+        default: return 0
+        }
+    }
+
+    /// The worst rule among `ruleIDs`, by the catalog's own severity.
+    ///
+    /// Pure, static, and separated from `headline` for one reason: the
+    /// behaviour it encodes — worst wins, not first — is the fix for a bug
+    /// that is invisible on inspection (`lib/monitor.sh` appends rules in
+    /// evaluation order, so an info-level VPN-1 can precede a critical L1),
+    /// and a computed property on an object that spawns a monitor and reads
+    /// history cannot be checked. `--verify` calls this directly.
+    ///
+    /// Ties keep the earliest rule, which is the CLI's own evaluation
+    /// order — arbitrary between equals, but stable, so the same sample
+    /// never produces two different headlines.
+    static func worstRule(among ruleIDs: [String],
+                          catalog: RulesCatalog?) -> RulesCatalog.Rule? {
+        guard let catalog else { return nil }
+        var best: RulesCatalog.Rule?
+        var bestRank = Int.min
+        for id in ruleIDs {
+            guard let rule = catalog[id] else { continue }
+            let rank = severityRank(rule.severity)
+            if rank > bestRank {
+                best = rule
+                bestRank = rank
+            }
+        }
+        return best
+    }
+
+    /// What `headline` shows for a firing rule: its blurb, else its title,
+    /// else nothing. Static alongside `worstRule` and for the same reason.
+    static func headlineText(forRulesIn ruleIDs: [String],
+                             catalog: RulesCatalog?) -> String? {
+        guard let worst = worstRule(among: ruleIDs, catalog: catalog) else { return nil }
+        if let blurb = worst.blurb, !blurb.isEmpty { return blurb }
+        if let title = worst.title, !title.isEmpty { return title }
+        return nil
+    }
+
     /// The one sentence the dropdown leads with.
     ///
     /// Every branch here either states an observable fact about the app's
     /// own state ("Monitoring is off") or hands back prose the CLI wrote.
     /// The healthy line is the only exception, and it is the CLI's own
     /// wording from lib/diagnosis.sh's `ok()` branch.
+    ///
+    /// The guard order below is deliberately the same order
+    /// `StageResolver.resolve` uses for the dropdown's stage card: scanning,
+    /// then monitoring-off, then paused-for-any-reason, then a skewed
+    /// monitor, then an active alert, then link-down, then
+    /// not-yet-measured, then severity. Before this fix the two orders
+    /// disagreed — scanning and "paused" were missing here entirely, and
+    /// the active-alert check ran ahead of the skewed-monitor check — so
+    /// the header (this property, read by `HomeView`) and the dropdown's
+    /// stage card (`StageResolver`, fed the same underlying state) could
+    /// describe the same moment two different ways. The concrete case: the
+    /// display sleeps, `monitoringEnabled` stays true so this used to fall
+    /// through the first guard, and a stale `activeSorted.first` from
+    /// before the sleep kept being shown here while the dropdown correctly
+    /// said "Monitoring paused — the display is asleep."
     var headline: String {
+        if isScanning { return "Running a network check…" }
         if !Defaults.monitoringEnabled { return "Monitoring is off." }
+        if monitor.isPausedForAnyReason {
+            guard let reason = monitor.pauseReason else { return "Monitoring is paused." }
+            return "Monitoring is paused — \(reason)."
+        }
+        // A monitor that died leaves `monitor.latest` holding whatever it
+        // last measured, which can still read "healthy" — checking this
+        // before `activeAlert` and the sample-based branches below is what
+        // stops a crashed monitor from being reported as a quiet network.
+        if let error = monitor.lastError, !monitor.isRunning {
+            return "The netdiag command needs attention — \(error)"
+        }
         if let alert = alerts.activeSorted.first {
             return alert.body.isEmpty ? alert.title : alert.body
         }
-        if !monitor.isRunning && monitor.lastError == nil {
-            return "Reconnecting to the connection monitor…"
-        }
         if let sample = monitor.latest, !sample.link.up {
             return "Your Mac has no network connection at all."
+        }
+        if !monitor.isRunning {
+            return "Reconnecting to the connection monitor…"
         }
         if let sample = monitor.latest, sample.status.measurement != "measured" {
             return "Checking your connection — a live internet reading is not available yet."
         }
         if let sample = monitor.latest, sample.status.severity == "critical" || sample.status.severity == "warn" {
-            for ruleID in sample.status.rules {
-                if let rule = rulesCatalog.catalog?[ruleID] {
-                    if let blurb = rule.blurb, !blurb.isEmpty {
-                        return blurb
-                    }
-                    if let title = rule.title, !title.isEmpty {
-                        return title
-                    }
-                }
+            // Worst rule wins, not first rule: `lib/monitor.sh`'s
+            // `_mon_rules` appends rules in the order it evaluates them
+            // (TCP-1, then the G-loss rules, then P-reach, D1, CP-1, VPN-1,
+            // ICMP-1, then the L-loss rules) — not by severity. An
+            // informational VPN-1 notice can therefore sit ahead of a
+            // critical L1 in `sample.status.rules`. Picking "the first rule
+            // with a catalog entry" used to mean a VPN user losing most of
+            // their packets got a red "Detecting a network problem" card
+            // whose body read "A VPN is carrying your traffic right now."
+            if let text = Self.headlineText(forRulesIn: sample.status.rules,
+                                            catalog: rulesCatalog.catalog) {
+                return text
             }
         }
         if let cause = latestRun?.snapshot.mostLikelyRootCause, !cause.isEmpty {

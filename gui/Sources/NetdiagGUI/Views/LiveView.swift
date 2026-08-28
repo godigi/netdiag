@@ -115,16 +115,27 @@ struct LiveView: View {
     private var currentValues: some View {
         HStack(alignment: .top, spacing: 28) {
             value("Router", latestGateway)
-            value("Internet", latestInternet)
+            // Labeled and captioned, not just "Internet": DropdownView's
+            // instrument grid has its own cell also labeled "Internet",
+            // and that one is ICMP round-trip. This number is the fastest
+            // TCP *connect* time to a well-known host (see `internetMs`) —
+            // a different measurement, same unit, same word, shown
+            // elsewhere in the same app. Without the qualifier the two
+            // numbers read as the same fact disagreeing with each other.
+            value("Internet (TCP connect)", latestInternet,
+                  caption: "Not the ping-based reading shown elsewhere")
             value("Sampling", cadenceLabel)
             Spacer(minLength: 0)
         }
     }
 
-    private func value(_ label: String, _ text: String) -> some View {
+    private func value(_ label: String, _ text: String, caption: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption).foregroundStyle(.secondary)
             Text(text).font(.title3).monospacedDigit()
+            if let caption {
+                Text(caption).font(.caption2).foregroundStyle(.tertiary)
+            }
         }
     }
 
