@@ -81,9 +81,23 @@ now_ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
   rec "$(now_ts)" "wifi:mac=aa:bb:cc:dd:ee:ff" '"wifi_disconnects":{"count":5}'
   run summarise
   [ "$status" -eq 0 ]
-  [[ "$output" != *"15"* ]] || { echo "still summing:"; echo "$output"; return 1; }
-  [[ "$output" == *"busiest hour"* ]] || { echo "$output"; return 1; }
-  [[ "$output" == *"5 disconnect"* ]] || { echo "$output"; return 1; }
+  # Scoped to the disconnect line, not the whole report.
+  #
+  # This assertion used to read `[[ "$output" != *"15"* ]]` against the
+  # entire output — which also contains the `span:` line, two ISO
+  # timestamps. Any run at a second, minute, hour or day containing "15"
+  # therefore failed on a correct implementation: it went red in CI at
+  # 23:58:15 having passed locally minutes earlier. A time-dependent
+  # test is worse than no test, because the one time it fires everyone
+  # assumes it is the flake rather than reading it.
+  local disconnect_line
+  disconnect_line="$(printf '%s\n' "$output" | grep -i 'disconnect' || true)"
+  [ -n "$disconnect_line" ] || { echo "no disconnect line at all:"; echo "$output"; return 1; }
+  [[ "$disconnect_line" != *"15"* ]] || {
+    echo "still summing:"; echo "$disconnect_line"; return 1
+  }
+  [[ "$disconnect_line" == *"busiest hour"* ]] || { echo "$disconnect_line"; return 1; }
+  [[ "$disconnect_line" == *"5 disconnect"* ]] || { echo "$disconnect_line"; return 1; }
 }
 
 @test "no disconnect data at all says so rather than reporting zero" {

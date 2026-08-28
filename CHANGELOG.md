@@ -6,6 +6,25 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — a test that failed depending on what time it was run
+
+`tests/test_summary.bats`'s "disconnects report the busiest single run,
+never a sum" asserted that the whole report contained no `"15"` — the
+sum it was guarding against. But the report also prints a `span:` line
+carrying two ISO timestamps, so any run at a second, minute, hour or
+day containing `15` failed against a perfectly correct implementation.
+It went red in CI at `23:58:15` having passed locally minutes earlier.
+
+Scoped to the disconnect line it actually means. Pre-existing since
+`cb2142d` and unrelated to anything around it — which is the danger: a
+time-dependent test that fires once in a while trains everyone to
+assume the failure is the flake rather than reading it.
+
+Two sibling assertions in the same file guard against `"999"` and were
+already correct — they pass an explicit `24`-hour window precisely
+because the default prints `last 999999h`, with a comment saying so.
+The trap was known; this one case was missed.
+
 ### Added — one check for everything else in the path
 
 `VPN-1` fires on the *default route*. So did netdiag's whole model of a
