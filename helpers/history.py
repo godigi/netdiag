@@ -97,7 +97,11 @@ Inputs:
   --history PATH   live JSONL store (required)
   --archive PATH   rolled-over older records; defaults to the
                    `-archive.jsonl` sibling of --history, skipped if absent
-  --limit N        keep only the N most recent runs (0 = all)
+  --limit N        keep only the N most recent runs (0 = all). Windows
+                   every quantity a network reports — counts, time bounds,
+                   severity_counts, metric_samples, metric_stats — but not
+                   its identity (label, gateways, isps, ssids). A network
+                   with no run in the window is not listed.
   --show ID        emit one run instead of the store: full record, context
                    and comparison. Accepts a bare timestamp when it names
                    exactly one run.
@@ -844,12 +848,48 @@ def main() -> None:
     if args.limit and args.limit > 0:
         runs = runs[-args.limit:]
 
+    # Every *quantity* a network reports describes the --limit window, and
+    # only the window. Pass 1 above counted over the whole store, because
+    # the bridge heuristic and `--show` both need the full population — but
+    # those counts must not then be emitted beside windowed statistics.
+    #
+    # They were, and nothing said so: `run_count` and `check_count` came
+    # out all-time while `severity_counts` and `metric_stats` covered only
+    # the last N. `--history=5` on this developer's store returned
+    # run_count 1913 beside severity_counts {} — a network with a long
+    # history of problems reporting none of them — and a consumer dividing
+    # one by the other got a problem rate off by two orders of magnitude.
+    #
+    # Windowing the counts rather than un-windowing the statistics is the
+    # direction that keeps `tests/test_history.bats`'s existing contract
+    # that `metric_stats` and `metric_samples` follow `--limit`.
+    #
+    # Identity is deliberately NOT windowed. `label`, `gateways`, `isps`,
+    # `ssids`, `channels`, `synthesized` and `bridged_from` answer "which
+    # network is this", not "what is in this window" — recomputing them
+    # from a narrow window would rename a network, or empty the fields the
+    # app's search matches on, whenever the recent runs happened not to
+    # carry an ISP string.
+    for g in groups.values():
+        g["run_count"] = 0
+        g["check_count"] = 0
+        g["first_seen"] = None
+        g["last_seen"] = None
+        g["severity_counts"] = {}
+        g["metric_samples"] = {}
+        g["metric_values"] = {}
+
     global_samples: dict[str, int] = {}
     checks = 0
     for run in runs:
         g = groups.get(run["network_id"])
         if g is None:
             continue
+        g["run_count"] += 1
+        ts = run.get("ts")
+        if ts:
+            g["first_seen"] = ts if g["first_seen"] is None else min(g["first_seen"], ts)
+            g["last_seen"] = ts if g["last_seen"] is None else max(g["last_seen"], ts)
         # A partial run contributes its measurements and nothing else. Its
         # severity describes the two or three checks it happened to run, so
         # folding it into the network's severity history would let a
@@ -857,6 +897,7 @@ def main() -> None:
         # day — a question it never asked.
         if is_check(run):
             checks += 1
+            g["check_count"] += 1
             g["severity_counts"][run["severity"]] = g["severity_counts"].get(run["severity"], 0) + 1
         for mk, mv in run["metrics"].items():
             g["metric_samples"][mk] = g["metric_samples"].get(mk, 0) + 1
@@ -865,6 +906,14 @@ def main() -> None:
 
     networks = []
     for key, g in sorted(groups.items(), key=lambda kv: -kv[1]["run_count"]):
+        # A network with nothing in the window is not in the window. Under
+        # the old all-time counts this could not arise; now that every
+        # quantity is windowed, emitting it would mean a row of zeroes and
+        # a null stats block for a network this response says nothing
+        # about. `counts.networks` follows, so it keeps describing what
+        # was actually returned.
+        if g["run_count"] == 0:
+            continue
         networks.append({
             "id": key,
             "label": label_for(key, g),

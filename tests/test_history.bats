@@ -525,6 +525,86 @@ print(sorted(s))'
   [[ "$output" == *"lib/thresholds.sh"* ]] || return 1
 }
 
+@test "--limit windows every quantity a network reports" {
+  # `--limit` used to window `severity_counts` and `metric_stats` but not
+  # `run_count`, `check_count`, `first_seen` or `last_seen`, so one object
+  # carried two populations with nothing saying which was which. On a real
+  # store `--history=5` returned run_count 1913 beside severity_counts {},
+  # and a consumer dividing one by the other got a problem rate off by two
+  # orders of magnitude.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"most_likely_root_cause":"x","diagnosis":[{"severity":"critical","rule":"G2","summary":"x"}]'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-03T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+
+  run hget 'networks.0.run_count' --limit 1
+  [ "$output" = "1" ]
+  run hget 'networks.0.check_count' --limit 1
+  [ "$output" = "1" ]
+  # The critical is outside the window, so it must not be counted.
+  run hget 'networks.0.severity_counts.critical' --limit 1
+  [ "$output" = "null" ]
+  # Time bounds describe the window too, so both ends are the one run in it.
+  run hget 'networks.0.first_seen' --limit 1
+  [ "$output" = '"2026-01-03T00:00:00Z"' ]
+  run hget 'networks.0.last_seen' --limit 1
+  [ "$output" = '"2026-01-03T00:00:00Z"' ]
+
+  # Unlimited still reports the whole store.
+  run hget 'networks.0.run_count'
+  [ "$output" = "3" ]
+  run hget 'networks.0.severity_counts.critical'
+  [ "$output" = "1" ]
+  run hget 'networks.0.first_seen'
+  [ "$output" = '"2026-01-01T00:00:00Z"' ]
+}
+
+@test "a network with nothing in the window is not listed" {
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:aa:aa:aa:aa:aa"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=bb:bb:bb:bb:bb:bb"}'
+  run hget 'counts.networks'
+  [ "$output" = "2" ]
+  # Only the newer network has a run in a window of one.
+  run hget 'counts.networks' --limit 1
+  [ "$output" = "1" ]
+}
+
+@test "a network's identity survives a narrow window" {
+  # Counts are windowed; identity is not. Recomputing `label`, `gateways`
+  # or `isps` from a narrow window would rename a network, or empty the
+  # fields the app searches on, whenever the recent runs happened not to
+  # carry an ISP string.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"interface":{"gateway":"192.168.1.1"},"public":{"isp":"Example ISP"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  run hget 'networks.0.gateways.0' --limit 1
+  [ "$output" = '"192.168.1.1"' ]
+  run hget 'networks.0.isps.0' --limit 1
+  [ "$output" = '"Example ISP"' ]
+}
+
+@test "windowed counts stay internally consistent at every limit" {
+  # The two invariants a consumer can rely on: run_count sums to
+  # counts.runs, and severity_counts sums to check_count. Both must hold
+  # however the window is set, or the object is describing two things.
+  rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
+  rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=bb:bb:bb:bb:bb:bb"}'
+  rec "$LIVE" 2026-01-03T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"},"run_mode":"speed-only"'
+  rec "$LIVE" 2026-01-04T00:00:00Z '"network":{"id":"wifi:mac=bb:bb:bb:bb:bb:bb"}'
+  for lim in 0 1 2 3 4; do
+    hist --limit "$lim" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+runs = sum(n['run_count'] for n in d['networks'])
+assert runs == d['counts']['runs'], ('run_count', runs, d['counts']['runs'])
+checks = sum(n['check_count'] for n in d['networks'])
+assert checks == d['counts']['checks'], ('check_count', checks, d['counts']['checks'])
+for n in d['networks']:
+    total = sum(n['severity_counts'].values())
+    assert total == n['check_count'], (n['id'], total, n['check_count'])
+    assert n['run_count'] > 0, n['id']
+" || return 1
+  done
+}
+
 @test "--limit keeps the most recent runs" {
   rec "$LIVE" 2026-01-01T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'
   rec "$LIVE" 2026-01-02T00:00:00Z '"network":{"id":"wifi:mac=aa:bb:cc:dd:ee:ff"}'

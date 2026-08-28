@@ -656,6 +656,25 @@ that is 5.4 MB of full snapshots reduced to 467 KB.
   `metrics[].samples` follow `run_count`, because a partial run's *numbers*
   are exactly why it was stored. `runs[].run_mode` is `null` on records
   written before v0.9.0; treat that as a check.
+- **`--limit N` windows every quantity, and no identity.** `run_count`,
+  `check_count`, `first_seen`, `last_seen`, `severity_counts`,
+  `metric_samples` and `metric_stats` all describe the N most recent runs
+  and nothing else, so `sum(networks[].run_count) == counts.runs` and
+  `sum(severity_counts.values()) == check_count` hold at every limit. A
+  network with no run in the window is not listed, and `counts.networks`
+  follows.
+
+  `label`, `gateways`, `isps`, `ssids`, `synthesized` and `bridged_from`
+  are *not* windowed: they answer "which network is this", not "what is in
+  this window", and recomputing them from a narrow window would rename a
+  network or empty the fields a UI searches on whenever the recent runs
+  happened not to carry an ISP string.
+
+  Before v0.13.0 the counts and time bounds ignored `--limit` while the
+  statistics honoured it, so one object described two populations with
+  nothing saying which was which — `--history=5` could return
+  `run_count: 1913` beside `severity_counts: {}`. `--show` is unaffected
+  and always compares against a network's whole population, by design.
 - **A run's `metrics` omits what was not measured.** Absent, never zero —
   the same distinction the full schema draws, and for the same reason.
 - **Redacted records are dropped and counted.** A run recorded with

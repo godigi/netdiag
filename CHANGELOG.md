@@ -6,6 +6,33 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — `--history=N` no longer mixes two populations in one object
+
+`--limit` windowed `severity_counts`, `metric_samples` and `metric_stats`
+but not `run_count`, `check_count`, `first_seen` or `last_seen`, so one
+network object carried all-time counts beside windowed statistics with
+nothing saying which was which. On this developer's store `--history=5`
+returned `run_count: 1913` next to `severity_counts: {}` — a network with
+a long, well-recorded history of problems reporting none of them — and a
+consumer dividing one by the other got a problem rate off by two orders
+of magnitude.
+
+Every quantity now describes the window, so
+`sum(networks[].run_count) == counts.runs` and
+`sum(severity_counts.values()) == check_count` hold at every limit, and a
+network with nothing in the window is no longer listed.
+
+Identity is deliberately *not* windowed. `label`, `gateways`, `isps`,
+`ssids`, `synthesized` and `bridged_from` answer "which network is this",
+not "what is in this window"; recomputing them from a narrow window would
+rename a network, or empty the fields the app's search matches on,
+whenever the recent runs happened not to carry an ISP string.
+
+`--show` is unaffected — it answers before `--limit` is applied and
+compares a run against its network's whole population by design. The app
+is unaffected too: it always asks for the unlimited form. This is for
+every other consumer of a documented CLI surface.
+
 ### Fixed — the report card no longer contradicts its own numbers
 
 An audit of everything netdiag *says* — CLI prose, the Report card, and
