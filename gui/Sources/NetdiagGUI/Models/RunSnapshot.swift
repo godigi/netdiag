@@ -481,7 +481,24 @@ extension RunSnapshot {
         bufferbloat = c.lenient(.bufferbloat, .init())
         mtu = c.lenient(.mtu, .init())
         ipv6 = c.lenient(.ipv6, .init())
+        // `wan` and `suitability` were declared in CodingKeys, declared as
+        // properties, and never assigned here — so both silently held their
+        // defaults on every run since they were added. The NAT topology row
+        // reads `s.wan.doubleNat.detected` and `s.wan.upnp.state`, which
+        // meant the row could only ever appear because a *rule* fired, never
+        // because the topology itself said so, and it rendered an empty
+        // default when it did. A hand-written `init(from:)` has no compiler
+        // check that every key is consumed; the parity test in
+        // tests/test_gui_decoding.bats is that check.
+        wan = c.lenient(.wan, .init())
         vpn = c.lenient(.vpn, .init())
+        // `suitability` is decoded for parity, but nothing produces or
+        // consumes it: no `suitability` key appears anywhere in
+        // helpers/emit_json.py, lib/, or docs/JSON-SCHEMA.md, and no view
+        // reads this property. It is a candidate for deletion rather than
+        // a field to build on — left in place here only because removing a
+        // public model type is a wider change than fixing a decode.
+        suitability = c.lenient(.suitability)
         tcpReach = c.lenient(.tcpReach, [])
         wifiScan = c.lenient(.wifiScan)
         wifiDisconnects = c.lenient(.wifiDisconnects)

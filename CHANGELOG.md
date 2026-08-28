@@ -6,6 +6,34 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — the app was never decoding `wan`
+
+`RunSnapshot.init(from:)` declared `wan` in `CodingKeys`, declared it as a
+property, and never assigned it. Every run therefore held the default
+`WAN()`, so the NAT topology row's own conditions —
+`s.wan.doubleNat.detected`, `s.wan.upnp.state == "enabled"` — could never
+be true. The row could only appear because a *rule* fired, and when it did
+it rendered an empty default rather than the topology the CLI had actually
+measured. `suitability` was unassigned the same way.
+
+Swift's synthesised `Decodable` conformance would have caught this; a
+hand-written `init(from:)` has no check that every declared key is
+consumed, and the symptom — a field holding its default — is
+indistinguishable from a run where the field was genuinely absent. That
+indistinguishability is why it survived.
+
+New `tests/test_gui_decoding.bats` parses the `CodingKeys` block and the
+`init(from:)` body out of the Swift source and asserts they match in both
+directions, plus a planted-key check that the guard fails when it should.
+A bats test rather than a `--verify` one because it is a fact about the
+source text, not about runtime behaviour, which is exactly what `--verify`
+cannot see here.
+
+`suitability` is decoded only so that parity holds: no `suitability` key
+is emitted anywhere in `helpers/` or `lib/`, `docs/JSON-SCHEMA.md` does
+not document one, and no view reads the property. It is flagged in place
+as a deletion candidate rather than quietly blessed.
+
 ### Added — netdiag notices when its own watcher stops [ND-1]
 
 The first item from `docs/design/nothing-was-watching.md`, and a bug
