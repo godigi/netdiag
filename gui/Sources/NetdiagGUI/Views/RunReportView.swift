@@ -225,6 +225,7 @@ struct RunReportView: View {
     ///   | Local network        | lan, dhcp       |
     ///   | Clock                | clock           |
     ///   | Background watcher   | netdiag         |
+    ///   | Availability         | availability    |
     ///
     /// Three things this table fixes, all of them the same underlying
     /// mistake — treating a category as a loose topic tag rather than as
@@ -268,6 +269,11 @@ struct RunReportView: View {
         // run where none is, and a row saying "not installed" in every
         // other report would be an advertisement rather than a finding.
         "Background watcher": ["netdiag"],
+        // How this network has behaved over the last day, from the event
+        // journal. Its own row because it is the only one here whose
+        // evidence predates the run — a green Router row and an amber
+        // Availability row is a coherent pair, not a contradiction.
+        "Availability": ["availability"],
     ]
 
     private var rows: [Row] {
@@ -442,6 +448,18 @@ struct RunReportView: View {
         // that describes netdiag rather than the network, so it should
         // never sit above a measurement — and for the majority of runs,
         // where `watcher` is null, it should not exist at all.
+        // Only when a journal exists. No row is the honest rendering of
+        // "there is no recorder": an "Availability: unknown" line in
+        // every report advertises a feature rather than reporting one.
+        if let av = s.availability {
+            out.append(Row(label: "Availability",
+                           value: Self.availabilityValue(av),
+                           health: health(["AV-1"], "Availability"),
+                           metricKey: nil,
+                           glossaryKey: nil,
+                           medianFormatter: nil,
+                           informational: true))
+        }
         if let watcher = s.watcher {
             out.append(Row(label: "Background watcher",
                            value: Self.watcherValue(watcher),
@@ -461,6 +479,22 @@ struct RunReportView: View {
     // honest answer is that the number on the wire does not describe the
     // link. Every branch keys off something the CLI emitted (a rule id, a
     // run mode, a flag); none of them compares a number to a threshold.
+
+    /// The Availability row's value. Counts and a duration; the amber or
+    /// green comes from whether AV-1 fired, which is the CLI's call.
+    private static func availabilityValue(_ a: RunSnapshot.Availability) -> String {
+        let hours = a.windowHours.map { "\($0)h" } ?? "the window"
+        guard let outages = a.outages, outages > 0 else {
+            return "no drops recorded in \(hours)"
+        }
+        let word = outages == 1 ? "drop" : "drops"
+        guard let down = a.downtimeS, down > 0 else {
+            return "\(outages) \(word) in \(hours)"
+        }
+        let mins = down / 60, secs = down % 60
+        let dur = mins > 0 ? "\(mins)m \(secs)s" : "\(secs)s"
+        return "\(outages) \(word) in \(hours) · \(dur) down"
+    }
 
     /// The watcher row's value. Every branch keys off `state`, which the
     /// CLI already decided — nothing here compares an age to a cutoff, so

@@ -531,6 +531,35 @@ diagnosis_run() {
     add_diag info DH-2 "Your router suggested $DHCP_DNS_SERVERS for name lookups, but your Mac is using $(dns_routable_resolvers "$SYS_RES_ALL") instead — somebody manually overrode it. Fine if you did it on purpose (1.1.1.1 and 8.8.8.8 are common choices); surprising if you didn't."
   fi
 
+  # AV-1 / AV-2 — what this network has actually been like, not what it
+  # is like in the second this run happened to sample it.
+  #
+  # A scan is a snapshot, and a snapshot taken at a good moment on a
+  # connection that dropped six times last night reports a healthy
+  # network — truthfully, and uselessly. These two are the only rules in
+  # this file whose evidence comes from outside the run.
+  #
+  # They fire only when a journal exists. Its absence is not evidence of
+  # uptime: without a recorder there is no record, and treating silence
+  # as health is the failure ND-1 exists to catch one level down.
+  if [ "${AV_MEASURED:-0}" -eq 1 ]; then
+    # Count or total, because they catch different faults: several short
+    # drops is a flapping link, one long drop is an outage, and a user
+    # wants to hear about both.
+    if [ "$AV_OUTAGE_COUNT" -ge "$THRESH_AV_OUTAGE_COUNT" ] \
+       || [ "$AV_DOWNTIME_S" -ge "$THRESH_AV_DOWNTIME_S" ]; then
+      add_diag warn AV-1 "This connection dropped ${AV_OUTAGE_COUNT} time$([ "$AV_OUTAGE_COUNT" -eq 1 ] || printf s) in the last ${AV_WINDOW_HOURS} hours, totalling $(availability_fmt_duration "$AV_DOWNTIME_S") with the longest lasting $(availability_fmt_duration "$AV_LONGEST_S"). Everything else in this report describes the connection as it is right now, which is a different question — and a good reading now does not undo a bad night. If this keeps up it is worth raising with whoever runs the line, and \`netdiag --events=${AV_WINDOW_HOURS}\` prints the exact times to give them.$(availability_observation_note)"
+    fi
+
+    # Deliberately independent of AV-1 rather than an else-branch: a link
+    # can flap often enough to be unusable while no single drop is long
+    # enough to reach the downtime cutoff, and that is precisely the case
+    # no individual scan can ever see.
+    if [ "$AV_FLAP_COUNT" -ge "$THRESH_AV_FLAP_COUNT" ]; then
+      add_diag info AV-2 "This connection has been flapping: ${AV_FLAP_COUNT} of its drops in the last ${AV_WINDOW_HOURS} hours were short enough that a check run before and after would have found nothing wrong both times. Short drops break calls, uploads and remote sessions while leaving every ordinary test clean, which is why they usually go unreported for months.$(availability_observation_note)"
+    fi
+  fi
+
   # ND-1 — the background watcher is installed and is not running.
   #
   # The only rule in this file that judges netdiag rather than the

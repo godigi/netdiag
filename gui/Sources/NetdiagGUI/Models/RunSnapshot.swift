@@ -61,13 +61,18 @@ struct RunSnapshot: Decodable, Sendable {
     /// and everything about it is unknown", which is a different and much
     /// worse claim than "there isn't one". See ND-1.
     var watcher: Watcher?
+    /// How this network has behaved over the window AV-1 judges, or `nil`
+    /// when no event journal exists. `nil` is emphatically not "no
+    /// outages": without a recorder there is no record, and a zeroed
+    /// struct would render silence as health.
+    var availability: Availability?
     var diagnosis: [Diagnosis] = []
     var mostLikelyRootCause: String?
 
     enum CodingKeys: String, CodingKey {
         case version, timestamp, network, wifi, gateway, dns, traceroute
         case bufferbloat, mtu, ipv6, wan, vpn, speedtest, ntp, dhcp, mtr, timings
-        case suitability, diagnosis, watcher
+        case suitability, diagnosis, watcher, availability
         case runMode = "run_mode"
         case runID = "run_id"
         case interfaceInfo = "interface"
@@ -368,6 +373,26 @@ struct RunSnapshot: Decodable, Sendable {
         }
     }
 
+    /// The `availability` object. Counts and durations only — whether a
+    /// night was bad is AV-1's judgement, made against lib/thresholds.sh.
+    struct Availability: Decodable, Sendable {
+        var windowHours: Int?
+        var outages: Int?
+        var downtimeS: Int?
+        var longestOutageS: Int?
+        var shortDrops: Int?
+        var unobservedPct: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case outages
+            case windowHours = "window_hours"
+            case downtimeS = "downtime_s"
+            case longestOutageS = "longest_outage_s"
+            case shortDrops = "short_drops"
+            case unobservedPct = "unobserved_pct"
+        }
+    }
+
     struct MTR: Decodable, Sendable {
         var hops: [Traceroute.Hop] = []
         var firstLossyHop: String?
@@ -509,6 +534,7 @@ extension RunSnapshot {
         mtr = c.lenient(.mtr, .init())
         timings = c.lenient(.timings, .init())
         watcher = c.lenient(.watcher)
+        availability = c.lenient(.availability)
         diagnosis = c.lenient(.diagnosis, [])
         mostLikelyRootCause = c.lenient(.mostLikelyRootCause)
     }

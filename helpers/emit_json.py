@@ -506,6 +506,18 @@ def main() -> None:
             "proxy_detail": _env("PATH_PROXY_DETAIL"),
             "network_filters": (_env("PATH_FILTERS") or "").split(),
         },
+        # How this network has behaved over the window AV-1 judges,
+        # read from the event journal. `null` when no journal exists —
+        # which is not "no outages": without a recorder there is no
+        # record, and an object of zeroes would report silence as health.
+        "availability": ({
+            "window_hours": _maybe_int("AV_WINDOW_HOURS"),
+            "outages": _maybe_int("AV_OUTAGE_COUNT"),
+            "downtime_s": _maybe_int("AV_DOWNTIME_S"),
+            "longest_outage_s": _maybe_int("AV_LONGEST_S"),
+            "short_drops": _maybe_int("AV_FLAP_COUNT"),
+            "unobserved_pct": _maybe_int("AV_UNOBSERVED_PCT"),
+        } if _bool("AV_MEASURED") else None),
         # netdiag's own background watcher. The only object in this
         # document that describes netdiag rather than the network, and
         # null for the majority of runs, where no watcher is installed —

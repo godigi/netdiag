@@ -85,6 +85,10 @@ CATEGORIES = frozenset({
     # is broken, which is the same class of mistake as G1's green dot
     # beside "35% loss", only pointed the other way.
     "netdiag",
+    # How this network has behaved over time, judged from the event
+    # journal rather than from anything this run measured. Its own family
+    # because it is the only one whose evidence predates the run.
+    "availability",
 })
 
 # `category` names the measurement a rule is ABOUT — the row whose number
@@ -926,6 +930,40 @@ RULES: list[dict[str, str]] = [
             "a healthy idle watcher looks like."
         ),
         "doc": "DIAGNOSIS-RULES.md#nd-1--the-background-watcher-is-installed-and-not-running",
+    },
+    {
+        "id": "AV-1",
+        "title": "This connection keeps dropping",
+        "category": "availability",
+        "severity": "warn",
+        "scope": "scan",
+        "blurb": (
+            "The background recorder saw this connection lose the internet "
+            "more than once, or for long enough to matter, within the last "
+            "day. Everything else in the report describes the connection "
+            "as it is right now, which is a different question — a good "
+            "reading now does not undo a bad night. The diagnosis names how "
+            "many times, how long in total, and how long the worst one "
+            "lasted, and the event log prints the exact times to hand to "
+            "whoever runs the line."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#av-1--this-connection-keeps-dropping",
+    },
+    {
+        "id": "AV-2",
+        "title": "The connection is flapping",
+        "category": "availability",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "Several of this connection's recent drops were short enough "
+            "that a check run before one and after it would have found "
+            "nothing wrong both times. Brief drops break calls, uploads "
+            "and remote sessions while leaving every ordinary test clean, "
+            "which is why they go unreported for months. Only the "
+            "continuous recorder can see them at all."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#av-2--the-connection-is-flapping",
     },
 ]
 

@@ -1066,6 +1066,75 @@ HTTP status alone with `curl -o /dev/null`, so a portal answering 200 with
 its own login page — the common case — was reported as "No captive
 portal." See `captive_portal_classify`.
 
+## Rules about how the network has behaved over time
+
+Two rules, one category (`availability`). They are the only rules in this
+document whose evidence comes from outside the run that reports them: both
+read `~/net-diag/events.jsonl`, the journal `--monitor --journal` appends
+transitions to and `--install-recorder` keeps filling.
+
+Why that is worth the exception: a scan is a snapshot, and a snapshot taken
+at a good moment on a connection that dropped six times last night reports
+a healthy network — truthfully, and uselessly. Nothing else netdiag
+measures can see last night at all.
+
+Both fire only when a journal exists. **Its absence is never evidence of
+uptime**: without a recorder there is no record, and a rule that fired on
+silence would be reporting "nothing was watching" as "nothing went wrong",
+which is the failure `ND-1` exists to catch one level down.
+
+Both are scoped to the current `NETWORK_ID`. A laptop that spent yesterday
+on a café's broken WiFi must not have that counted against the office
+connection it is on now — the reason `lib/netid.sh` exists at all.
+
+### AV-1 — this connection keeps dropping
+
+- Trigger: episodes of `THRESH_AV_OUTAGE_RULES` on this network within
+  `THRESH_AV_WINDOW_HOURS`, when either the count reaches
+  `THRESH_AV_OUTAGE_COUNT` **or** the total reaches `THRESH_AV_DOWNTIME_S`.
+- Severity: `warn`.
+- Evidence: how many drops, the total duration, and the longest single one.
+- Recommendation: raise it with whoever runs the line, and use
+  `netdiag --events=24` for the exact times to give them.
+
+**Count or total, not both.** They catch different faults. Six ten-second
+drops is a flapping link; one twelve-minute drop is an outage. A rule that
+required both would report neither.
+
+**What counts as an outage is a policy, and it lives in
+`lib/thresholds.sh`** beside the numbers, as `THRESH_AV_OUTAGE_RULES`:
+`N1`, `N1b`, `N1c`, `P1`, `P2` — nothing joined, joined with no route, or
+the public internet not answering. Deliberately **not** `L1`/`L2` (packet
+loss) or `D1` (DNS): those are a connection working badly, and counting
+them would turn every bad afternoon into downtime.
+
+### AV-2 — the connection is flapping
+
+- Trigger: at least `THRESH_AV_FLAP_COUNT` of those episodes were shorter
+  than `THRESH_AV_FLAP_MAX_S`.
+- Severity: `info`.
+- Evidence: how many of the drops were that short.
+
+**Independent of AV-1, not an else-branch.** A link can flap often enough
+to be unusable while no single drop is long enough to reach the downtime
+cutoff — and that is exactly the case no individual scan can ever see,
+because a check run before one of these drops and after it finds nothing
+wrong both times. Short drops break calls, uploads and remote sessions
+while leaving every ordinary test clean, which is why they go unreported
+for months.
+
+### Both say when the window was not watched
+
+The recorder pauses for sleep, so a Mac shut for eighteen hours has a
+24-hour window that is mostly guesswork. Above
+`THRESH_AV_UNOBSERVED_NOTE_PCT`, both rules append the fraction that went
+unobserved and say the count is what was *seen*.
+
+Deliberately a note and not a suppression: an outage that was observed did
+happen, and staying silent about it because the Mac also slept would be
+the worse error. The reverse — reporting "no outages in 24 hours" off six
+hours of watching — is the claim the note exists to prevent.
+
 ## Rules about netdiag itself
 
 One rule, one category (`netdiag`), and the only entry in this document
