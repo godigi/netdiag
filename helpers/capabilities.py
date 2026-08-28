@@ -69,6 +69,11 @@ FEATURES = [
     "bufferbloat-only",
     "ping-only",
     "watcher",
+    # The event journal and the agent that records it. A consumer
+    # checking for "events" is asking whether this build can answer
+    # "what happened at 03:14", which older builds cannot at all.
+    "events",
+    "recorder",
     "rules-catalog",
     "signal-scale",
 ]

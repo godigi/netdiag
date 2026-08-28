@@ -60,6 +60,96 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `most_likely_root_cause` | string | the highest-severity diagnosis summary, first by insertion order |
 | `netdiag_extras` | object | `arp_gw_incomplete`, `network_changed_mid_run`, plus `target*` keys when a positional TARGET was given. `network_changed_mid_run` is `true` when the Mac changed networks between the start and end of the run, so the measurements straddle two — such a run is deliberately **absent from `baseline.jsonl`**, so this field is only ever seen on stdout (see `DIAGNOSIS-RULES.md#dq-1--the-run-measured-two-networks`). |
 
+## The event journal and `--events`
+
+`--monitor --journal PATH` appends one line per **transition** to `PATH`;
+`--events[=HOURS]` reads it back. The journal is the only thing `--monitor`
+ever writes to disk, and it is opt-in for that reason — a consumer piping
+the stream into its own program still gets a process that touches nothing.
+
+### Why transitions and not samples
+
+A sample every five to ten seconds forever is a database problem, and the
+samples are not what anyone asks about. "Was the internet down at 03:14,
+and for how long" is answered by the moments something *changed* — and the
+monitor already computes exactly that set, once per cycle, as the `changes`
+array in each sample. Until this existed it was rendered and discarded.
+
+### One journal line
+
+```json
+{"t":"2026-08-28T03:14:00Z","seq":900,"network":"wifi:mac=…",
+ "network_label":"Home","kind":"rule-fired","field":"status.rules",
+ "from":null,"to":"N1","summary":"No network connection at all"}
+```
+
+`kind` is the change's own id from the sample stream's `changes[].id`
+(`rule-fired`, `rule-cleared`, `wifi-network-changed`, `wifi-roamed`,
+`vpn-connected`, `vpn-disconnected`, `public-ip-changed`, `isp-changed`,
+`country-changed`, `interface-changed`), plus two the journal adds:
+
+| `kind` | meaning |
+|---|---|
+| `monitor-started` | first cycle of a recorder process — lets a reader tell "no events because nothing happened" from "no events because nothing was running" |
+| `gap` | the monitor was not looking, with `gap_s`. Sleep, a stall, a lid closed |
+
+Every line carries its own timestamp and network identity rather than
+inheriting them from a header: the file is appended to by successive
+recorder processes across reboots and is read back by time range. It is
+never rewritten in place.
+
+Retention mirrors `baseline.jsonl`: past `NETDIAG_KEEP_EVENTS` (5000)
+lines the oldest roll into `events-archive.jsonl` rather than being
+deleted, and `--events` reads both. The roll appends to the archive
+*before* truncating the live file, so a crash between the two duplicates
+lines rather than dropping them — which is safe only because the reader
+dedupes on `(t, seq, kind, to)`.
+
+### `--events[=HOURS]`
+
+```json
+{
+  "schema": 1,
+  "window_hours": 24,
+  "from": "…", "to": "…",
+  "counts": {"events": 12, "by_kind": {"rule-fired": 3, "gap": 1}},
+  "observation": {"window_s": 86400, "gap_count": 1, "unobserved_s": 28800,
+                  "unobserved_fraction": 0.3333, "monitor_starts": 2},
+  "episodes": [
+    {"rule": "N1", "summary": "No network connection at all",
+     "network": "wifi:mac=…", "network_label": "Home",
+     "started": "2026-08-28T03:14:00Z", "ended": "2026-08-28T03:18:25Z",
+     "duration_s": 265, "ongoing": false, "unobserved_s": 0,
+     "ended_by": "cleared"}
+  ],
+  "events": [ … ]
+}
+```
+
+**It reports; it does not judge.** There is no "your uptime was bad" here,
+no outage classification and no threshold — whether four minutes of
+downtime is acceptable is a verdict, and verdicts fire from
+`lib/diagnosis.sh` against cutoffs in `lib/thresholds.sh`. `AV-1`/`AV-2`
+are where that will live and are deliberately not in this reader.
+
+**Episodes** pair `rule-fired` with the next `rule-cleared` for the same
+`(network, rule)` — the same fault on two networks is two episodes, so a
+laptop that moves does not have one network's recovery close the other's
+fault. `ended_by` says how each one ended:
+
+| `ended_by` | meaning |
+|---|---|
+| `cleared` | the fault went away and the monitor saw it |
+| `monitor-restart` | the recorder died or the Mac rebooted while it was open. Closed there, with `duration_is_lower_bound: true`, rather than silently spanning a period nobody watched |
+| `still-open` | open at the end of the record. `ongoing: true`, and the duration is measured **to the last event**, never to now — the recorder may have stopped an hour ago and "ongoing for four hours" would be inventing observation |
+
+**`observation` is not decoration.** `MonitorSeries.swift` refuses to draw
+a line across a gap because a smooth line through a two-minute outage is
+*reassuring*; an availability figure computed over a window the Mac spent
+asleep tells the same lie with a number instead of a line. Every window
+says what fraction of itself was actually watched, and every episode
+carries the `unobserved_s` that elapsed inside it.
+
 ## `run_mode`
 
 Which shape of run produced this record. The CLI currently emits:

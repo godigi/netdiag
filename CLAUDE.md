@@ -40,12 +40,14 @@ netdiag [TARGET] [--quick] [--quiet] [--json] [--expert] [--redact]
         [--progress]
         [--baseline] [--no-baseline] [--log PATH] [-h|--help]
 netdiag --watch[=SEC] | --summary[=HOURS] | --history[=N] | --show=ID
-        | --share[=ID|-]
+        | --share[=ID|-] | --events[=HOURS]
 netdiag --version | --capabilities | --rules-catalog
-netdiag --monitor [--monitor-fast-interval SEC] [--monitor-degraded-interval SEC]
+netdiag --monitor [--journal PATH]
+                  [--monitor-fast-interval SEC] [--monitor-degraded-interval SEC]
                   [--monitor-medium-interval SEC] [--monitor-slow-interval SEC]
                   [--monitor-count N]
 netdiag --install-watcher | --uninstall-watcher
+netdiag --install-recorder | --uninstall-recorder
 ```
 
 `--history`, `--show` and `--monitor` exist for the GUI (see below) but are
@@ -67,6 +69,19 @@ entirely — so there is no redacted stored copy to read, and sharing a past
 run has to redact at read time. `--share=-` reads one run's JSON on stdin,
 which is how netdiag.app shares the report already on screen without
 re-running anything.
+
+`--events` is the read side of the event journal, and the reason the
+project has one: a stored run is a snapshot with one timestamp, so
+"was the internet down at 03:14, and for how long" was unanswerable.
+`--monitor --journal PATH` appends one line per *transition* — the
+`changes` set the monitor already computed every cycle and discarded —
+and `--events` pairs faults into episodes with durations. The journal
+is **opt-in** because `--monitor`'s contract is a process that writes
+nothing to disk; `--install-recorder` is the launchd agent that passes
+the flag. `helpers/events.py` deliberately judges nothing: whether a
+duration is acceptable is a verdict, and verdicts live in
+`lib/diagnosis.sh` against `lib/thresholds.sh` (`AV-1`/`AV-2`, not yet
+written).
 
 `--monitor` is the machine-readable sibling of `--watch`, not a duplicate
 of it: `--watch` re-runs `--quick` and prints prose for a person, while
