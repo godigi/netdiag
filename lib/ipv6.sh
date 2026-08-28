@@ -3,7 +3,8 @@
 #
 # Reads:  INTERFACE, QUICK
 # Writes: IPV6_AVAILABLE, IPV6_GLOBAL_ADDR, IPV6_GATEWAY, IPV6_PING_LOSS,
-#         IPV6_AAAA_OK, IPV6_TRACE_HOPS, IPV6_TCP_OK
+#         IPV6_AAAA_OK, IPV6_TRACE_HOPS, IPV6_TCP_OK, IPV6_ONLY,
+#         IPV6_CLAT
 # Entry:  ipv6_run
 #
 # Safe to run in parallel — doesn't contend on the WAN link materially.
@@ -93,6 +94,20 @@ ipv6_run() {
     fi
   fi
 
+  # Is this network IPv6-only *by design*? Decided here rather than in
+  # diagnosis.sh so the answer travels with the other IPv6 facts, and so
+  # the CLAT address is read while INTERFACE is still in scope. [V6-3]
+  IPV6_CLAT=0
+  if [ -n "$INTERFACE" ]; then
+    local _v4
+    _v4="$(ifconfig "$INTERFACE" inet 2>/dev/null \
+      | awk '$1=="inet"{print $2; exit}')"
+    ipv6_is_clat_address "$_v4" && IPV6_CLAT=1
+  fi
+  IPV6_ONLY=0
+  ipv6_is_v6_only "$IPV6_AVAILABLE" "$IPV6_AAAA_OK" "$IPV6_TCP_OK" \
+    "${GATEWAY:-}" && IPV6_ONLY=1
+
   if [ -n "${NETDIAG_PAR_VARS:-}" ]; then
     setvar IPV6_AVAILABLE "$IPV6_AVAILABLE"
     setvar IPV6_GLOBAL_ADDR "$IPV6_GLOBAL_ADDR"
@@ -101,5 +116,53 @@ ipv6_run() {
     setvar IPV6_AAAA_OK "$IPV6_AAAA_OK"
     setvar IPV6_TRACE_HOPS "$IPV6_TRACE_HOPS"
     setvar IPV6_TCP_OK "$IPV6_TCP_OK"
+    setvar IPV6_ONLY "$IPV6_ONLY"
+    setvar IPV6_CLAT "$IPV6_CLAT"
   fi
+}
+
+# ── IPv6-only networks with NAT64/DNS64 [V6-3] ───────────────────────────
+#
+# V6-1 covers broken IPv6 alongside working IPv4. This is the mirror, and
+# until now it did not exist: on a network that is IPv6-only *by design*
+# — some mobile carriers, some university and enterprise networks, a
+# growing share of new deployments — there is no IPv4 at all, and macOS
+# translates via 464XLAT.
+#
+# netdiag's GATEWAY comes from `route -n get default`, which is IPv4. So
+# an IPv6-only network leaves it empty, and the run falls into N1 ("no
+# network connection at all") or N1c ("joined with no route out") — both
+# critical, both false, on a network that is working exactly as intended
+# and carrying the user's traffic perfectly well.
+
+# True when $1 is a CLAT address from 192.0.0.0/29 — the range RFC 7335
+# reserves for the IPv4 side of a 464XLAT translator.
+#
+# macOS synthesises one of these on an IPv6-only network so IPv4-only
+# apps keep working. It is not a lease from any DHCP server and there is
+# no IPv4 network behind it, which is why it must not be read as one.
+#
+# Matched on the full /29 rather than the /24, because 192.0.0.8 and up
+# are IETF protocol assignments, not translator addresses.
+ipv6_is_clat_address() {
+  case "${1:-}" in
+    192.0.0.[0-7]) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+
+# True when the network is IPv6-only and working: $1 = IPV6_AVAILABLE,
+# $2 = IPV6_AAAA_OK, $3 = IPV6_TCP_OK, $4 = the IPv4 GATEWAY.
+#
+# Deliberately demands that IPv6 be *proven* — a global address alone is
+# not enough, since V6-1 exists precisely because a half-configured IPv6
+# stack is common. A real TCP connection over IPv6 plus a working AAAA
+# lookup is the evidence that this network carries traffic; without both,
+# an absent IPv4 gateway is a genuine outage and N1/N1c should say so.
+ipv6_is_v6_only() {
+  [ "${1:-0}" -eq 1 ] || return 1
+  [ "${2:-0}" -eq 1 ] || return 1
+  [ "${3:-0}" -eq 1 ] || return 1
+  [ -z "${4:-}" ]     || return 1
+  return 0
 }

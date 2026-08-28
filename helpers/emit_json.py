@@ -472,6 +472,13 @@ def main() -> None:
             "aaaa_ok": _bool("IPV6_AAAA_OK"),
             "trace_hops": _maybe_int("IPV6_TRACE_HOPS"),
             "tcp_v6_ok": _bool("IPV6_TCP_OK"),
+            # True when IPv6 works and there is no IPv4 at all — by
+            # design, not as a fault. `clat` is true when macOS
+            # synthesised a 464XLAT address (192.0.0.0/29) so IPv4-only
+            # apps keep working. Without `only`, an absent IPv4 gateway
+            # reads as N1/N1c: critical, and false. [V6-3]
+            "only": _bool("IPV6_ONLY"),
+            "clat": _bool("IPV6_CLAT"),
         },
         "vpn": {
             "active": _bool("VPN_ACTIVE"),

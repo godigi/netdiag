@@ -1238,3 +1238,116 @@ diag_text_for() {
   diagnosis_run >/dev/null
   [ "$MAX_SEVERITY" -eq 0 ] || { echo "MAX_SEVERITY=$MAX_SEVERITY"; return 1; }
 }
+
+# ── V6-3: the network is IPv6-only, by design ────────────────────────────
+#
+# netdiag's GATEWAY comes from `route -n get default`, which is IPv4. So
+# an IPv6-only network left it empty and fell into N1c or N1 — critical,
+# exit 2, and false on a network working exactly as intended.
+
+v6_setup() {
+  # shellcheck source=../lib/ipv6.sh
+  . "$REPO/lib/ipv6.sh"
+  sp_setup
+  IPV6_ONLY=0 IPV6_CLAT=0
+}
+
+@test "ipv6: the 464XLAT range is recognised, and only that range" {
+  # RFC 7335 reserves 192.0.0.0/29 for the IPv4 side of a translator.
+  # 192.0.0.8 and up are other IETF protocol assignments.
+  . "$REPO/lib/ipv6.sh"
+  for ip in 192.0.0.0 192.0.0.1 192.0.0.4 192.0.0.7; do
+    ipv6_is_clat_address "$ip" || { echo "$ip not recognised"; return 1; }
+  done
+  for ip in 192.0.0.8 192.0.0.10 192.0.2.1 192.168.0.1 "" 192.0.0.71; do
+    ipv6_is_clat_address "$ip" && { echo "$ip wrongly recognised"; return 1; }
+  done
+  return 0
+}
+
+@test "ipv6: v6-only needs IPv6 proven, not merely present" {
+  # V6-1 exists because a half-configured IPv6 stack is common. A global
+  # address alone must not suppress a genuine outage.
+  . "$REPO/lib/ipv6.sh"
+  #                available aaaa tcp gateway
+  ipv6_is_v6_only  1 1 1 ""     || { echo "fully working v6, no v4: should be v6-only"; return 1; }
+  ipv6_is_v6_only  1 0 1 ""     && { echo "AAAA failing counted as v6-only"; return 1; }
+  ipv6_is_v6_only  1 1 0 ""     && { echo "TCP6 failing counted as v6-only"; return 1; }
+  ipv6_is_v6_only  0 1 1 ""     && { echo "no v6 at all counted as v6-only"; return 1; }
+  ipv6_is_v6_only  1 1 1 "192.168.1.1" && { echo "a working v4 gateway counted as v6-only"; return 1; }
+  return 0
+}
+
+@test "diagnosis: an IPv6-only network is V6-3, not N1 or N1c" {
+  # The load-bearing test. Before V6-3 this exact state exited 2.
+  v6_setup
+  # The consistent state: IPV6_ONLY is only ever 1 when AAAA and TCP6
+  # both worked, so the fixture has to say so too.
+  GATEWAY="" LINK_UP=1 IPV6_ONLY=1 IPV6_AVAILABLE=1
+  IPV6_AAAA_OK=1 IPV6_TCP_OK=1 IPV6_PING_LOSS=0
+  diagnosis_run >/dev/null
+  diag_has V6-3 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  diag_has N1   && { echo "N1 fired on a healthy IPv6-only network"; return 1; }
+  diag_has N1c  && { echo "N1c fired on a healthy IPv6-only network"; return 1; }
+  # V6-1 would contradict V6-3 outright, and could still fire on ping
+  # loss alone since IPV6_ONLY already requires AAAA and TCP6 to work.
+  diag_has V6-1 && { echo "V6-1 contradicted V6-3"; return 1; }
+  [ "$MAX_SEVERITY" -eq 0 ] || { echo "MAX_SEVERITY=$MAX_SEVERITY — would exit non-zero"; return 1; }
+  return 0
+}
+
+@test "diagnosis: V6-3 mentions the translation only when it is set up" {
+  v6_setup
+  GATEWAY="" IPV6_ONLY=1 IPV6_CLAT=1
+  diagnosis_run >/dev/null
+  assert_contains "$(diag_text_for V6-3)" "translation"
+  DIAG=(); DIAG_SEV=(); DIAG_RULE=(); MAX_SEVERITY=0
+  IPV6_CLAT=0
+  diagnosis_run >/dev/null
+  assert_not_contains "$(diag_text_for V6-3)" "translation"
+}
+
+@test "diagnosis: V6-1 never contradicts V6-3 on a lossy v6-only link" {
+  # ICMP6 filtered while TCP works: the same false alarm ICMP-1 exists
+  # to prevent on the v4 side. Printing "your IPv6 is half-broken"
+  # directly above "IPv6-only and everything checked out" is worse than
+  # printing neither.
+  v6_setup
+  GATEWAY="" LINK_UP=1 IPV6_ONLY=1 IPV6_AVAILABLE=1
+  IPV6_AAAA_OK=1 IPV6_TCP_OK=1 IPV6_PING_LOSS=100
+  diagnosis_run >/dev/null
+  diag_has V6-3 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  diag_has V6-1 && { echo "V6-1 fired alongside V6-3"; return 1; }
+  return 0
+}
+
+@test "diagnosis: V6-1 still fires on a dual-stack network with broken v6" {
+  # The guard must not disable V6-1 generally — that is the case it was
+  # written for.
+  v6_setup
+  GATEWAY="192.168.1.1" IPV6_ONLY=0 IPV6_AVAILABLE=1
+  IPV6_AAAA_OK=0 IPV6_TCP_OK=0 IPV6_PING_LOSS=100 PUBLIC_OK=1
+  diagnosis_run >/dev/null
+  diag_has V6-1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  return 0
+}
+
+@test "diagnosis: a real outage still fires N1, not V6-3" {
+  # IPV6_ONLY is 0 whenever IPv6 was not proven, so nothing is
+  # suppressed on a genuinely dead network.
+  v6_setup
+  GATEWAY="" LINK_UP=0 IPV6_ONLY=0
+  diagnosis_run >/dev/null
+  diag_has N1 || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  diag_has V6-3 && { echo "V6-3 fired on a dead network"; return 1; }
+  [ "$MAX_SEVERITY" -eq 2 ]
+}
+
+@test "diagnosis: a captive portal still fires N1c, not V6-3" {
+  v6_setup
+  GATEWAY="" LINK_UP=1 IPV6_ONLY=0 LINK_DHCP_ROUTER="10.0.0.1"
+  diagnosis_run >/dev/null
+  diag_has N1c || { echo "rules: ${DIAG_RULE[*]}"; return 1; }
+  diag_has V6-3 && { echo "V6-3 stole the portal case"; return 1; }
+  return 0
+}

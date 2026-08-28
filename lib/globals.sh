@@ -140,6 +140,8 @@ IPV6_PING_LOSS=""
 IPV6_AAAA_OK=0
 IPV6_TRACE_HOPS=""
 IPV6_TCP_OK=0
+IPV6_ONLY=0              # 1 = working v6, no IPv4 at all, by design [V6-3]
+IPV6_CLAT=0              # 1 = macOS synthesised a 464XLAT IPv4 address
 
 # TCP reach (lib/tcp_reach.sh)
 TCP_REACH_ANY_OK=0

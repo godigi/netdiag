@@ -486,6 +486,40 @@ All of the below are implemented and can fire.
 - Recommendation: fine if intentional; surprising otherwise. Common
   cause: user manually set 1.1.1.1 or 8.8.8.8 in System Settings.
 
+### V6-3 — The network is IPv6-only, by design
+
+- Trigger: `IPV6_AVAILABLE`, `IPV6_AAAA_OK` and `IPV6_TCP_OK` all set,
+  **and** the IPv4 `GATEWAY` is empty (`ipv6_is_v6_only`).
+- Severity: `info`.
+- Evidence: whether macOS set up a CLAT translator (`IPV6_CLAT`, an
+  address in `192.0.0.0/29` per RFC 7335).
+- Recommendation: none. Nothing is wrong.
+
+**It heads the `N1` chain, and that placement is the whole rule.**
+netdiag's `GATEWAY` comes from `route -n get default`, which is IPv4 —
+so a network that is IPv6-only leaves it empty and the run falls into
+`N1c` ("joined with no route out") or `N1` ("no network connection at
+all"). Both are critical, both exit 2, and both are false on a network
+working exactly as intended and carrying the user's traffic perfectly
+well. IPv6-only networks are normal on some mobile carriers,
+universities and newer corporate deployments, and growing.
+
+`V6-1` is the mirror of this and has existed for versions: broken IPv6
+alongside working IPv4. This direction had no rule at all.
+
+**The guard demands IPv6 be proven, not merely present.** A global
+address is not enough — `V6-1` exists precisely because a
+half-configured IPv6 stack is common. A real TCP connection over IPv6
+plus a working AAAA lookup is the evidence that this network carries
+traffic. Without both, an absent IPv4 gateway is a genuine outage and
+`N1`/`N1c` go on saying so.
+
+**Not verified against a real IPv6-only network.** The author had none
+to hand: this machine is IPv4-only (`scutil --nwi` reports "No IPv6
+states found"). The predicates are pure and fixture-tested, and the
+CLAT range is RFC 7335's, but the end-to-end behaviour on an actual
+NAT64 network is unconfirmed.
+
 ## What else is in the path
 
 `VPN-2`, `PX-1` and `FW-1` all exist for one reason: **netdiag equates

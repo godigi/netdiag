@@ -38,7 +38,27 @@ diagnosis_run() {
   # the same sentence — the rule states what was observed, then what to
   # try, and never claims a portal was detected. CP-1 below is the rule
   # that gets to make that claim, and only when the probe confirms it.
-  if [ -z "$GATEWAY" ] && [ "${LINK_UP:-0}" -eq 1 ]; then
+  # V6-3 heads this chain, and that placement is the entire point of the
+  # rule. netdiag's GATEWAY comes from `route -n get default`, which is
+  # IPv4 — so a network that is IPv6-only *by design* leaves it empty and
+  # falls into N1c ("joined with no route out") or N1 ("no network
+  # connection at all"). Both are critical, both exit 2, and both are
+  # false on a network that is working exactly as intended and carrying
+  # the user's traffic perfectly well.
+  #
+  # V6-1 is the mirror of this and has existed for versions: broken IPv6
+  # alongside working IPv4. This direction had no rule at all.
+  #
+  # The guard demands IPv6 be *proven* — a global address is not enough,
+  # since V6-1 exists precisely because half-configured IPv6 is common.
+  # A real TCP connection plus a working AAAA lookup is what says this
+  # network carries traffic; without both, an absent IPv4 gateway is a
+  # genuine outage and N1/N1c should go on saying so.
+  if [ "${IPV6_ONLY:-0}" -eq 1 ]; then
+    local _xlat=""
+    [ "${IPV6_CLAT:-0}" -eq 1 ] && _xlat=" Your Mac has already set up the translation it needs, so older apps and sites that only speak the old protocol keep working."
+    add_diag info V6-3 "This network runs on the modern internet protocol (IPv6) only — there is no old-style (IPv4) address here, and that is by design rather than a fault. It is normal on some mobile networks, universities and newer corporate networks.${_xlat} Everything checked out fine over IPv6. If a specific app misbehaves, it is likely one that has not been updated for this kind of network; nothing on your end needs fixing."
+  elif [ -z "$GATEWAY" ] && [ "${LINK_UP:-0}" -eq 1 ]; then
     local _where _router_hint
     if [ "${IS_WIFI:-0}" -eq 1 ] && [ -n "${WIFI_SSID:-}" ] && [ "$WIFI_SSID" != "<redacted>" ]; then
       _where="You're connected to the WiFi network \"$WIFI_SSID\""
@@ -281,7 +301,15 @@ diagnosis_run() {
   fi
 
   # V6-1 — IPv6 broken while IPv4 works.
-  if [ "$IPV6_AVAILABLE" -eq 1 ]; then
+  #
+  # Explicitly not evaluated on an IPv6-only network. The two rules
+  # contradict each other — "your IPv6 is half-broken" printed directly
+  # above "this network is IPv6-only and everything checked out" — and
+  # on a v6-only network V6-1 could still fire on ping loss alone, since
+  # IPV6_ONLY already requires AAAA and TCP6 to be working. That is the
+  # same false alarm ICMP-1 exists to prevent on the v4 side: filtered
+  # ICMP is not a broken path when real traffic is getting through.
+  if [ "$IPV6_AVAILABLE" -eq 1 ] && [ "${IPV6_ONLY:-0}" -eq 0 ]; then
     local v6_broken=0 aaaa_str tcp6_str
     [ -n "$IPV6_PING_LOSS" ] && [ "${IPV6_PING_LOSS%.*}" -ge "$THRESH_IPV6_LOSS_PCT" ] && v6_broken=1
     [ "$IPV6_AAAA_OK" -eq 0 ] && v6_broken=1

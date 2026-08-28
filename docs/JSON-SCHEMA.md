@@ -40,7 +40,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `per_hop` | array | per-hop loss probe: `n`, `ip`, `responded`, `loss_pct`, `avg_ms` |
 | `bufferbloat` | object | idle/loaded RTT for gateway and internet, their deltas, and `gw_grade`/`inet_grade` (A–F) |
 | `mtu` | object | `effective` (payload + 28) and the `path_size` payload that passed |
-| `ipv6` | object | `available`, `global_addr`, `gateway`, `ping_loss_pct`, `aaaa_ok`, `trace_hops`, `tcp_v6_ok` |
+| `ipv6` | object | `available`, `global_addr`, `gateway`, `ping_loss_pct`, `aaaa_ok`, `trace_hops`, `tcp_v6_ok`, `only`, `clat`. `only` is `true` when IPv6 works and there is no IPv4 at all — **by design, not as a fault**; `clat` is `true` when macOS synthesised a 464XLAT address (`192.0.0.0/29`) so IPv4-only apps keep working. Without `only`, an absent IPv4 gateway reads as `N1`/`N1c`: critical, and false (see `DIAGNOSIS-RULES.md#v6-3--the-network-is-ipv6-only-by-design`). |
 | `vpn` | object | `active`, `type` (`managed`/`tailscale`/`utun-route`), `name` |
 | `tcp_reach` | array | `host`, `port`, `ok`, `elapsed_ms` |
 | `path_actors` | object | `split_tunnel`, `split_tunnel_interfaces[]`, `proxy`, `proxy_detail`, `network_filters[]`. What else sits in the datapath **without holding the default route** — so every other measurement in this document still describes "the network" while a different subset of it stops describing what the user's traffic actually does. Facts, not verdicts; the rules that read them (`VPN-2`, `PX-1`, `FW-1`) are all `info` (see `DIAGNOSIS-RULES.md#what-else-is-in-the-path`). |

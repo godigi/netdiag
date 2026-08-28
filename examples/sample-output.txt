@@ -1,12 +1,12 @@
-netdiag  2026-08-27-205230
-log: /Users/bfreeman/net-diag/2026-08-27-205230.log
+netdiag  2026-08-27-214101
+log: /Users/bfreeman/net-diag/2026-08-27-214101.log
 
 ── Report ──
-  ✓  Network             en0 · WiFi 5GHz ch149
-  ✓  Router              192.168.60.1 · 0% loss · 2.9 ms · ±0.7 ms jitter
+  ✓  Network             en0 · WiFi
+  ✓  Router              192.168.60.1 · 5% loss · 10.9 ms · ±11.4 ms jitter
   ✓  Internet            Cyber Info Provedor de Acesso LTDA ME ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 49 ms · ±1.2 ms jitter
-  ✓  Packet loss         0.0% to 1.1.1.1 · 5.0% to 8.8.8.8 · clean
+  ✓  Latency             1.1.1.1 · 63 ms · ±28.5 ms jitter
+  ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
   ✓  DNS                 working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Packet size         1500 bytes · standard
@@ -27,8 +27,9 @@ log: /Users/bfreeman/net-diag/2026-08-27-205230.log
 
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 19.0 Mbps · Up 14.2 Mbps · 6.547 ms (jitter 0.148 ms)
+  ✓ Down 18.9 Mbps · Up 13.8 Mbps · 6.272 ms (jitter 0.839 ms)
   · Server: Cyber Info Serviços de Telecomunicações Ltda
+  ⚠ Something changed since your last runs: gateway RTT is 10.915 vs 3.1525 median (×3.5 spike)
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-27-205230.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-27-214101.log

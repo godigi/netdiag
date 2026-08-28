@@ -459,6 +459,24 @@ RULES: list[dict[str, str]] = [
         "doc": "DIAGNOSIS-RULES.md#v6-2--unresponsive-ipv6-dns-resolver",
     },
     {
+        "id": "V6-3",
+        "title": "This network is IPv6-only, and that is fine",
+        "category": "ipv6",
+        "severity": "info",
+        "scope": "scan",
+        "blurb": (
+            "This network runs on the modern internet protocol only — "
+            "there is no old-style address here, and that is by design "
+            "rather than a fault. Normal on some mobile networks, "
+            "universities and newer corporate networks. Your Mac "
+            "translates automatically so older apps keep working. If a "
+            "specific app misbehaves it is likely one that has not been "
+            "updated for this kind of network; nothing on your end "
+            "needs fixing."
+        ),
+        "doc": "DIAGNOSIS-RULES.md#v6-3--the-network-is-ipv6-only-by-design",
+    },
+    {
         "id": "VPN-1",
         "title": "VPN carrying your traffic",
         "category": "vpn",

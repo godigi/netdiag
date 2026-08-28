@@ -6,6 +6,43 @@ All notable changes to `netdiag` are recorded here. Format follows
 
 ## [Unreleased]
 
+### Fixed — an IPv6-only network no longer reads as no network at all
+
+`V6-1` has covered broken IPv6 alongside working IPv4 for versions. The
+mirror had no rule at all — and it was not a gap, it was a confidently
+wrong critical.
+
+netdiag's `GATEWAY` comes from `route -n get default`, which is IPv4.
+So a network that is IPv6-only **by design** left it empty and the run
+fell into `N1c` ("joined with no route out") or `N1` ("no network
+connection at all"). Both critical, both exit 2, both false on a
+network working exactly as intended and carrying the user's traffic
+perfectly well. IPv6-only is normal on some mobile carriers,
+universities and newer corporate deployments, and growing.
+
+New `V6-3` heads that branch chain, which is the whole rule. It demands
+IPv6 be *proven* rather than merely present — a global address is not
+enough, since `V6-1` exists precisely because half-configured IPv6 is
+common. A real TCP connection plus a working AAAA lookup is the
+evidence; without both, an absent IPv4 gateway is a genuine outage and
+`N1`/`N1c` go on saying so.
+
+**`V6-1` is now suppressed on an IPv6-only network**, found by writing
+the test rather than by reading the code: the two contradict each other
+outright, and `V6-1` could still fire on ping loss alone, since
+`IPV6_ONLY` already requires AAAA and TCP6 to be working. Filtered
+ICMP6 is not a broken path when real traffic is getting through — the
+same false alarm `ICMP-1` exists to prevent on the v4 side.
+
+New `ipv6.only` and `ipv6.clat` in the JSON, the latter true when macOS
+synthesised a 464XLAT address (`192.0.0.0/29`, RFC 7335) so IPv4-only
+apps keep working.
+
+**Not verified against a real IPv6-only network** — this machine is
+IPv4-only (`scutil --nwi`: "No IPv6 states found"). The predicates are
+pure and fixture-tested and the CLAT range is the RFC's, but end-to-end
+behaviour on an actual NAT64 network is unconfirmed.
+
 ## [0.12.0] - 2026-08-27
 
 ### Fixed — a test that failed depending on what time it was run
