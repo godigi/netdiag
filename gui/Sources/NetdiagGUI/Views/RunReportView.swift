@@ -226,6 +226,7 @@ struct RunReportView: View {
     ///   | Clock                | clock           |
     ///   | Background watcher   | netdiag         |
     ///   | Availability         | availability    |
+    ///   | Local traffic        | traffic         |
     ///
     /// Three things this table fixes, all of them the same underlying
     /// mistake — treating a category as a loose topic tag rather than as
@@ -274,6 +275,12 @@ struct RunReportView: View {
         // evidence predates the run — a green Router row and an amber
         // Availability row is a coherent pair, not a contradiction.
         "Availability": ["availability"],
+        // Also not about the network: what this Mac was putting on the
+        // link while it was being measured. Its own row rather than a
+        // share of "Under load", because a backup running is not a
+        // judgement about the router's queue — it is the reason to
+        // distrust one.
+        "Local traffic": ["traffic"],
     ]
 
     private var rows: [Row] {
@@ -460,6 +467,19 @@ struct RunReportView: View {
                            medianFormatter: nil,
                            informational: true))
         }
+        // Only when there was traffic worth mentioning. The CLI decides
+        // that: it sends the object only when it measured one, and TR-1
+        // decides whether the number crossed the floor — so `fired`, not
+        // a comparison here.
+        if let traffic = s.traffic, fired("Local traffic") {
+            out.append(Row(label: "Local traffic",
+                           value: Self.trafficValue(traffic),
+                           health: health(["TR-1"], "Local traffic"),
+                           metricKey: nil,
+                           glossaryKey: nil,
+                           medianFormatter: nil,
+                           informational: true))
+        }
         if let watcher = s.watcher {
             out.append(Row(label: "Background watcher",
                            value: Self.watcherValue(watcher),
@@ -494,6 +514,18 @@ struct RunReportView: View {
         let mins = down / 60, secs = down % 60
         let dur = mins > 0 ? "\(mins)m \(secs)s" : "\(secs)s"
         return "\(outages) \(word) in \(hours) · \(dur) down"
+    }
+
+    /// The Local traffic row's value: the busier direction, and who. No
+    /// threshold comparison — whether this row appears at all is decided
+    /// by whether TR-1 fired, which is the CLI's call.
+    private static func trafficValue(_ t: RunSnapshot.Traffic) -> String {
+        let down = t.downMbps ?? 0, up = t.upMbps ?? 0
+        let rate = up > down
+            ? String(format: "%g Mb/s up", up)
+            : String(format: "%g Mb/s down", down)
+        guard let top = t.topProcesses.first, !top.name.isEmpty else { return rate }
+        return "\(rate) · \(top.name)"
     }
 
     /// The watcher row's value. Every branch keys off `state`, which the

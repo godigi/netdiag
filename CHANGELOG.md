@@ -228,6 +228,63 @@ toolchain): monotonicity, the 1.0 ceiling, the skipped-speed-test case,
 sub-progress inside the heaviest phase, the unlearned case, and the
 `parallel_batch` double-count.
 
+### Added — netdiag measures the traffic on the link, not just the link [TR-1]
+
+netdiag has always measured the *path* and never what was travelling it.
+That gap produced one specific, common, confidently wrong answer: a
+bufferbloat grade of D while a backup uploads at 40 Mb/s is
+indistinguishable from a grade of D on an idle link, and the report
+blamed the router's queue in both cases. One of those users needs a
+better router. The other needs to wait ten minutes. They were being given
+the same advice — and the same applies to a speed result measured
+alongside a cloud sync, which reports the leftovers and reads as a slow
+ISP.
+
+`lib/traffic.sh` samples `nettop` for `THRESH_TRAFFIC_SAMPLE_S` seconds
+and `helpers/traffic.py` differences the two snapshots into machine-wide
+Mb/s plus the three busiest processes. Both are unprivileged; neither
+needs `sudo`.
+
+- **`TR-1` (new `traffic` category)** fires above
+  `THRESH_TRAFFIC_BUSY_MBPS` in either direction, naming the rate and the
+  process. `info` on its own — a Mac downloading something is a Mac
+  working correctly, and warning on every large download is the noise
+  `ND-1`'s `pending` state exists to avoid. It becomes `warn` only beside
+  `B1`, `B2`, `SP-1` or `BL-1`, where it stops being context and becomes
+  a competing explanation for a finding the user is about to act on.
+- **Its own category, not `load`.** A category names the row whose number
+  a rule judges, and TR-1 passes no judgement on the router's queueing —
+  it is the reason to distrust that row. Tagging it `load` would tint the
+  bufferbloat row amber every time a backup ran.
+- **It runs inside the parallel batch**, unlike every other check that
+  cares about a quiet link. `nettop` is a passive observer and generates
+  no traffic, so making it wait would add its whole window to the run for
+  nothing. The cost is netdiag's own probes landing inside the sample,
+  which `traffic.py` excludes by process name — without that, netdiag
+  would report itself as the busiest thing on the link every run.
+- **`--quick` skips it.** `nettop` needs ~3 s of startup before its first
+  snapshot; the whole `--quick` budget is 8 s. `traffic` is `null` there,
+  and `null` also when the sample failed — "not measured" and "measured
+  zero" are different claims and only one of them qualifies the report.
+- Process names survive `--redact`: they identify software, not a person,
+  and "something was using 40 Mb/s" is not a report anyone can act on.
+
+**Verification, stated plainly.** The parser is covered by fixtures in
+both directions, the floor and the info/warn escalation by unit tests, and
+the negative path by a live run (an idle Mac produces no row and no rule).
+The *positive* path was not verified end-to-end against real load: staged
+transfers from the test environment did not register on this machine's
+interface counters at all, so what would have been proven is the harness,
+not the feature. `nettop` attribution itself is confirmed working — live
+samples correctly name Spotify, mDNSResponder and the editor — but the
+magnitude case rests on fixtures.
+
+A second, smaller correction: the planted-key check in
+`tests/test_gui_decoding.bats` matched one `case ...` line by its exact
+text, so it stopped planting anything the moment a real key was added to
+that line — passing for the wrong reason. It now inserts by structure.
+
+
 ### Fixed — the app was never decoding `wan`
 
 `RunSnapshot.init(from:)` declared `wan` in `CodingKeys`, declared it as a

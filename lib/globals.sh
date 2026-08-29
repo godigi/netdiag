@@ -243,3 +243,10 @@ AV_DOWNTIME_S=0      # their total duration
 AV_LONGEST_S=0       # the longest single one
 AV_FLAP_COUNT=0      # how many were shorter than THRESH_AV_FLAP_MAX_S
 AV_UNOBSERVED_PCT=0  # how much of the window nobody was watching
+# What else on this Mac was using the link (lib/traffic.sh) [TR-1]
+TRAFFIC_MEASURED=0        # 1 = nettop gave two snapshots to difference
+TRAFFIC_DOWN_MBPS=""      # machine-wide, excluding netdiag's own probes
+TRAFFIC_UP_MBPS=""
+TRAFFIC_SAMPLED_S=""      # the window the rates are averaged over
+TRAFFIC_TOP_NAME=""       # busiest process by total bytes
+TRAFFIC_TOP_JSON="[]"     # top 3, as a JSON array, for the emitter

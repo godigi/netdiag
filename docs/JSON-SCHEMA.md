@@ -54,6 +54,7 @@ is in [`../examples/sample-output.json`](../examples/sample-output.json).
 | `wan` | object | `load_balancing`, `double_nat`, `upnp` — see below |
 | `hosts_file` | object | `custom_count`, `suspicious_redirects[]` |
 | `availability` | object | How this network has behaved over the last `THRESH_AV_WINDOW_HOURS`, from the event journal — `window_hours`, `outages`, `downtime_s`, `longest_outage_s`, `short_drops`, `unobserved_pct`. **`null` when no journal exists**, which is emphatically not "no outages": without a recorder there is no record. See `DIAGNOSIS-RULES.md#av-1--this-connection-keeps-dropping`. |
+| `traffic` | object | What this Mac itself was putting on the link while the path was measured — `sampled_s`, `down_mbps`, `up_mbps`, `top_processes[]`. **`null` under `--quick`** (the sample is skipped for budget) and whenever `nettop` gave nothing to difference: "not measured" and "measured zero" are different claims. Process names survive `--redact`; they identify software, not a person. See `DIAGNOSIS-RULES.md#tr-1--your-own-mac-was-using-the-connection`. |
 | `watcher` | object | netdiag's own launchd watcher, or **`null` when none is installed** — which is most runs. The only object here that describes netdiag rather than the network. See below. |
 | `timings` | object | `total_s`, `budget_s`, `over_budget`, and `phases{}` per stage |
 | `baseline` | object | comparison against history, or `null` — see below |

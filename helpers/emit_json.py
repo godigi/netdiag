@@ -38,6 +38,24 @@ def _is_set(name: str) -> bool:
     return f"NETDIAG_{name}" in os.environ
 
 
+def _json_env(name: str, default=None):
+    """A bash variable that already holds JSON, parsed back into a value.
+
+    lib/traffic.sh builds its top-talker array in Python and hands it
+    across as a string, so re-serialising it field by field here would be
+    a second parser for a structure that already has one. Malformed input
+    degrades to `default` rather than aborting the whole document: a
+    truncated list is worth losing, a whole report is not.
+    """
+    raw = _env(name)
+    if raw is None:
+        return default
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return default
+
+
 def _maybe_float(name: str) -> float | None:
     v = _env(name)
     if v is None:
@@ -518,6 +536,22 @@ def main() -> None:
             "short_drops": _maybe_int("AV_FLAP_COUNT"),
             "unobserved_pct": _maybe_int("AV_UNOBSERVED_PCT"),
         } if _bool("AV_MEASURED") else None),
+        # What this Mac itself was putting on the link while the path
+        # above was being measured. `null` under --quick, where the
+        # sample is skipped for budget, and when nettop gave nothing to
+        # difference — "not measured" and "measured zero" are different
+        # claims and only one of them qualifies the numbers above.
+        #
+        # Process names are kept under --redact: they identify software,
+        # not a person or a place, and the whole value of TR-1 is being
+        # able to say which one. A report that says "something was using
+        # 40 Mb/s" is a report nobody can act on.
+        "traffic": ({
+            "sampled_s": _maybe_float("TRAFFIC_SAMPLED_S"),
+            "down_mbps": _maybe_float("TRAFFIC_DOWN_MBPS"),
+            "up_mbps": _maybe_float("TRAFFIC_UP_MBPS"),
+            "top_processes": _json_env("TRAFFIC_TOP_JSON"),
+        } if _bool("TRAFFIC_MEASURED") else None),
         # netdiag's own background watcher. The only object in this
         # document that describes netdiag rather than the network, and
         # null for the majority of runs, where no watcher is installed —

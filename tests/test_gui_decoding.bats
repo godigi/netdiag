@@ -89,7 +89,9 @@ PY
   # the first version of this test sed'd for a specific `case ...` line and
   # silently stopped planting anything the moment a real key was added to
   # it — passing for the wrong reason, which is exactly the failure this
-  # whole file exists to catch one level up.
+  # whole file exists to catch one level up. It has now been caught doing
+  # that twice, on two different branches, which is why it inserts by
+  # structure instead.
   planted="$BATS_TEST_TMPDIR/planted.swift"
   python3 - "$SNAPSHOT" "$planted" <<'PLANT'
 import re, sys

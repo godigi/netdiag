@@ -66,13 +66,19 @@ struct RunSnapshot: Decodable, Sendable {
     /// outages": without a recorder there is no record, and a zeroed
     /// struct would render silence as health.
     var availability: Availability?
+    /// What this Mac itself was putting on the link while the path was
+    /// measured, or `nil` under `--quick` and whenever the sample failed.
+    /// Optional for the same reason `watcher` is: an object of zeroes
+    /// would qualify every number in the report with a claim the run
+    /// never established. See TR-1.
+    var traffic: Traffic?
     var diagnosis: [Diagnosis] = []
     var mostLikelyRootCause: String?
 
     enum CodingKeys: String, CodingKey {
         case version, timestamp, network, wifi, gateway, dns, traceroute
         case bufferbloat, mtu, ipv6, wan, vpn, speedtest, ntp, dhcp, mtr, timings
-        case suitability, diagnosis, watcher, availability
+        case suitability, diagnosis, watcher, availability, traffic
         case runMode = "run_mode"
         case runID = "run_id"
         case interfaceInfo = "interface"
@@ -393,6 +399,37 @@ struct RunSnapshot: Decodable, Sendable {
         }
     }
 
+    /// The `traffic` object. Rates only — whether a rate is large enough
+    /// to matter is TR-1's judgement, made in lib/diagnosis.sh against
+    /// lib/thresholds.sh, and re-deriving it here is how the app ends up
+    /// contradicting the report it links to.
+    struct Traffic: Decodable, Sendable {
+        var sampledS: Double?
+        var downMbps: Double?
+        var upMbps: Double?
+        var topProcesses: [Process] = []
+
+        enum CodingKeys: String, CodingKey {
+            case sampledS = "sampled_s"
+            case downMbps = "down_mbps"
+            case upMbps = "up_mbps"
+            case topProcesses = "top_processes"
+        }
+
+        struct Process: Decodable, Sendable, Identifiable {
+            var name: String = ""
+            var downMbps: Double?
+            var upMbps: Double?
+            var id: String { name }
+
+            enum CodingKeys: String, CodingKey {
+                case name
+                case downMbps = "down_mbps"
+                case upMbps = "up_mbps"
+            }
+        }
+    }
+
     struct MTR: Decodable, Sendable {
         var hops: [Traceroute.Hop] = []
         var firstLossyHop: String?
@@ -535,6 +572,7 @@ extension RunSnapshot {
         timings = c.lenient(.timings, .init())
         watcher = c.lenient(.watcher)
         availability = c.lenient(.availability)
+        traffic = c.lenient(.traffic)
         diagnosis = c.lenient(.diagnosis, [])
         mostLikelyRootCause = c.lenient(.mostLikelyRootCause)
     }

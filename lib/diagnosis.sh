@@ -560,6 +560,32 @@ diagnosis_run() {
     fi
   fi
 
+  # TR-1 — this Mac was already using the link while we measured it.
+  #
+  # Every number above assumes the link was otherwise quiet. When it was
+  # not, they still describe the link — they just do not describe what it
+  # can do. A bufferbloat D earned while a backup uploads is the backup;
+  # a speed result taken alongside a sync is the leftovers. Without this
+  # rule the report blames the router in the first case and the ISP in
+  # the second, and sends the user to argue with the wrong company.
+  #
+  # It qualifies rather than accuses, so it is `info` on its own. It
+  # becomes `warn` only when one of the verdicts it undermines actually
+  # fired: at that point the traffic is not context, it is a competing
+  # explanation for a finding the user is about to act on.
+  if traffic_at_least "$THRESH_TRAFFIC_BUSY_MBPS"; then
+    local _tr_sev=info _tr_who="" _tr_rules=" ${DIAG_RULE[*]:-} "
+    case "$_tr_rules" in
+      *" B1 "*|*" B2 "*|*" SP-1 "*|*" BL-1 "*) _tr_sev=warn ;;
+    esac
+    if [ -n "$TRAFFIC_TOP_NAME" ]; then _tr_who=" — mostly ${TRAFFIC_TOP_NAME}"; fi
+    if [ "$_tr_sev" = warn ]; then
+      add_diag warn TR-1 "Your Mac was already using $(traffic_busier_direction) of this connection while the check ran${_tr_who}. That matters for the findings above: a slow or laggy result measured against your own traffic is measuring what was left over, not what the line can do. Stop or pause that transfer and re-run before concluding anything about your router or your ISP."
+    else
+      add_diag info TR-1 "Your Mac was using $(traffic_busier_direction) of this connection while the check ran${_tr_who}. Nothing here is wrong — it is worth knowing because the speed and latency figures above were measured alongside it, so they describe the connection as it was, not as it would be with nothing else running."
+    fi
+  fi
+
   # ND-1 — the background watcher is installed and is not running.
   #
   # The only rule in this file that judges netdiag rather than the

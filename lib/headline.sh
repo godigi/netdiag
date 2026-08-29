@@ -339,6 +339,20 @@ headline_run() {
     fi
   fi
 
+  # ── Local traffic (only when there was some) ────────────────────────
+  # No row on an idle Mac: "0.03 Mb/s" in every report is noise, and the
+  # row exists to answer one question — was something of yours competing
+  # with the measurements above. Severity mirrors TR-1's, which is why
+  # the same threshold decides both.
+  if traffic_at_least "$THRESH_TRAFFIC_BUSY_MBPS"; then
+    local _tr_label
+    _tr_label="$(traffic_busier_direction)"
+    if [ -n "${TRAFFIC_TOP_NAME:-}" ]; then
+      _tr_label="$_tr_label · $TRAFFIC_TOP_NAME"
+    fi
+    _row warn "Local traffic" "$_tr_label"
+  fi
+
   # ── Background watcher (only when one is installed) ─────────────────
   # No row at all for the overwhelming majority of runs, where no watcher
   # exists: a "not installed" line in every report is an advertisement,
