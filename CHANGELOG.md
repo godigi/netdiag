@@ -269,15 +269,18 @@ needs `sudo`.
 - Process names survive `--redact`: they identify software, not a person,
   and "something was using 40 Mb/s" is not a report anyone can act on.
 
-**Verification, stated plainly.** The parser is covered by fixtures in
-both directions, the floor and the info/warn escalation by unit tests, and
-the negative path by a live run (an idle Mac produces no row and no rule).
-The *positive* path was not verified end-to-end against real load: staged
-transfers from the test environment did not register on this machine's
-interface counters at all, so what would have been proven is the harness,
-not the feature. `nettop` attribution itself is confirmed working — live
-samples correctly name Spotify, mDNSResponder and the editor — but the
-magnitude case rests on fixtures.
+**Verification.** The parser is covered by fixtures in both directions,
+the floor and the info/warn escalation by unit tests, and the negative
+path by a live run (an idle Mac produces no row and no rule).
+
+The positive path could not be *staged* — transfers started from the test
+environment never registered on this machine's interface counters, so
+such a test would have proven the harness rather than the feature — but
+it was subsequently observed for real, unprompted, during the sample
+capture in `examples/sample-output.txt`: a music client streaming while
+the check ran produced `⚠ Local traffic 12.19 Mb/s down · Spotify
+Helper` and the matching `TR-1` note. That is the whole feature working
+on a real run, and it is what the committed sample now shows.
 
 A second, smaller correction: the planted-key check in
 `tests/test_gui_decoding.bats` matched one `case ...` line by its exact

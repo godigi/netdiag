@@ -432,6 +432,16 @@ netdiag --install-recorder   # keeps running, and restarts across reboots
 netdiag --events=24          # what changed, and how long each fault lasted
 ```
 
+With a recorder running, a scan also stops being only a snapshot: `AV-1`
+warns when this network dropped repeatedly or for long enough to matter
+in the last day, and `AV-2` names the drops short enough that a check run
+either side of one would have found nothing wrong both times. Both are
+scoped to the network you are actually on, and both say what fraction of
+the window nobody was watching — a Mac that spent the night asleep has a
+24-hour window that is mostly guesswork, and the report says so rather
+than reporting a clean night.
+
+
 The 15-minute watcher above cannot answer "was the internet down at 03:14
 and for how long" — anything shorter than its cadence happens entirely
 between two clean runs. The recorder can. `--events` pairs faults into

@@ -1,18 +1,21 @@
-netdiag  2026-08-28-160445
-log: /Users/bfreeman/net-diag/2026-08-28-160445.log
+netdiag  2026-08-28-210200
+log: /Users/bfreeman/net-diag/2026-08-28-210200.log
 
 ── Report ──
+  ⚠  Local traffic       12.19 Mb/s down · Spotify Helper
+
   ✓  Network             en0 · WiFi 5GHz ch149
-  ✓  Router              192.168.60.1 · 0% loss · 3.4 ms · ±2.1 ms jitter
+  ✓  Router              192.168.60.1 · 0% loss · 2.8 ms · ±0.2 ms jitter
   ✓  Internet            Cyber Info Provedor de Acesso LTDA ME ([redacted], Brazil)
-  ✓  Latency             1.1.1.1 · 53 ms · ±2.0 ms jitter
+  ✓  Latency             1.1.1.1 · 52 ms · ±1.0 ms jitter
   ✓  Packet loss         0.0% to 1.1.1.1 · 0.0% to 8.8.8.8 · clean
   ✓  DNS                 working
   ✓  Bufferbloat         grade A/A · clean under load
   ✓  Packet size         1500 bytes · standard
   ✓  Router config       UPnP disabled (safer default)
   ✓  Hosts file          clean (only macOS defaults)
-  ✓  Background watcher  last ran 12 minutes ago
+  ✓  Availability        no drops recorded in 24h
+  ✓  Background watcher  last ran 8 minutes ago
   ·  VPN                 not active
   ·  IPv6                not available (IPv4-only network)
   ·  Speed               measuring now — result prints below (~1 min)
@@ -27,10 +30,16 @@ log: /Users/bfreeman/net-diag/2026-08-28-160445.log
     Settings → Privacy & Security → Location Services) fixes the name for
     future checks.
 
+  · Your Mac was using 12.19 Mb/s down of this connection while the check
+    ran — mostly Spotify Helper. Nothing here is wrong — it is worth
+    knowing because the speed and latency figures above were measured
+    alongside it, so they describe the connection as it was, not as it
+    would be with nothing else running.
+
 ── Speed test ──
   · Running Ookla speedtest...
-  ✓ Down 19.0 Mbps · Up 12.7 Mbps · 6.125 ms (jitter 0.762 ms)
+  ✓ Down 19.0 Mbps · Up 14.2 Mbps · 6.487 ms (jitter 2.829 ms)
   · Server: Cyber Info Serviços de Telecomunicações Ltda
 
 Pass --expert to see the underlying measurements.
-Report saved to: /Users/bfreeman/net-diag/2026-08-28-160445.log
+Report saved to: /Users/bfreeman/net-diag/2026-08-28-210200.log
